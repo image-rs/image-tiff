@@ -1,9 +1,9 @@
-use std::error::Error;
 use std::io::{self, Read, Seek};
-use std::fmt;
 use std::mem;
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
+
+use ::{ColorType, TiffError, TiffResult};
 
 use self::ifd::Directory;
 
@@ -17,99 +17,6 @@ use self::stream::{
 
 mod ifd;
 mod stream;
-
-/// An enumeration over supported color types and their bit depths
-#[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]
-pub enum ColorType {
-    /// Pixel is grayscale
-    Gray(u8),
-
-    /// Pixel contains R, G and B channels
-    RGB(u8),
-
-    /// Pixel is an index into a color palette
-    Palette(u8),
-
-    /// Pixel is grayscale with an alpha channel
-    GrayA(u8),
-
-    /// Pixel is RGB with an alpha channel
-    RGBA(u8),
-}
-
-/// An enumeration of Image errors
-#[derive(Debug)]
-pub enum ImageError {
-    /// The Image is not formatted properly
-    FormatError(String),
-
-    /// The Image's dimensions are either too small or too large
-    DimensionError,
-
-    /// The Decoder does not support this image format
-    UnsupportedError(String),
-
-    /// The Decoder does not support this color type
-    UnsupportedColor(ColorType),
-
-    /// Not enough data was provided to the Decoder
-    /// to decode the image
-    NotEnoughData,
-
-    /// An I/O Error occurred while decoding the image
-    IoError(io::Error),
-
-    /// The end of the image has been reached
-    ImageEnd
-}
-
-impl fmt::Display for ImageError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match *self {
-            ImageError::FormatError(ref e) => write!(fmt, "Format error: {}", e),
-            ImageError::DimensionError => write!(fmt, "The Image's dimensions are either too \
-                                                        small or too large"),
-            ImageError::UnsupportedError(ref f) => write!(fmt, "The Decoder does not support the \
-                                                                 image format `{}`", f),
-            ImageError::UnsupportedColor(ref c) => write!(fmt, "The decoder does not support \
-                                                                 the color type `{:?}`", c),
-            ImageError::NotEnoughData => write!(fmt, "Not enough data was provided to the \
-                                                       Decoder to decode the image"),
-            ImageError::IoError(ref e) => e.fmt(fmt),
-            ImageError::ImageEnd => write!(fmt, "The end of the image has been reached")
-        }
-    }
-}
-
-impl Error for ImageError {
-    fn description (&self) -> &str {
-        match *self {
-            ImageError::FormatError(..) => "Format error",
-            ImageError::DimensionError => "Dimension error",
-            ImageError::UnsupportedError(..) => "Unsupported error",
-            ImageError::UnsupportedColor(..) => "Unsupported color",
-            ImageError::NotEnoughData => "Not enough data",
-            ImageError::IoError(..) => "IO error",
-            ImageError::ImageEnd => "Image end"
-        }
-    }
-
-    fn cause (&self) -> Option<&Error> {
-        match *self {
-            ImageError::IoError(ref e) => Some(e),
-            _ => None
-        }
-    }
-}
-
-impl From<io::Error> for ImageError {
-    fn from(err: io::Error) -> ImageError {
-        ImageError::IoError(err)
-    }
-}
-
-/// Result of an image decoding/encoding process
-pub type ImageResult<T> = Result<T, ImageError>;
 
 /// Result of a decoding process
 #[derive(Debug)]
@@ -221,12 +128,12 @@ fn rev_hpredict_nsamp<T>(mut image: Vec<T>,
     image
 }
 
-fn rev_hpredict(image: DecodingResult, size: (u32, u32), color_type: ColorType) -> ImageResult<DecodingResult> {
+fn rev_hpredict(image: DecodingResult, size: (u32, u32), color_type: ColorType) -> TiffResult<DecodingResult> {
     let samples = match color_type {
         ColorType::Gray(8) | ColorType::Gray(16) => 1,
         ColorType::RGB(8) | ColorType::RGB(16) => 3,
         ColorType::RGBA(8) | ColorType::RGBA(16) => 4,
-        _ => return Err(ImageError::UnsupportedError(format!(
+        _ => return Err(TiffError::UnsupportedError(format!(
             "Horizontal predictor for {:?} is unsupported.", color_type
         )))
     };
@@ -242,7 +149,7 @@ fn rev_hpredict(image: DecodingResult, size: (u32, u32), color_type: ColorType) 
 
 impl<R: Read + Seek> TIFFDecoder<R> {
     /// Create a new decoder that decodes from the stream ```r```
-    pub fn new(r: R) -> ImageResult<TIFFDecoder<R>> {
+    pub fn new(r: R) -> TiffResult<TIFFDecoder<R>> {
         TIFFDecoder {
             reader: SmartReader::wrap(r, ByteOrder::LittleEndian),
             byte_order: ByteOrder::LittleEndian,
@@ -257,7 +164,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
         }.init()
     }
 
-    fn colortype(&mut self) -> ImageResult<ColorType> {
+    fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
             // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
             PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => Ok(ColorType::RGBA(8)),
@@ -267,13 +174,13 @@ impl<R: Read + Seek> TIFFDecoder<R> {
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
                                            if self.bits_per_sample.len() == 1 => Ok(ColorType::Gray(self.bits_per_sample[0])),
 
-            _ => Err(ImageError::UnsupportedError(format!(
+            _ => Err(TiffError::UnsupportedError(format!(
                 "{:?} with {:?} bits per sample is unsupported", self.bits_per_sample, self.photometric_interpretation
             ))) // TODO: this is bad we should not fail at this point}
         }
     }
 
-    fn read_header(&mut self) -> ImageResult<()> {
+    fn read_header(&mut self) -> TiffResult<()> {
         let mut endianess = Vec::with_capacity(2);
         try!(self.reader.by_ref().take(2).read_to_end(&mut endianess));
         match &*endianess {
@@ -283,12 +190,12 @@ impl<R: Read + Seek> TIFFDecoder<R> {
             b"MM" => {
                 self.byte_order = ByteOrder::BigEndian;
                 self.reader.byte_order = ByteOrder::BigEndian;  },
-            _ => return Err(ImageError::FormatError(
+            _ => return Err(TiffError::FormatError(
                 "TIFF signature not found.".to_string()
             ))
         }
         if try!(self.read_short()) != 42 {
-            return Err(ImageError::FormatError("TIFF signature invalid.".to_string()))
+            return Err(TiffError::FormatError("TIFF signature invalid.".to_string()))
         }
         self.next_ifd = match try!(self.read_long()) {
             0 => None,
@@ -298,7 +205,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     }
 
     /// Initializes the decoder.
-    pub fn init(mut self) -> ImageResult<TIFFDecoder<R>> {
+    pub fn init(mut self) -> TiffResult<TIFFDecoder<R>> {
         try!(self.read_header());
         self.next_image()
     }
@@ -306,7 +213,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     /// Reads in the next image.
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
-    pub fn next_image(mut self) -> ImageResult<TIFFDecoder<R>> {
+    pub fn next_image(mut self) -> TiffResult<TIFFDecoder<R>> {
         self.ifd = Some(try!(self.read_ifd()));
         self.width = try!(self.get_tag_u32(ifd::Tag::ImageWidth));
         self.height = try!(self.get_tag_u32(ifd::Tag::ImageLength));
@@ -314,7 +221,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
             try!(self.get_tag_u32(ifd::Tag::PhotometricInterpretation))
         ) {
             Some(val) => val,
-            None => return Err(ImageError::UnsupportedError(
+            None => return Err(TiffError::UnsupportedError(
                 "The image is using an unknown photometric interpretation.".to_string()
             ))
         };
@@ -323,7 +230,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 Some(method) =>  {
                     self.compression_method = method
                 },
-                None => return Err(ImageError::UnsupportedError(
+                None => return Err(TiffError::UnsupportedError(
                     "Unknown compression method.".to_string()
                 ))
             }
@@ -343,7 +250,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 }
 
             }
-            _ => return Err(ImageError::UnsupportedError(
+            _ => return Err(TiffError::UnsupportedError(
                 format!("{} samples per pixel is supported.", self.samples)
             ))
         }
@@ -396,7 +303,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     // Type  2 bytes
     // Count 4 bytes
     // Value 4 bytes either a pointer the value itself
-    fn read_entry(&mut self) -> ImageResult<Option<(ifd::Tag, ifd::Entry)>> {
+    fn read_entry(&mut self) -> TiffResult<Option<(ifd::Tag, ifd::Entry)>> {
         let tag = ifd::Tag::from_u16(try!(self.read_short()));
         let type_: ifd::Type = match FromPrimitive::from_u16(try!(self.read_short())) {
             Some(t) => t,
@@ -416,10 +323,10 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     }
 
     /// Reads the next IFD
-    fn read_ifd(&mut self) -> ImageResult<Directory> {
+    fn read_ifd(&mut self) -> TiffResult<Directory> {
         let mut dir: Directory = HashMap::new();
         match self.next_ifd {
-            None => return Err(ImageError::FormatError(
+            None => return Err(TiffError::FormatError(
                 "Image file directory not found.".to_string())
             ),
             Some(offset) => try!(self.goto_offset(offset))
@@ -440,7 +347,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
 
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
-    fn find_tag(&mut self, tag: ifd::Tag) -> ImageResult<Option<ifd::Value>> {
+    fn find_tag(&mut self, tag: ifd::Tag) -> TiffResult<Option<ifd::Value>> {
         let ifd: &Directory = unsafe {
             let ifd = self.ifd.as_ref().unwrap(); // Ok to fail
             // Get a immutable borrow of self
@@ -455,7 +362,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn find_tag_u32(&mut self, tag: ifd::Tag) -> ImageResult<Option<u32>> {
+    fn find_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<Option<u32>> {
         match self.find_tag(tag)? {
             Some(val) => val.into_u32().map(Some),
             None => Ok(None)
@@ -463,7 +370,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn find_tag_u32_vec(&mut self, tag: ifd::Tag) -> ImageResult<Option<Vec<u32>>> {
+    fn find_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Option<Vec<u32>>> {
         match self.find_tag(tag)? {
             Some(val) => val.into_u32_vec().map(Some),
             None => Ok(None)
@@ -472,28 +379,28 @@ impl<R: Read + Seek> TIFFDecoder<R> {
 
     /// Tries to retrieve a tag.
     /// Returns an error if the tag is not present
-    fn get_tag(&mut self, tag: ifd::Tag) -> ImageResult<ifd::Value> {
+    fn get_tag(&mut self, tag: ifd::Tag) -> TiffResult<ifd::Value> {
         match try!(self.find_tag(tag)) {
             Some(val) => Ok(val),
-            None => Err(ImageError::FormatError(format!(
+            None => Err(TiffError::FormatError(format!(
                 "Required tag `{:?}` not found.", tag
             )))
         }
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn get_tag_u32(&mut self, tag: ifd::Tag) -> ImageResult<u32> {
+    fn get_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn get_tag_u32_vec(&mut self, tag: ifd::Tag) -> ImageResult<Vec<u32>> {
+    fn get_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
     }
 
     /// Decompresses the strip into the supplied buffer.
     /// Returns the number of bytes read.
-    fn expand_strip<'a>(&mut self, buffer: DecodingBuffer<'a>, offset: u32, length: u32, max_uncompressed_length: usize) -> ImageResult<usize> {
+    fn expand_strip<'a>(&mut self, buffer: DecodingBuffer<'a>, offset: u32, length: u32, max_uncompressed_length: usize) -> TiffResult<usize> {
         let color_type = try!(self.colortype());
         try!(self.goto_offset(offset));
         let (bytes, mut reader): (usize, Box<EndianReader>) = match self.compression_method {
@@ -510,7 +417,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 let (bytes, reader) = try!(PackBitsReader::new(&mut self.reader, order, length as usize));
                 (bytes, Box::new(reader))
             },
-            method => return Err(ImageError::UnsupportedError(format!(
+            method => return Err(TiffError::UnsupportedError(format!(
                 "Compression method {:?} is unsupported", method
             )))
         };
@@ -544,7 +451,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 }
                 bytes
             }
-            (type_, _) => return Err(ImageError::UnsupportedError(format!(
+            (type_, _) => return Err(TiffError::UnsupportedError(format!(
                 "Color type {:?} is unsupported", type_
             )))
         })

@@ -1,7 +1,6 @@
 //! All IO functionality needed for TIFF decoding
 
-use std::io;
-use std::io::{Read, Seek};
+use std::io::{self, Read, Seek};
 use byteorder::{ReadBytesExt, BigEndian, LittleEndian};
 use lzw;
 

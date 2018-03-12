@@ -4,7 +4,7 @@ use std::io::{self, Read, Seek};
 use std::collections::{HashMap};
 
 use super::stream::{ByteOrder, SmartReader, EndianReader};
-use super::{ImageError, ImageResult};
+use ::{TiffError, TiffResult};
 
 use self::Value::{Unsigned, List};
 
@@ -96,15 +96,15 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn into_u32(self) -> ImageResult<u32> {
+    pub fn into_u32(self) -> TiffResult<u32> {
         match self {
             Unsigned(val) => Ok(val),
-            val => Err(ImageError::FormatError(format!(
+            val => Err(TiffError::FormatError(format!(
                 "Expected unsigned integer, {:?} found.", val
             )))
         }
     }
-    pub fn into_u32_vec(self) -> ImageResult<Vec<u32>> {
+    pub fn into_u32_vec(self) -> TiffResult<Vec<u32>> {
         match self {
             List(vec) => {
                 let mut new_vec = Vec::with_capacity(vec.len());
@@ -153,7 +153,7 @@ impl Entry {
     }
 
     pub fn val<R: Read + Seek>(&self, decoder: &mut super::TIFFDecoder<R>)
-    -> ImageResult<Value> {
+    -> TiffResult<Value> {
         let bo = decoder.byte_order();
         match (self.type_, self.count) {
             // TODO check if this could give wrong results
@@ -184,7 +184,7 @@ impl Entry {
                 }
                 Ok(List(v))
             }
-            _ => Err(ImageError::UnsupportedError("Unsupported data type.".to_string()))
+            _ => Err(TiffError::UnsupportedError("Unsupported data type.".to_string()))
         }
     }
 }
