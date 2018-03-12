@@ -9,6 +9,7 @@
 extern crate byteorder;
 extern crate lzw;
 extern crate num_traits;
+#[macro_use] extern crate enum_primitive;
 
 pub use self::decoder::TIFFDecoder;
 

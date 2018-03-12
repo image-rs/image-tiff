@@ -1,18 +1,9 @@
+use std::error::Error;
 use std::io::{self, Read, Seek};
+use std::fmt;
 use std::mem;
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
-
-use image;
-use image::{
-    ImageError,
-    ImageResult,
-    ImageDecoder,
-    DecodingResult,
-    DecodingBuffer
-};
-
-use color::{ColorType};
 
 use self::ifd::Directory;
 
@@ -26,6 +17,116 @@ use self::stream::{
 
 mod ifd;
 mod stream;
+
+/// An enumeration over supported color types and their bit depths
+#[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]
+pub enum ColorType {
+    /// Pixel is grayscale
+    Gray(u8),
+
+    /// Pixel contains R, G and B channels
+    RGB(u8),
+
+    /// Pixel is an index into a color palette
+    Palette(u8),
+
+    /// Pixel is grayscale with an alpha channel
+    GrayA(u8),
+
+    /// Pixel is RGB with an alpha channel
+    RGBA(u8),
+}
+
+/// An enumeration of Image errors
+#[derive(Debug)]
+pub enum ImageError {
+    /// The Image is not formatted properly
+    FormatError(String),
+
+    /// The Image's dimensions are either too small or too large
+    DimensionError,
+
+    /// The Decoder does not support this image format
+    UnsupportedError(String),
+
+    /// The Decoder does not support this color type
+    UnsupportedColor(ColorType),
+
+    /// Not enough data was provided to the Decoder
+    /// to decode the image
+    NotEnoughData,
+
+    /// An I/O Error occurred while decoding the image
+    IoError(io::Error),
+
+    /// The end of the image has been reached
+    ImageEnd
+}
+
+impl fmt::Display for ImageError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match *self {
+            ImageError::FormatError(ref e) => write!(fmt, "Format error: {}", e),
+            ImageError::DimensionError => write!(fmt, "The Image's dimensions are either too \
+                                                        small or too large"),
+            ImageError::UnsupportedError(ref f) => write!(fmt, "The Decoder does not support the \
+                                                                 image format `{}`", f),
+            ImageError::UnsupportedColor(ref c) => write!(fmt, "The decoder does not support \
+                                                                 the color type `{:?}`", c),
+            ImageError::NotEnoughData => write!(fmt, "Not enough data was provided to the \
+                                                       Decoder to decode the image"),
+            ImageError::IoError(ref e) => e.fmt(fmt),
+            ImageError::ImageEnd => write!(fmt, "The end of the image has been reached")
+        }
+    }
+}
+
+impl Error for ImageError {
+    fn description (&self) -> &str {
+        match *self {
+            ImageError::FormatError(..) => "Format error",
+            ImageError::DimensionError => "Dimension error",
+            ImageError::UnsupportedError(..) => "Unsupported error",
+            ImageError::UnsupportedColor(..) => "Unsupported color",
+            ImageError::NotEnoughData => "Not enough data",
+            ImageError::IoError(..) => "IO error",
+            ImageError::ImageEnd => "Image end"
+        }
+    }
+
+    fn cause (&self) -> Option<&Error> {
+        match *self {
+            ImageError::IoError(ref e) => Some(e),
+            _ => None
+        }
+    }
+}
+
+impl From<io::Error> for ImageError {
+    fn from(err: io::Error) -> ImageError {
+        ImageError::IoError(err)
+    }
+}
+
+/// Result of an image decoding/encoding process
+pub type ImageResult<T> = Result<T, ImageError>;
+
+/// Result of a decoding process
+#[derive(Debug)]
+pub enum DecodingResult {
+    /// A vector of unsigned bytes
+    U8(Vec<u8>),
+    /// A vector of unsigned words
+    U16(Vec<u16>)
+}
+
+// A buffer for image decoding
+pub enum DecodingBuffer<'a> {
+    /// A slice of unsigned bytes
+    U8(&'a mut [u8]),
+    /// A slice of unsigned words
+    U16(&'a mut [u16])
+}
 
 enum_from_primitive! {
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -156,6 +257,22 @@ impl<R: Read + Seek> TIFFDecoder<R> {
         }.init()
     }
 
+    fn colortype(&mut self) -> ImageResult<ColorType> {
+        match self.photometric_interpretation {
+            // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
+            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => Ok(ColorType::RGBA(8)),
+            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8] => Ok(ColorType::RGB(8)),
+            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16, 16] => Ok(ColorType::RGBA(16)),
+            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16] => Ok(ColorType::RGB(16)),
+            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
+                                           if self.bits_per_sample.len() == 1 => Ok(ColorType::Gray(self.bits_per_sample[0])),
+
+            _ => Err(ImageError::UnsupportedError(format!(
+                "{:?} with {:?} bits per sample is unsupported", self.bits_per_sample, self.photometric_interpretation
+            ))) // TODO: this is bad we should not fail at this point}
+        }
+    }
+
     fn read_header(&mut self) -> ImageResult<()> {
         let mut endianess = Vec::with_capacity(2);
         try!(self.reader.by_ref().take(2).read_to_end(&mut endianess));
@@ -166,12 +283,12 @@ impl<R: Read + Seek> TIFFDecoder<R> {
             b"MM" => {
                 self.byte_order = ByteOrder::BigEndian;
                 self.reader.byte_order = ByteOrder::BigEndian;  },
-            _ => return Err(image::ImageError::FormatError(
+            _ => return Err(ImageError::FormatError(
                 "TIFF signature not found.".to_string()
             ))
         }
         if try!(self.read_short()) != 42 {
-            return Err(image::ImageError::FormatError("TIFF signature invalid.".to_string()))
+            return Err(ImageError::FormatError("TIFF signature invalid.".to_string()))
         }
         self.next_ifd = match try!(self.read_long()) {
             0 => None,
@@ -197,7 +314,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
             try!(self.get_tag_u32(ifd::Tag::PhotometricInterpretation))
         ) {
             Some(val) => val,
-            None => return Err(image::ImageError::UnsupportedError(
+            None => return Err(ImageError::UnsupportedError(
                 "The image is using an unknown photometric interpretation.".to_string()
             ))
         };
@@ -206,7 +323,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 Some(method) =>  {
                     self.compression_method = method
                 },
-                None => return Err(image::ImageError::UnsupportedError(
+                None => return Err(ImageError::UnsupportedError(
                     "Unknown compression method.".to_string()
                 ))
             }
@@ -226,7 +343,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 }
 
             }
-            _ => return Err(image::ImageError::UnsupportedError(
+            _ => return Err(ImageError::UnsupportedError(
                 format!("{} samples per pixel is supported.", self.samples)
             ))
         }
@@ -302,7 +419,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     fn read_ifd(&mut self) -> ImageResult<Directory> {
         let mut dir: Directory = HashMap::new();
         match self.next_ifd {
-            None => return Err(image::ImageError::FormatError(
+            None => return Err(ImageError::FormatError(
                 "Image file directory not found.".to_string())
             ),
             Some(offset) => try!(self.goto_offset(offset))
@@ -358,7 +475,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     fn get_tag(&mut self, tag: ifd::Tag) -> ImageResult<ifd::Value> {
         match try!(self.find_tag(tag)) {
             Some(val) => Ok(val),
-            None => Err(::image::ImageError::FormatError(format!(
+            None => Err(ImageError::FormatError(format!(
                 "Required tag `{:?}` not found.", tag
             )))
         }
@@ -393,7 +510,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 let (bytes, reader) = try!(PackBitsReader::new(&mut self.reader, order, length as usize));
                 (bytes, Box::new(reader))
             },
-            method => return Err(::image::ImageError::UnsupportedError(format!(
+            method => return Err(ImageError::UnsupportedError(format!(
                 "Compression method {:?} is unsupported", method
             )))
         };
@@ -427,125 +544,9 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 }
                 bytes
             }
-            (type_, _) => return Err(::image::ImageError::UnsupportedError(format!(
+            (type_, _) => return Err(ImageError::UnsupportedError(format!(
                 "Color type {:?} is unsupported", type_
             )))
         })
-    }
-}
-
-impl<R: Read + Seek> ImageDecoder for TIFFDecoder<R> {
-    fn dimensions(&mut self) -> ImageResult<(u32, u32)> {
-        Ok((self.width, self.height))
-
-    }
-
-    fn colortype(&mut self) -> ImageResult<ColorType> {
-        match self.photometric_interpretation {
-            // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => Ok(ColorType::RGBA(8)),
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8] => Ok(ColorType::RGB(8)),
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16, 16] => Ok(ColorType::RGBA(16)),
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16] => Ok(ColorType::RGB(16)),
-            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                                           if self.bits_per_sample.len() == 1 => Ok(ColorType::Gray(self.bits_per_sample[0])),
-
-            _ => Err(::image::ImageError::UnsupportedError(format!(
-                "{:?} with {:?} bits per sample is unsupported", self.bits_per_sample, self.photometric_interpretation
-            ))) // TODO: this is bad we should not fail at this point}
-        }
-    }
-
-    fn row_len(&mut self) -> ImageResult<usize> {
-        unimplemented!()
-    }
-
-    fn read_scanline(&mut self, _: &mut [u8]) -> ImageResult<u32> {
-        unimplemented!()
-    }
-
-    fn read_image(&mut self) -> ImageResult<DecodingResult> {
-        let bits_per_pixel: u8 = self.bits_per_sample.iter().cloned().sum();
-        let scanline_size_bits = self.width as usize * bits_per_pixel as usize;
-        let scanline_size = (scanline_size_bits + 7) / 8;
-        let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
-            .unwrap_or(self.height) as usize;
-        let buffer_size =
-            self.width  as usize
-            * self.height as usize
-            * self.bits_per_sample.iter().count();
-        let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::U8(Vec::with_capacity(buffer_size)),
-            n if n <= 16 => DecodingResult::U16(Vec::with_capacity(buffer_size)),
-            n => return Err(
-                ImageError::UnsupportedError(
-                    format!("{} bits per channel not supported", n)
-                )
-            )
-        };
-        if let Ok(config) = self.get_tag_u32(ifd::Tag::PlanarConfiguration) {
-            match FromPrimitive::from_u32(config) {
-                Some(PlanarConfiguration::Chunky) => {},
-                config => return Err(ImageError::UnsupportedError(
-                    format!("Unsupported planar configuration “{:?}”.", config)
-                ))
-            }
-        }
-        // Safe since the uninitialized values are never read.
-        match result {
-            DecodingResult::U8(ref mut buffer) =>
-                unsafe { buffer.set_len(buffer_size) },
-            DecodingResult::U16(ref mut buffer) =>
-                unsafe { buffer.set_len(buffer_size) },
-        }
-        let mut units_read = 0;
-        for (i, (&offset, &byte_count)) in try!(self.get_tag_u32_vec(ifd::Tag::StripOffsets))
-        .iter().zip(try!(self.get_tag_u32_vec(ifd::Tag::StripByteCounts)).iter()).enumerate() {
-            let uncompressed_strip_size = scanline_size
-                * (self.height as usize - i * rows_per_strip);
-
-            units_read += match result {
-                DecodingResult::U8(ref mut buffer) => {
-                    try!(self.expand_strip(
-                        DecodingBuffer::U8(&mut buffer[units_read..]),
-                        offset, byte_count, uncompressed_strip_size
-                    ))
-                },
-                DecodingResult::U16(ref mut buffer) => {
-                    try!(self.expand_strip(
-                        DecodingBuffer::U16(&mut buffer[units_read..]),
-                        offset, byte_count, uncompressed_strip_size
-                    ))
-                },
-            };
-            if units_read == buffer_size {
-                break
-            }
-        }
-        // Shrink length such that the uninitialized memory is not exposed.
-        if units_read < buffer_size {
-            match result {
-                DecodingResult::U8(ref mut buffer) =>
-                    unsafe { buffer.set_len(units_read) },
-                DecodingResult::U16(ref mut buffer) =>
-                    unsafe { buffer.set_len(units_read) },
-            }
-        }
-        if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
-            result = match FromPrimitive::from_u32(predictor) {
-                Some(Predictor::None) => result,
-                Some(Predictor::Horizontal) => {
-                    try!(rev_hpredict(
-                        result,
-                        try!(self.dimensions()),
-                        try!(self.colortype())
-                    ))
-                },
-                None => return Err(ImageError::FormatError(
-                    format!("Unknown predictor “{}” encountered", predictor)
-                ))
-            }
-        }
-        Ok(result)
     }
 }
