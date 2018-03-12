@@ -1,0 +1,9 @@
+[package]
+name = "image-tiff"
+version = "0.1.0"
+authors = ["R.Chavignat <r.chavignat@gmail.com>"]
+
+[dependencies]
+byteorder = "1.2.1"
+lzw = "0.10.0"
+num-traits = "0.1.32"
