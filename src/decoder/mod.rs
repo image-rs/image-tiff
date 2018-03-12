@@ -164,6 +164,10 @@ impl<R: Read + Seek> TIFFDecoder<R> {
         }.init()
     }
 
+    fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
+        Ok((self.width, self.height))
+    }
+
     fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
             // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
@@ -455,5 +459,91 @@ impl<R: Read + Seek> TIFFDecoder<R> {
                 "Color type {:?} is unsupported", type_
             )))
         })
+    }
+
+    /// Decodes the entire image and return it as a Vector
+    pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
+        let bits_per_pixel: u8 = self.bits_per_sample.iter().cloned().sum();
+        let scanline_size_bits = self.width as usize * bits_per_pixel as usize;
+        let scanline_size = (scanline_size_bits + 7) / 8;
+        let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
+            .unwrap_or(self.height) as usize;
+        let buffer_size =
+            self.width  as usize
+            * self.height as usize
+            * self.bits_per_sample.iter().count();
+        let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
+            n if n <= 8 => DecodingResult::U8(Vec::with_capacity(buffer_size)),
+            n if n <= 16 => DecodingResult::U16(Vec::with_capacity(buffer_size)),
+            n => return Err(
+                TiffError::UnsupportedError(
+                    format!("{} bits per channel not supported", n)
+                )
+            )
+        };
+        if let Ok(config) = self.get_tag_u32(ifd::Tag::PlanarConfiguration) {
+            match FromPrimitive::from_u32(config) {
+                Some(PlanarConfiguration::Chunky) => {},
+                config => return Err(TiffError::UnsupportedError(
+                    format!("Unsupported planar configuration “{:?}”.", config)
+                ))
+            }
+        }
+        // Safe since the uninitialized values are never read.
+        match result {
+            DecodingResult::U8(ref mut buffer) =>
+                unsafe { buffer.set_len(buffer_size) },
+            DecodingResult::U16(ref mut buffer) =>
+                unsafe { buffer.set_len(buffer_size) },
+        }
+        let mut units_read = 0;
+        for (i, (&offset, &byte_count)) in try!(self.get_tag_u32_vec(ifd::Tag::StripOffsets))
+        .iter().zip(try!(self.get_tag_u32_vec(ifd::Tag::StripByteCounts)).iter()).enumerate() {
+            let uncompressed_strip_size = scanline_size
+                * (self.height as usize - i * rows_per_strip);
+
+            units_read += match result {
+                DecodingResult::U8(ref mut buffer) => {
+                    try!(self.expand_strip(
+                        DecodingBuffer::U8(&mut buffer[units_read..]),
+                        offset, byte_count, uncompressed_strip_size
+                    ))
+                },
+                DecodingResult::U16(ref mut buffer) => {
+                    try!(self.expand_strip(
+                        DecodingBuffer::U16(&mut buffer[units_read..]),
+                        offset, byte_count, uncompressed_strip_size
+                    ))
+                },
+            };
+            if units_read == buffer_size {
+                break
+            }
+        }
+        // Shrink length such that the uninitialized memory is not exposed.
+        if units_read < buffer_size {
+            match result {
+                DecodingResult::U8(ref mut buffer) =>
+                    unsafe { buffer.set_len(units_read) },
+                DecodingResult::U16(ref mut buffer) =>
+                    unsafe { buffer.set_len(units_read) },
+            }
+        }
+        if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
+            result = match FromPrimitive::from_u32(predictor) {
+                Some(Predictor::None) => result,
+                Some(Predictor::Horizontal) => {
+                    try!(rev_hpredict(
+                        result,
+                        try!(self.dimensions()),
+                        try!(self.colortype())
+                    ))
+                },
+                None => return Err(TiffError::FormatError(
+                    format!("Unknown predictor “{}” encountered", predictor)
+                ))
+            }
+        }
+        Ok(result)
     }
 }
