@@ -97,7 +97,7 @@ impl PackBitsReader {
         }
         Ok((buffer.len(), PackBitsReader {
             buffer: io::Cursor::new(buffer),
-            byte_order: byte_order
+            byte_order
         }))
     }
 }
@@ -152,10 +152,7 @@ pub struct SmartReader<R> where R: Read + Seek {
 impl<R> SmartReader<R> where R: Read + Seek {
     /// Wraps a reader
     pub fn wrap(reader: R, byte_order: ByteOrder) -> SmartReader<R> {
-        SmartReader {
-            reader: reader,
-            byte_order: byte_order
-        }
+        SmartReader { reader, byte_order }
     }
 }
 

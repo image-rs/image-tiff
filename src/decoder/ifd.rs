@@ -41,7 +41,7 @@ tags!{
     // palette-color images (PhotometricInterpretation 3)
     ColorMap 320; // TODO add support
     Compression 259; // TODO add support for 2 and 32773
-    Copyright 33432; // TODO add support
+    Copyright 33_432; // TODO add support
     DateTime 306; // TODO add support
     ExtraSamples 338; // TODO add support
     FillOrder 266; // TODO add support
@@ -137,11 +137,7 @@ impl ::std::fmt::Debug for Entry {
 
 impl Entry {
     pub fn new(type_: Type, count: u32, offset: [u8; 4]) -> Entry {
-        Entry {
-            type_: type_,
-            count: count,
-            offset: offset
-        }
+        Entry { type_, count, offset }
     }
 
     /// Returns a mem_reader for the offset/value field
