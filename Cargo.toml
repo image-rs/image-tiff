@@ -8,7 +8,8 @@ authors = [
     "TyOverby <ty@pre-alpha.com>",
     "HeroicKatora",
     "Calum",
-    "CensoredUsername <cens.username@gmail.com>"]
+    "CensoredUsername <cens.username@gmail.com>",
+    "Robzz"]
 
 [dependencies]
 byteorder = "1.2.*"
