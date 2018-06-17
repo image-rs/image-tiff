@@ -28,7 +28,7 @@ pub enum DecodingResult {
 }
 
 // A buffer for image decoding
-pub enum DecodingBuffer<'a> {
+enum DecodingBuffer<'a> {
     /// A slice of unsigned bytes
     U8(&'a mut [u8]),
     /// A slice of unsigned words
@@ -82,7 +82,7 @@ enum Predictor {
 ///
 /// Currently does not support decoding of interlaced images
 #[derive(Debug)]
-pub struct TIFFDecoder<R> where R: Read + Seek {
+pub struct Decoder<R> where R: Read + Seek {
     reader: SmartReader<R>,
     byte_order: ByteOrder,
     next_ifd: Option<u32>,
@@ -147,10 +147,10 @@ fn rev_hpredict(image: DecodingResult, size: (u32, u32), color_type: ColorType) 
     })
 }
 
-impl<R: Read + Seek> TIFFDecoder<R> {
+impl<R: Read + Seek> Decoder<R> {
     /// Create a new decoder that decodes from the stream ```r```
-    pub fn new(r: R) -> TiffResult<TIFFDecoder<R>> {
-        TIFFDecoder {
+    pub fn new(r: R) -> TiffResult<Decoder<R>> {
+        Decoder {
             reader: SmartReader::wrap(r, ByteOrder::LittleEndian),
             byte_order: ByteOrder::LittleEndian,
             next_ifd: None,
@@ -164,11 +164,11 @@ impl<R: Read + Seek> TIFFDecoder<R> {
         }.init()
     }
 
-    fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
+    pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
         Ok((self.width, self.height))
     }
 
-    fn colortype(&mut self) -> TiffResult<ColorType> {
+    pub fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
             // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
             PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => Ok(ColorType::RGBA(8)),
@@ -209,7 +209,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     }
 
     /// Initializes the decoder.
-    pub fn init(mut self) -> TiffResult<TIFFDecoder<R>> {
+    pub fn init(mut self) -> TiffResult<Decoder<R>> {
         try!(self.read_header());
         self.next_image()
     }
@@ -217,7 +217,7 @@ impl<R: Read + Seek> TIFFDecoder<R> {
     /// Reads in the next image.
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
-    pub fn next_image(mut self) -> TiffResult<TIFFDecoder<R>> {
+    pub fn next_image(mut self) -> TiffResult<Decoder<R>> {
         self.ifd = Some(try!(self.read_ifd()));
         self.width = try!(self.get_tag_u32(ifd::Tag::ImageWidth));
         self.height = try!(self.get_tag_u32(ifd::Tag::ImageLength));

@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
-/// An enumeration of Tiff errors
+/// Tiff error kinds.
 #[derive(Debug)]
 pub enum TiffError {
     /// The Image is not formatted properly

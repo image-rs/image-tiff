@@ -1,7 +1,14 @@
 [package]
 name = "tiff"
 version = "0.1.0"
-authors = []
+authors = [
+    "ccgn",
+    "bvssvni <bvssvni@gmail.com>",
+    "nwin",
+    "TyOverby <ty@pre-alpha.com>",
+    "HeroicKatora",
+    "Calum",
+    "CensoredUsername <cens.username@gmail.com>"]
 
 [dependencies]
 byteorder = "1.2.*"

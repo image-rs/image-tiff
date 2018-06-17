@@ -148,7 +148,7 @@ impl Entry {
         )
     }
 
-    pub fn val<R: Read + Seek>(&self, decoder: &mut super::TIFFDecoder<R>)
+    pub fn val<R: Read + Seek>(&self, decoder: &mut super::Decoder<R>)
     -> TiffResult<Value> {
         let bo = decoder.byte_order();
         match (self.type_, self.count) {
