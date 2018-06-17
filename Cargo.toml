@@ -1,0 +1,18 @@
+[package]
+name = "tiff"
+version = "0.1.0"
+authors = [
+    "ccgn",
+    "bvssvni <bvssvni@gmail.com>",
+    "nwin",
+    "TyOverby <ty@pre-alpha.com>",
+    "HeroicKatora",
+    "Calum",
+    "CensoredUsername <cens.username@gmail.com>",
+    "Robzz"]
+
+[dependencies]
+byteorder = "1.2.*"
+lzw = "0.10.*"
+num-derive = "0.2.*"
+num-traits = "0.2.*"
