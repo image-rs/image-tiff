@@ -10,6 +10,9 @@ authors = [
     "Calum",
     "CensoredUsername <cens.username@gmail.com>",
     "Robzz"]
+license = "MIT"
+description = "TIFF decoding and encoding library in pure Rust"
+repository = "https://github.com/PistonDevelopers/image-png.git"
 
 [dependencies]
 byteorder = "1.2.*"
