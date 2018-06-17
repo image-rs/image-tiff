@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = []
 
 [dependencies]
-byteorder = "1.2.1"
-enum_primitive = "0.1.0"
-lzw = "0.10.0"
-num-traits = "0.1.32"
+byteorder = "1.2.*"
+enum_primitive = "0.1.*"
+lzw = "0.10.*"
+num-traits = "0.2.*"
