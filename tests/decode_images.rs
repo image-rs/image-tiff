@@ -54,4 +54,4 @@ fn test_rgb_u16()
     //assert_eq!(decoder.colortype().unwrap(), ColorType::GrayA(8));
     //let img_res = decoder.read_image();
     //assert!(img_res.is_ok());
-}
+//}

@@ -8,8 +8,8 @@
 
 extern crate byteorder;
 extern crate lzw;
+#[macro_use] extern crate num_derive;
 extern crate num_traits;
-#[macro_use] extern crate enum_primitive;
 
 pub mod decoder;
 mod error;

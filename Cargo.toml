@@ -13,6 +13,6 @@ authors = [
 
 [dependencies]
 byteorder = "1.2.*"
-enum_primitive = "0.1.*"
 lzw = "0.10.*"
+num-derive = "0.2.*"
 num-traits = "0.2.*"
