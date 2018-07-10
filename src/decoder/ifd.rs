@@ -6,7 +6,7 @@ use std::collections::{HashMap};
 use super::stream::{ByteOrder, SmartReader, EndianReader};
 use ::{TiffError, TiffResult};
 
-use self::Value::{Unsigned, List};
+use self::Value::{Unsigned, List, Rational};
 
 macro_rules! tags {
     {$(
@@ -90,7 +90,8 @@ pub enum Type {
 pub enum Value {
     //Signed(i32),
     Unsigned(u32),
-    List(Vec<Value>)
+    List(Vec<Value>),
+    Rational(u32, u32)
 }
 
 impl Value {
@@ -112,6 +113,7 @@ impl Value {
                 Ok(new_vec)
             },
             Unsigned(val) => Ok(vec![val]),
+            Rational(numerator, denominator) => Ok(vec![numerator, denominator])
             //_ => Err(::image::FormatError("Tag data malformed.".to_string()))
         }
     }
@@ -178,6 +180,22 @@ impl Entry {
                 }
                 Ok(List(v))
             }
+            (Type::RATIONAL, 1) => {
+                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
+                let numerator = try!(decoder.read_long());
+                let denominator = try!(decoder.read_long());
+                Ok(Rational(numerator, denominator))
+            },
+            (Type::RATIONAL, n) => {
+                let mut v = Vec::with_capacity(n as usize);
+                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
+                for _ in 0 .. n {
+                    let numerator = try!(decoder.read_long());
+                    let denominator = try!(decoder.read_long());
+                    v.push(Rational(numerator, denominator))
+                }
+                Ok(List(v))
+            },
             _ => Err(TiffError::UnsupportedError("Unsupported data type.".to_string()))
         }
     }
