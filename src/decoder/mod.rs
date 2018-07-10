@@ -15,7 +15,7 @@ use self::stream::{
     PackBitsReader
 };
 
-mod ifd;
+pub mod ifd;
 mod stream;
 
 /// Result of a decoding process
@@ -344,7 +344,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
-    fn find_tag(&mut self, tag: ifd::Tag) -> TiffResult<Option<ifd::Value>> {
+    pub fn find_tag(&mut self, tag: ifd::Tag) -> TiffResult<Option<ifd::Value>> {
         let ifd: &Directory = unsafe {
             let ifd = self.ifd.as_ref().unwrap(); // Ok to fail
             // Get a immutable borrow of self
@@ -359,7 +359,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn find_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<Option<u32>> {
+    pub fn find_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<Option<u32>> {
         match self.find_tag(tag)? {
             Some(val) => val.into_u32().map(Some),
             None => Ok(None)
@@ -367,7 +367,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn find_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Option<Vec<u32>>> {
+    pub fn find_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Option<Vec<u32>>> {
         match self.find_tag(tag)? {
             Some(val) => val.into_u32_vec().map(Some),
             None => Ok(None)
@@ -376,7 +376,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a tag.
     /// Returns an error if the tag is not present
-    fn get_tag(&mut self, tag: ifd::Tag) -> TiffResult<ifd::Value> {
+    pub fn get_tag(&mut self, tag: ifd::Tag) -> TiffResult<ifd::Value> {
         match try!(self.find_tag(tag)) {
             Some(val) => Ok(val),
             None => Err(TiffError::FormatError(format!(
@@ -386,12 +386,12 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn get_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<u32> {
+    pub fn get_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
-    fn get_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Vec<u32>> {
+    pub fn get_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
     }
 
