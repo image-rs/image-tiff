@@ -427,15 +427,13 @@ impl<R: Read + Seek> Decoder<R> {
             }
             (ColorType::RGBA(16), DecodingBuffer::U16(ref mut buffer)) |
             (ColorType:: RGB(16), DecodingBuffer::U16(ref mut buffer)) => {
-                for datum in buffer[..bytes/2].iter_mut() {
-                    *datum = try!(reader.read_u16())
-                }
+                try!(reader.read_u16_into(&mut buffer[..bytes/2]));
                 bytes/2
             }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                for datum in buffer[..bytes/2].iter_mut() {
-                    *datum = try!(reader.read_u16());
-                    if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                try!(reader.read_u16_into(&mut buffer[..bytes/2]));
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes/2].iter_mut() {
                         *datum = 0xffff - *datum
                     }
                 }
