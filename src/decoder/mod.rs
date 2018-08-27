@@ -422,7 +422,8 @@ impl<R: Read + Seek> Decoder<R> {
             (ColorType:: RGB(8), DecodingBuffer::U8(ref mut buffer)) |
             (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) | 
             (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
-                try!(reader.read(&mut buffer[..bytes]))
+                try!(reader.read_exact(&mut buffer[..bytes]));
+                bytes
             }
             (ColorType::RGBA(16), DecodingBuffer::U16(ref mut buffer)) |
             (ColorType:: RGB(16), DecodingBuffer::U16(ref mut buffer)) => {
