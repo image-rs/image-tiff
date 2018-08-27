@@ -467,8 +467,8 @@ impl<R: Read + Seek> Decoder<R> {
             * self.height as usize
             * self.bits_per_sample.iter().count();
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::U8(Vec::with_capacity(buffer_size)),
-            n if n <= 16 => DecodingResult::U16(Vec::with_capacity(buffer_size)),
+            n if n <= 8 => DecodingResult::U8(vec![0; buffer_size]),
+            n if n <= 16 => DecodingResult::U16(vec![0; buffer_size]),
             n => return Err(
                 TiffError::UnsupportedError(
                     format!("{} bits per channel not supported", n)
@@ -482,13 +482,6 @@ impl<R: Read + Seek> Decoder<R> {
                     format!("Unsupported planar configuration “{:?}”.", config)
                 ))
             }
-        }
-        // Safe since the uninitialized values are never read.
-        match result {
-            DecodingResult::U8(ref mut buffer) =>
-                unsafe { buffer.set_len(buffer_size) },
-            DecodingResult::U16(ref mut buffer) =>
-                unsafe { buffer.set_len(buffer_size) },
         }
         let mut units_read = 0;
         for (i, (&offset, &byte_count)) in try!(self.get_tag_u32_vec(ifd::Tag::StripOffsets))
@@ -514,14 +507,8 @@ impl<R: Read + Seek> Decoder<R> {
                 break
             }
         }
-        // Shrink length such that the uninitialized memory is not exposed.
         if units_read < buffer_size {
-            match result {
-                DecodingResult::U8(ref mut buffer) =>
-                    unsafe { buffer.set_len(units_read) },
-                DecodingResult::U16(ref mut buffer) =>
-                    unsafe { buffer.set_len(units_read) },
-            }
+            return Err(TiffError::FormatError("Inconsistent sizes encountered.".to_string()));
         }
         if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
             result = match FromPrimitive::from_u32(predictor) {
