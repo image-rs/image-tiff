@@ -3,7 +3,7 @@ use std::mem;
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
 
-use ::{ColorType, TiffError, TiffResult};
+use ::{ColorType, TiffError, TiffFormatError, TiffResult};
 
 use self::ifd::Directory;
 
@@ -187,12 +187,10 @@ impl<R: Read + Seek> Decoder<R> {
             b"MM" => {
                 self.byte_order = ByteOrder::BigEndian;
                 self.reader.byte_order = ByteOrder::BigEndian;  },
-            _ => return Err(TiffError::FormatError(
-                "TIFF signature not found.".to_string()
-            ))
+            _ => return Err(TiffError::FormatError(TiffFormatError::TiffSignatureNotFound))
         }
         if try!(self.read_short()) != 42 {
-            return Err(TiffError::FormatError("TIFF signature invalid.".to_string()))
+            return Err(TiffError::FormatError(TiffFormatError::TiffSignatureInvalid))
         }
         self.next_ifd = match try!(self.read_long()) {
             0 => None,
@@ -323,9 +321,7 @@ impl<R: Read + Seek> Decoder<R> {
     fn read_ifd(&mut self) -> TiffResult<Directory> {
         let mut dir: Directory = HashMap::new();
         match self.next_ifd {
-            None => return Err(TiffError::FormatError(
-                "Image file directory not found.".to_string())
-            ),
+            None => return Err(TiffError::FormatError(TiffFormatError::ImageFileDirectoryNotFound)),
             Some(offset) => try!(self.goto_offset(offset))
         }
         for _ in 0..try!(self.read_short()) {
@@ -379,9 +375,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn get_tag(&mut self, tag: ifd::Tag) -> TiffResult<ifd::Value> {
         match try!(self.find_tag(tag)) {
             Some(val) => Ok(val),
-            None => Err(TiffError::FormatError(format!(
-                "Required tag `{:?}` not found.", tag
-            )))
+            None => Err(TiffError::FormatError(TiffFormatError::RequiredTagNotFound(tag))),
         }
     }
 
@@ -420,7 +414,7 @@ impl<R: Read + Seek> Decoder<R> {
         };
         Ok(match (color_type, buffer) {
             (ColorType:: RGB(8), DecodingBuffer::U8(ref mut buffer)) |
-            (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) | 
+            (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) |
             (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
                 try!(reader.read(&mut buffer[..bytes]))
             }
@@ -533,9 +527,7 @@ impl<R: Read + Seek> Decoder<R> {
                         try!(self.colortype())
                     ))
                 },
-                None => return Err(TiffError::FormatError(
-                    format!("Unknown predictor “{}” encountered", predictor)
-                ))
+                None => return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(predictor))),
             }
         }
         Ok(result)

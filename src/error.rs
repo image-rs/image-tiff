@@ -2,17 +2,43 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
+use decoder::ifd::{Tag, Value};
+
 /// Tiff error kinds.
 #[derive(Debug)]
 pub enum TiffError {
     /// The Image is not formatted properly
-    FormatError(String),
+    FormatError(TiffFormatError),
 
     /// The Decoder does not support this image format
     UnsupportedError(String),
 
     /// An I/O Error occurred while decoding the image
     IoError(io::Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TiffFormatError {
+    TiffSignatureNotFound,
+    TiffSignatureInvalid,
+    ImageFileDirectoryNotFound,
+    RequiredTagNotFound(Tag),
+    UnknownPredictor(u32),
+    UnsignedIntegerExpected(Value),
+}
+
+impl fmt::Display for TiffFormatError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use self::TiffFormatError::*;
+        match *self {
+            TiffSignatureNotFound => write!(fmt, "TIFF signature not found."),
+            TiffSignatureInvalid => write!(fmt, "TIFF signature invalid."),
+            ImageFileDirectoryNotFound => write!(fmt, "Image file directory not found."),
+            RequiredTagNotFound(ref tag) => write!(fmt, "Required tag `{:?}` not found.", tag),
+            UnknownPredictor(ref predictor) => write!(fmt, "Unknown predictor “{}” encountered", predictor),
+            UnsignedIntegerExpected(ref val) => write!(fmt,  "Expected unsigned integer, {:?} found.", val),
+        }
+    }
 }
 
 impl fmt::Display for TiffError {

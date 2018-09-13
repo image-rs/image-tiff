@@ -14,7 +14,7 @@ extern crate num_traits;
 pub mod decoder;
 mod error;
 
-pub use self::error::{TiffError, TiffResult};
+pub use self::error::{TiffError, TiffFormatError, TiffResult};
 
 /// An enumeration over supported color types and their bit depths
 #[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]
