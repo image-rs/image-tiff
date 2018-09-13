@@ -4,7 +4,7 @@ use std::io::{self, Read, Seek};
 use std::collections::{HashMap};
 
 use super::stream::{ByteOrder, SmartReader, EndianReader};
-use ::{TiffError, TiffFormatError, TiffResult};
+use ::{TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
 
 use self::Value::{Unsigned, List, Rational};
 
@@ -86,7 +86,7 @@ pub enum Type {
 
 
 #[allow(unused_qualifications)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Value {
     //Signed(i32),
     Unsigned(u32),
@@ -194,7 +194,7 @@ impl Entry {
                 }
                 Ok(List(v))
             },
-            _ => Err(TiffError::UnsupportedError("Unsupported data type.".to_string()))
+            _ => Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedDataType))
         }
     }
 }
