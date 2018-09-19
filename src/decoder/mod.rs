@@ -2,6 +2,7 @@ use std::io::{self, Read, Seek};
 use std::mem;
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
+use std::string::FromUtf8Error;
 
 use ::{ColorType, TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
 
@@ -266,6 +267,16 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_long(&mut self) -> Result<u32, io::Error> {
         self.reader.read_u32()
+    }
+
+    /// Reads a string
+    #[inline]
+    pub fn read_string(&mut self, length: usize) -> Result<String, FromUtf8Error> {
+        let mut out = String::with_capacity(length);
+        self.reader.read_to_string(&mut out);
+        // Strings may be null-terminated, so we trim anything downstream of the null byte
+        let trimmed = out.bytes().take_while(|&n| n != 0).collect::<Vec<u8>>();
+        String::from_utf8(trimmed)
     }
 
     /// Reads a TIFF IFA offset/value field

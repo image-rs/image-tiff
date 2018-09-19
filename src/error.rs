@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
+use std::string;
 
 use decoder::ifd::{Tag, Value};
 use decoder::{PhotometricInterpretation, CompressionMethod, PlanarConfiguration};
@@ -108,6 +109,12 @@ impl Error for TiffError {
 impl From<io::Error> for TiffError {
     fn from(err: io::Error) -> TiffError {
         TiffError::IoError(err)
+    }
+}
+
+impl From<string::FromUtf8Error> for TiffError {
+    fn from(err: string::FromUtf8Error) -> TiffError {
+        TiffError::FormatError(String::from("Image contains invalid tag."))
     }
 }
 
