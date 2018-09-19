@@ -416,19 +416,18 @@ impl<R: Read + Seek> Decoder<R> {
             (ColorType:: RGB(8), DecodingBuffer::U8(ref mut buffer)) |
             (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) |
             (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
-                try!(reader.read(&mut buffer[..bytes]))
+                try!(reader.read_exact(&mut buffer[..bytes]));
+                bytes
             }
             (ColorType::RGBA(16), DecodingBuffer::U16(ref mut buffer)) |
             (ColorType:: RGB(16), DecodingBuffer::U16(ref mut buffer)) => {
-                for datum in buffer[..bytes/2].iter_mut() {
-                    *datum = try!(reader.read_u16())
-                }
+                try!(reader.read_u16_into(&mut buffer[..bytes/2]));
                 bytes/2
             }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                for datum in buffer[..bytes/2].iter_mut() {
-                    *datum = try!(reader.read_u16());
-                    if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                try!(reader.read_u16_into(&mut buffer[..bytes/2]));
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes/2].iter_mut() {
                         *datum = 0xffff - *datum
                     }
                 }
@@ -459,8 +458,8 @@ impl<R: Read + Seek> Decoder<R> {
             * self.height as usize
             * self.bits_per_sample.iter().count();
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::U8(Vec::with_capacity(buffer_size)),
-            n if n <= 16 => DecodingResult::U16(Vec::with_capacity(buffer_size)),
+            n if n <= 8 => DecodingResult::U8(vec![0; buffer_size]),
+            n if n <= 16 => DecodingResult::U16(vec![0; buffer_size]),
             n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
         };
         if let Ok(config) = self.get_tag_u32(ifd::Tag::PlanarConfiguration) {
@@ -468,13 +467,6 @@ impl<R: Read + Seek> Decoder<R> {
                 Some(PlanarConfiguration::Chunky) => {},
                 config => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedPlanarConfig(config)))
             }
-        }
-        // Safe since the uninitialized values are never read.
-        match result {
-            DecodingResult::U8(ref mut buffer) =>
-                unsafe { buffer.set_len(buffer_size) },
-            DecodingResult::U16(ref mut buffer) =>
-                unsafe { buffer.set_len(buffer_size) },
         }
         let mut units_read = 0;
         for (i, (&offset, &byte_count)) in try!(self.get_tag_u32_vec(ifd::Tag::StripOffsets))
@@ -500,14 +492,8 @@ impl<R: Read + Seek> Decoder<R> {
                 break
             }
         }
-        // Shrink length such that the uninitialized memory is not exposed.
         if units_read < buffer_size {
-            match result {
-                DecodingResult::U8(ref mut buffer) =>
-                    unsafe { buffer.set_len(units_read) },
-                DecodingResult::U16(ref mut buffer) =>
-                    unsafe { buffer.set_len(units_read) },
-            }
+            return Err(TiffError::FormatError("Inconsistent sizes encountered.".to_string()));
         }
         if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
             result = match FromPrimitive::from_u32(predictor) {
