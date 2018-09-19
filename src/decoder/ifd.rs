@@ -4,9 +4,9 @@ use std::io::{self, Read, Seek};
 use std::collections::{HashMap};
 
 use super::stream::{ByteOrder, SmartReader, EndianReader};
-use ::{TiffError, TiffResult};
+use ::{TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
 
-use self::Value::{Unsigned, List, Rational};
+use self::Value::{Unsigned, List, Rational, Ascii};
 
 macro_rules! tags {
     {$(
@@ -33,7 +33,7 @@ macro_rules! tags {
 // Note: These tags appear in the order they are mentioned in the TIFF reference
 tags!{
     // Baseline tags:
-    Artist 315; // TODO add support
+    Artist 315;
     // grayscale images PhotometricInterpretation 1 or 3
     BitsPerSample 258;
     CellLength 265; // TODO add support
@@ -41,22 +41,22 @@ tags!{
     // palette-color images (PhotometricInterpretation 3)
     ColorMap 320; // TODO add support
     Compression 259; // TODO add support for 2 and 32773
-    Copyright 33_432; // TODO add support
-    DateTime 306; // TODO add support
+    Copyright 33_432;
+    DateTime 306;
     ExtraSamples 338; // TODO add support
     FillOrder 266; // TODO add support
     FreeByteCounts 289; // TODO add support
     FreeOffsets 288; // TODO add support
     GrayResponseCurve 291; // TODO add support
     GrayResponseUnit 290; // TODO add support
-    HostComputer 316; // TODO add support
-    ImageDescription 270; // TODO add support
+    HostComputer 316;
+    ImageDescription 270;
     ImageLength 257;
     ImageWidth 256;
-    Make 271; // TODO add support
+    Make 271;
     MaxSampleValue 281; // TODO add support
     MinSampleValue 280; // TODO add support
-    Model 272; // TODO add support
+    Model 272;
     NewSubfileType 254; // TODO add support
     Orientation 274; // TODO add support
     PhotometricInterpretation 262;
@@ -86,21 +86,20 @@ pub enum Type {
 
 
 #[allow(unused_qualifications)]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Value {
     //Signed(i32),
     Unsigned(u32),
     List(Vec<Value>),
-    Rational(u32, u32)
+    Rational(u32, u32),
+    Ascii(String)
 }
 
 impl Value {
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
             Unsigned(val) => Ok(val),
-            val => Err(TiffError::FormatError(format!(
-                "Expected unsigned integer, {:?} found.", val
-            )))
+            val => Err(TiffError::FormatError(TiffFormatError::UnsignedIntegerExpected(val))),
         }
     }
     pub fn into_u32_vec(self) -> TiffResult<Vec<u32>> {
@@ -113,8 +112,8 @@ impl Value {
                 Ok(new_vec)
             },
             Unsigned(val) => Ok(vec![val]),
-            Rational(numerator, denominator) => Ok(vec![numerator, denominator])
-            //_ => Err(::image::FormatError("Tag data malformed.".to_string()))
+            Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
+            Ascii(val) => Ok(val.chars().map(|x| x as u32).collect())
         }
     }
 }
@@ -196,7 +195,12 @@ impl Entry {
                 }
                 Ok(List(v))
             },
-            _ => Err(TiffError::UnsupportedError("Unsupported data type.".to_string()))
+            (Type::ASCII, n) => {
+                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
+                let string = try!(decoder.read_string(n as usize));
+                Ok(Ascii(string))
+            }
+            _ => Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedDataType))
         }
     }
 }

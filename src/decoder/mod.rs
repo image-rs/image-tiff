@@ -2,8 +2,9 @@ use std::io::{self, Read, Seek};
 use std::mem;
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
+use std::string::FromUtf8Error;
 
-use ::{ColorType, TiffError, TiffResult};
+use ::{ColorType, TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
 
 use self::ifd::Directory;
 
@@ -35,8 +36,8 @@ enum DecodingBuffer<'a> {
     U16(&'a mut [u16])
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
-enum PhotometricInterpretation {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
+pub enum PhotometricInterpretation {
     WhiteIsZero = 0,
     BlackIsZero = 1,
     RGB = 2,
@@ -47,8 +48,8 @@ enum PhotometricInterpretation {
     CIELab = 8,
 }
 
-#[derive(Clone, Copy, Debug, FromPrimitive)]
-enum CompressionMethod {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
+pub enum CompressionMethod {
     None = 1,
     Huffman = 2,
     Fax3 = 3,
@@ -58,13 +59,13 @@ enum CompressionMethod {
     PackBits = 0x8005
 }
 
-#[derive(Clone, Copy, Debug, FromPrimitive)]
-enum PlanarConfiguration {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
+pub enum PlanarConfiguration {
     Chunky = 1,
     Planar = 2
 }
 
-#[derive(Clone, Copy, Debug, FromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
 enum Predictor {
     None = 1,
     Horizontal = 2
@@ -125,9 +126,7 @@ fn rev_hpredict(image: DecodingResult, size: (u32, u32), color_type: ColorType) 
         ColorType::Gray(8) | ColorType::Gray(16) => 1,
         ColorType::RGB(8) | ColorType::RGB(16) => 3,
         ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::CMYK(8) => 4,
-        _ => return Err(TiffError::UnsupportedError(format!(
-            "Horizontal predictor for {:?} is unsupported.", color_type
-        )))
+        _ => return Err(TiffError::UnsupportedError(TiffUnsupportedError::HorizontalPredictor(color_type)))
     };
     Ok(match image {
         DecodingResult::U8(buf) => {
@@ -171,9 +170,8 @@ impl<R: Read + Seek> Decoder<R> {
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
                                            if self.bits_per_sample.len() == 1 => Ok(ColorType::Gray(self.bits_per_sample[0])),
 
-            _ => Err(TiffError::UnsupportedError(format!(
-                "{:?} with {:?} bits per sample is unsupported", self.photometric_interpretation, self.bits_per_sample
-            ))) // TODO: this is bad we should not fail at this point}
+            // TODO: this is bad we should not fail at this point
+            _ => Err(TiffError::UnsupportedError(TiffUnsupportedError::InterpretationWithBits(self.photometric_interpretation, self.bits_per_sample.clone())))
         }
     }
 
@@ -187,12 +185,10 @@ impl<R: Read + Seek> Decoder<R> {
             b"MM" => {
                 self.byte_order = ByteOrder::BigEndian;
                 self.reader.byte_order = ByteOrder::BigEndian;  },
-            _ => return Err(TiffError::FormatError(
-                "TIFF signature not found.".to_string()
-            ))
+            _ => return Err(TiffError::FormatError(TiffFormatError::TiffSignatureNotFound))
         }
         if try!(self.read_short()) != 42 {
-            return Err(TiffError::FormatError("TIFF signature invalid.".to_string()))
+            return Err(TiffError::FormatError(TiffFormatError::TiffSignatureInvalid))
         }
         self.next_ifd = match try!(self.read_long()) {
             0 => None,
@@ -218,18 +214,14 @@ impl<R: Read + Seek> Decoder<R> {
             try!(self.get_tag_u32(ifd::Tag::PhotometricInterpretation))
         ) {
             Some(val) => val,
-            None => return Err(TiffError::UnsupportedError(
-                "The image is using an unknown photometric interpretation.".to_string()
-            ))
+            None => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnknownInterpretation))
         };
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::Compression)) {
             match FromPrimitive::from_u32(val) {
                 Some(method) =>  {
                     self.compression_method = method
                 },
-                None => return Err(TiffError::UnsupportedError(
-                    "Unknown compression method.".to_string()
-                ))
+                None => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnknownCompressionMethod))
             }
         }
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::SamplesPerPixel)) {
@@ -247,9 +239,7 @@ impl<R: Read + Seek> Decoder<R> {
                 }
 
             }
-            _ => return Err(TiffError::UnsupportedError(
-                format!("{} samples per pixel is supported.", self.samples)
-            ))
+            _ => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedSampleDepth(self.samples)))
         }
         Ok(self)
     }
@@ -277,6 +267,16 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_long(&mut self) -> Result<u32, io::Error> {
         self.reader.read_u32()
+    }
+
+    /// Reads a string
+    #[inline]
+    pub fn read_string(&mut self, length: usize) -> Result<String, FromUtf8Error> {
+        let mut out = String::with_capacity(length);
+        self.reader.read_to_string(&mut out);
+        // Strings may be null-terminated, so we trim anything downstream of the null byte
+        let trimmed = out.bytes().take_while(|&n| n != 0).collect::<Vec<u8>>();
+        String::from_utf8(trimmed)
     }
 
     /// Reads a TIFF IFA offset/value field
@@ -323,9 +323,7 @@ impl<R: Read + Seek> Decoder<R> {
     fn read_ifd(&mut self) -> TiffResult<Directory> {
         let mut dir: Directory = HashMap::new();
         match self.next_ifd {
-            None => return Err(TiffError::FormatError(
-                "Image file directory not found.".to_string())
-            ),
+            None => return Err(TiffError::FormatError(TiffFormatError::ImageFileDirectoryNotFound)),
             Some(offset) => try!(self.goto_offset(offset))
         }
         for _ in 0..try!(self.read_short()) {
@@ -379,9 +377,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn get_tag(&mut self, tag: ifd::Tag) -> TiffResult<ifd::Value> {
         match try!(self.find_tag(tag)) {
             Some(val) => Ok(val),
-            None => Err(TiffError::FormatError(format!(
-                "Required tag `{:?}` not found.", tag
-            )))
+            None => Err(TiffError::FormatError(TiffFormatError::RequiredTagNotFound(tag))),
         }
     }
 
@@ -414,13 +410,11 @@ impl<R: Read + Seek> Decoder<R> {
                 let (bytes, reader) = try!(PackBitsReader::new(&mut self.reader, order, length as usize));
                 (bytes, Box::new(reader))
             },
-            method => return Err(TiffError::UnsupportedError(format!(
-                "Compression method {:?} is unsupported", method
-            )))
+            method => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedCompressionMethod(method)))
         };
         Ok(match (color_type, buffer) {
             (ColorType:: RGB(8), DecodingBuffer::U8(ref mut buffer)) |
-            (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) | 
+            (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) |
             (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
                 try!(reader.read_exact(&mut buffer[..bytes]));
                 bytes
@@ -448,9 +442,7 @@ impl<R: Read + Seek> Decoder<R> {
                 }
                 bytes
             }
-            (type_, _) => return Err(TiffError::UnsupportedError(format!(
-                "Color type {:?} is unsupported", type_
-            )))
+            (type_, _) => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedColorType(type_))),
         })
     }
 
@@ -468,18 +460,12 @@ impl<R: Read + Seek> Decoder<R> {
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::U8(vec![0; buffer_size]),
             n if n <= 16 => DecodingResult::U16(vec![0; buffer_size]),
-            n => return Err(
-                TiffError::UnsupportedError(
-                    format!("{} bits per channel not supported", n)
-                )
-            )
+            n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
         };
         if let Ok(config) = self.get_tag_u32(ifd::Tag::PlanarConfiguration) {
             match FromPrimitive::from_u32(config) {
                 Some(PlanarConfiguration::Chunky) => {},
-                config => return Err(TiffError::UnsupportedError(
-                    format!("Unsupported planar configuration “{:?}”.", config)
-                ))
+                config => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedPlanarConfig(config)))
             }
         }
         let mut units_read = 0;
@@ -519,9 +505,7 @@ impl<R: Read + Seek> Decoder<R> {
                         try!(self.colortype())
                     ))
                 },
-                None => return Err(TiffError::FormatError(
-                    format!("Unknown predictor “{}” encountered", predictor)
-                ))
+                None => return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(predictor))),
             }
         }
         Ok(result)
