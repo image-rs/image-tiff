@@ -4,7 +4,7 @@ use std::io::{self, Read, Seek};
 use std::collections::{HashMap};
 
 use super::stream::{ByteOrder, SmartReader, EndianReader};
-use ::{TiffError, TiffResult};
+use ::{TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
 
 use self::Value::{Unsigned, List, Rational};
 
@@ -86,7 +86,7 @@ pub enum Type {
 
 
 #[allow(unused_qualifications)]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Value {
     //Signed(i32),
     Unsigned(u32),
@@ -98,9 +98,7 @@ impl Value {
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
             Unsigned(val) => Ok(val),
-            val => Err(TiffError::FormatError(format!(
-                "Expected unsigned integer, {:?} found.", val
-            )))
+            val => Err(TiffError::FormatError(TiffFormatError::UnsignedIntegerExpected(val))),
         }
     }
     pub fn into_u32_vec(self) -> TiffResult<Vec<u32>> {
@@ -196,7 +194,7 @@ impl Entry {
                 }
                 Ok(List(v))
             },
-            _ => Err(TiffError::UnsupportedError("Unsupported data type.".to_string()))
+            _ => Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedDataType))
         }
     }
 }
