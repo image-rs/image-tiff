@@ -25,6 +25,8 @@ pub enum TiffFormatError {
     TiffSignatureNotFound,
     TiffSignatureInvalid,
     ImageFileDirectoryNotFound,
+    InconsistentSizesEncountered,
+    InvalidTag,
     RequiredTagNotFound(Tag),
     UnknownPredictor(u32),
     UnsignedIntegerExpected(Value),
@@ -37,6 +39,8 @@ impl fmt::Display for TiffFormatError {
             TiffSignatureNotFound => write!(fmt, "TIFF signature not found."),
             TiffSignatureInvalid => write!(fmt, "TIFF signature invalid."),
             ImageFileDirectoryNotFound => write!(fmt, "Image file directory not found."),
+            InconsistentSizesEncountered => write!(fmt, "Inconsistent sizes encountered."),
+            InvalidTag => write!(fmt, "Image contains invalid tag."),
             RequiredTagNotFound(ref tag) => write!(fmt, "Required tag `{:?}` not found.", tag),
             UnknownPredictor(ref predictor) => write!(fmt, "Unknown predictor “{}” encountered", predictor),
             UnsignedIntegerExpected(ref val) => write!(fmt,  "Expected unsigned integer, {:?} found.", val),
@@ -113,8 +117,8 @@ impl From<io::Error> for TiffError {
 }
 
 impl From<string::FromUtf8Error> for TiffError {
-    fn from(err: string::FromUtf8Error) -> TiffError {
-        TiffError::FormatError(String::from("Image contains invalid tag."))
+    fn from(_err: string::FromUtf8Error) -> TiffError {
+        TiffError::FormatError(TiffFormatError::InvalidTag)
     }
 }
 

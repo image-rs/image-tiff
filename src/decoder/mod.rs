@@ -493,7 +493,7 @@ impl<R: Read + Seek> Decoder<R> {
             }
         }
         if units_read < buffer_size {
-            return Err(TiffError::FormatError("Inconsistent sizes encountered.".to_string()));
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
         }
         if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
             result = match FromPrimitive::from_u32(predictor) {
