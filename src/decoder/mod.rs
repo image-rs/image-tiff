@@ -472,7 +472,7 @@ impl<R: Read + Seek> Decoder<R> {
         for (i, (&offset, &byte_count)) in try!(self.get_tag_u32_vec(ifd::Tag::StripOffsets))
         .iter().zip(try!(self.get_tag_u32_vec(ifd::Tag::StripByteCounts)).iter()).enumerate() {
             let uncompressed_strip_size = scanline_size
-                * (self.height as usize - i * rows_per_strip);
+                * (self.height as usize - i * rows_per_strip).min(rows_per_strip);
 
             units_read += match result {
                 DecodingResult::U8(ref mut buffer) => {
