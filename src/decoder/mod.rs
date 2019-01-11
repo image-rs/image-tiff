@@ -1,5 +1,4 @@
 use std::io::{self, Read, Seek};
-use std::mem;
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
 use std::string::FromUtf8Error;
@@ -343,17 +342,12 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: ifd::Tag) -> TiffResult<Option<ifd::Value>> {
-        let ifd: &Directory = unsafe {
-            let ifd = self.ifd.as_ref().unwrap(); // Ok to fail
-            // Get a immutable borrow of self
-            // This is ok because entry val only changes the stream
-            // but not the directory.
-            mem::transmute_copy(&ifd)
+        let entry = match self.ifd.as_ref().unwrap().get(&tag) {
+            None => return Ok(None),
+            Some(entry) => entry.clone(),
         };
-        match ifd.get(&tag) {
-            None => Ok(None),
-            Some(entry) => Ok(Some(try!(entry.val(self))))
-        }
+
+        Ok(Some(try!(entry.val(self))))
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
