@@ -118,6 +118,7 @@ impl Value {
     }
 }
 
+#[derive(Clone)]
 pub struct Entry {
     type_: Type,
     count: u32,
