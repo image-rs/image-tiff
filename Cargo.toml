@@ -15,7 +15,7 @@ description = "TIFF decoding and encoding library in pure Rust"
 repository = "https://github.com/PistonDevelopers/image-tiff"
 
 [dependencies]
-byteorder = "1.2.*"
-lzw = "0.10.*"
-num-derive = "0.2.*"
-num-traits = "0.2.*"
+byteorder = "1.2"
+lzw = "0.10"
+num-derive = "0.2"
+num-traits = "0.2"
