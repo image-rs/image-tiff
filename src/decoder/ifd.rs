@@ -26,6 +26,12 @@ macro_rules! tags {
                     Tag::Unknown(n)
                 }
             }
+            pub fn to_u16(&self) -> u16 {
+                match self {
+                    $( Tag::$tag => $val, )*
+                    Tag::Unknown(n) => *n,
+                }
+            }
         }
     }
 }

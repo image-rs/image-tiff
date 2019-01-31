@@ -12,6 +12,7 @@ extern crate lzw;
 extern crate num_traits;
 
 pub mod decoder;
+pub mod encoder;
 mod error;
 
 pub use self::error::{TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
