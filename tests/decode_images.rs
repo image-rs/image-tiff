@@ -63,6 +63,29 @@ fn test_string_tags()
     }
 }
 
+#[test]
+fn test_decode_data() {
+    let mut image_data = Vec::new();
+    for x in 0..100 {
+        for y in 0..100u8 {
+            let val = x + y;
+            image_data.push(val);
+            image_data.push(val);
+            image_data.push(val);
+        }
+    }
+    let file = File::open("./tests/decodedata-rgb-3c-8b.tiff").unwrap();
+    let mut decoder = Decoder::new(file).unwrap();
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+    assert_eq!(decoder.dimensions().unwrap(), (100, 100));
+    if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
+        assert_eq!(image_data, img_res);
+    }
+    else {
+        panic!("Wrong data type");
+    }
+}
+
 // TODO: GrayA support
 //#[test]
 //fn test_gray_alpha_u8()
