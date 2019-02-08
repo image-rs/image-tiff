@@ -28,7 +28,7 @@ pub enum DecodingResult {
 }
 
 impl DecodingResult {
-    fn to_buffer(&mut self, start: usize) -> DecodingBuffer {
+    pub fn to_buffer(&mut self, start: usize) -> DecodingBuffer {
         match self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
@@ -37,7 +37,7 @@ impl DecodingResult {
 }
 
 // A buffer for image decoding
-enum DecodingBuffer<'a> {
+pub enum DecodingBuffer<'a> {
     /// A slice of unsigned bytes
     U8(&'a mut [u8]),
     /// A slice of unsigned words
@@ -488,7 +488,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
+    pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.initialize_strip_decoder()?;
 
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
