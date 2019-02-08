@@ -2,7 +2,7 @@ extern crate tiff;
 
 use tiff::ColorType;
 use tiff::decoder::{Decoder, DecodingResult, ifd::Tag, ifd::Value};
-use tiff::encoder::{TiffEncoder, Rational};
+use tiff::encoder::{TiffEncoder, RGB8};
 
 use std::fs::File;
 
@@ -20,26 +20,17 @@ fn encode_decode() {
     }
     {
         let file = std::fs::File::create("test.tiff").unwrap();
-        let mut tiff = TiffEncoder::new_le(file);
+        let mut tiff = TiffEncoder::new(file).unwrap();
 
-        tiff.write_header().unwrap();
-
-        tiff.new_ifd().unwrap();
-        tiff.new_ifd_entry(Tag::ImageWidth, &[100u32][..]);
-        tiff.new_ifd_entry(Tag::ImageLength, &[100u32][..]);
-        tiff.new_ifd_entry(Tag::BitsPerSample, &[8u16,8,8][..]);
-        tiff.new_ifd_entry(Tag::Compression, &[1u16][..]);
-        tiff.new_ifd_entry(Tag::PhotometricInterpretation, &[2u16][..]);
-        tiff.new_ifd_entry(Tag::StripOffsets, &[0u32][..]);
-        tiff.new_ifd_entry(Tag::SamplesPerPixel, &[3u16][..]);
-        tiff.new_ifd_entry(Tag::RowsPerStrip, &[100u32][..]);
-        tiff.new_ifd_entry(Tag::StripByteCounts, &[0u32][..]);
-        tiff.new_ifd_entry(Tag::XResolution, &[Rational {n: 1, d: 1}][..]);
-        tiff.new_ifd_entry(Tag::YResolution, &[Rational {n: 1, d: 1}][..]);
-        tiff.new_ifd_entry(Tag::ResolutionUnit, &[1u16][..]);
-        tiff.finish_ifd().unwrap();
-
-        tiff.write_strip(&image_data).unwrap();
+        let mut image = tiff.new_image::<RGB8>(100, 100).unwrap();
+    
+        let mut idx = 0;
+        while image.next_strip_sample_count() > 0 {
+            let sample_count = image.next_strip_sample_count() as usize;
+            image.write_strip(&image_data[idx..idx+sample_count]).unwrap();
+            idx += sample_count;
+        }
+        image.finish().unwrap();
     }
     {
         let file = File::open("test.tiff").unwrap();
