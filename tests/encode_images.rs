@@ -22,15 +22,7 @@ fn encode_decode() {
     {
         let mut tiff = TiffEncoder::new(&mut file).unwrap();
 
-        let mut image = tiff.new_image::<RGB8>(100, 100).unwrap();
-    
-        let mut idx = 0;
-        while image.next_strip_sample_count() > 0 {
-            let sample_count = image.next_strip_sample_count() as usize;
-            image.write_strip(&image_data[idx..idx+sample_count]).unwrap();
-            idx += sample_count;
-        }
-        image.finish().unwrap();
+        tiff.write_image::<RGB8>(100, 100, &image_data).unwrap();
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();

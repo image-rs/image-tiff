@@ -165,6 +165,19 @@ impl<W: Write + Seek> TiffEncoder<W> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         ImageEncoder::new(encoder, width, height)
     }
+
+    pub fn write_image<C: ColorType>(&mut self, width: u32, height: u32, data: &[C::Inner]) -> TiffResult<()> {
+        let encoder = DirectoryEncoder::new(&mut self.writer)?;
+        let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height).unwrap();
+
+        let mut idx = 0;
+        while image.next_strip_sample_count() > 0 {
+            let sample_count = image.next_strip_sample_count() as usize;
+            image.write_strip(&data[idx..idx+sample_count]).unwrap();
+            idx += sample_count;
+        }
+        image.finish()
+    }
 }
 
 pub struct DirectoryEncoder<'a, W> {
