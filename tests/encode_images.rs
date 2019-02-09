@@ -3,9 +3,10 @@ extern crate tempfile;
 
 use tiff::ColorType;
 use tiff::decoder::{Decoder, DecodingResult};
-use tiff::encoder::{TiffEncoder, RGB8};
+use tiff::encoder::{colortype, TiffEncoder};
 
 use std::io::{Seek, SeekFrom};
+use std::fs::File;
 
 #[test]
 fn encode_decode() {
@@ -22,7 +23,7 @@ fn encode_decode() {
     {
         let mut tiff = TiffEncoder::new(&mut file).unwrap();
 
-        tiff.write_image::<RGB8>(100, 100, &image_data).unwrap();
+        tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();
@@ -36,4 +37,60 @@ fn encode_decode() {
             panic!("Wrong data type");
         }
     }
+}
+
+
+#[test]
+fn test_gray_u8_roundtrip()
+{
+    let img_file = File::open("./tests/images/minisblack-1c-8b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
+    let img_res = decoder.read_image();
+    assert!(img_res.is_ok());
+}
+
+#[test]
+fn test_rgb_u8()
+{
+    let img_file = File::open("./tests/images/rgb-3c-8b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+    let img_res = decoder.read_image();
+
+    let mut file = tempfile::tempfile().unwrap();
+    let mut tiff = TiffEncoder::new(&mut file).unwrap();
+
+    tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+
+    let mut decoder = Decoder::new(&mut file).unwrap();
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+    assert_eq!(decoder.dimensions().unwrap(), (100, 100));
+    if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
+        assert_eq!(image_data, img_res);
+    }
+    else {
+        panic!("Wrong data type");
+    }
+}
+
+#[test]
+fn test_gray_u16()
+{
+    let img_file = File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(16));
+    let img_res = decoder.read_image();
+    assert!(img_res.is_ok());
+}
+
+#[test]
+fn test_rgb_u16()
+{
+    let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(16));
+    let img_res = decoder.read_image();
+    assert!(img_res.is_ok());
 }

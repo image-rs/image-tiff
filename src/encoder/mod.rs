@@ -6,7 +6,10 @@ use crate::decoder::ifd;
 use crate::error::{TiffResult, TiffFormatError, TiffError};
 
 mod writer;
+pub mod colortype;
+
 use self::writer::*;
+use self::colortype::*;
 
 pub struct Rational {
     pub n: u32,
@@ -117,29 +120,6 @@ impl TiffValue for str {
 }
 
 
-pub trait ColorType {
-    type Inner: TiffValue;
-    const TIFF_VALUE: u8;
-    fn bits_per_sample() -> Vec<u16>;
-}
-
-pub struct RGB8;
-impl ColorType for RGB8 {
-    type Inner = u8;
-    const TIFF_VALUE: u8 = 2;
-    fn bits_per_sample() -> Vec<u16> {
-        vec![8,8,8]
-    }
-}
-
-pub struct RGBA8;
-impl ColorType for RGBA8 {
-    type Inner = u8;
-    const TIFF_VALUE: u8 = 2;
-    fn bits_per_sample() -> Vec<u16> {
-        vec![8,8,8,8]
-    }
-}
 
 
 pub struct TiffEncoder<W> {
