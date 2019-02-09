@@ -46,51 +46,122 @@ fn test_gray_u8_roundtrip()
     let img_file = File::open("./tests/images/minisblack-1c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
-    let img_res = decoder.read_image();
-    assert!(img_res.is_ok());
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U8(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+    
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::Grey8>(width, height, &image_data).unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        }
+        else {
+            panic!("Wrong data type");
+        }
+    }
 }
 
 #[test]
-fn test_rgb_u8()
+fn test_rgb_u8_roundtrip()
 {
     let img_file = File::open("./tests/images/rgb-3c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
-    let img_res = decoder.read_image();
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U8(res) => res,
+        _ => panic!("Wrong data type"),
+    };
 
     let mut file = tempfile::tempfile().unwrap();
-    let mut tiff = TiffEncoder::new(&mut file).unwrap();
-
-    tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
-    file.seek(SeekFrom::Start(0)).unwrap();
-
-    let mut decoder = Decoder::new(&mut file).unwrap();
-    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
-    assert_eq!(decoder.dimensions().unwrap(), (100, 100));
-    if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
-        assert_eq!(image_data, img_res);
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+    
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::RGB8>(width, height, &image_data).unwrap();
     }
-    else {
-        panic!("Wrong data type");
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        }
+        else {
+            panic!("Wrong data type");
+        }
     }
 }
 
 #[test]
-fn test_gray_u16()
+fn test_gray_u16_roundtrip()
 {
     let img_file = File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(16));
-    let img_res = decoder.read_image();
-    assert!(img_res.is_ok());
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U16(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+    
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::Grey16>(width, height, &image_data).unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U16(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        }
+        else {
+            panic!("Wrong data type");
+        }
+    }
 }
 
 #[test]
-fn test_rgb_u16()
+fn test_rgb_u16_roundtrip()
 {
     let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(16));
     let img_res = decoder.read_image();
     assert!(img_res.is_ok());
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U16(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+    
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::RGB16>(width, height, &image_data).unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U16(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        }
+        else {
+            panic!("Wrong data type");
+        }
+    }
 }
