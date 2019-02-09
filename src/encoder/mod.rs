@@ -1,9 +1,9 @@
-use std::io::{self, Write, Seek};
-use std::collections::{BTreeMap, HashMap};
-use byteorder::{ByteOrder, WriteBytesExt, NativeEndian};
+use std::io::{Write, Seek};
+use std::collections::BTreeMap;
+use byteorder::{NativeEndian};
 
 use crate::decoder::ifd;
-use crate::error::TiffResult;
+use crate::error::{TiffResult, TiffFormatError, TiffError};
 
 mod writer;
 use self::writer::*;
@@ -105,13 +105,14 @@ impl TiffValue for str {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        for x in self.chars() {
-            if x.is_ascii() {
-                writer.write_u8(x as u8)?;
-            }
+        if self.is_ascii() {
+            writer.write_bytes(self.as_bytes())?;
+            writer.write_u8(0)?;
+            Ok(())
         }
-        writer.write_u8(0)?;
-        Ok(())
+        else {
+            Err(TiffError::FormatError(TiffFormatError::InvalidTag))
+        }
     }
 }
 
@@ -143,14 +144,12 @@ impl ColorType for RGBA8 {
 
 pub struct TiffEncoder<W> {
     writer: TiffWriter<W>,
-    offset: usize,
 }
 
 impl<W: Write + Seek> TiffEncoder<W> {
     pub fn new(writer: W) -> TiffResult<TiffEncoder<W>> {
         let mut encoder = TiffEncoder {
             writer: TiffWriter::new(writer),
-            offset: 0,
         };
         
         NativeEndian::write_header(&mut encoder.writer)?;
@@ -200,13 +199,15 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
         self.ifd.insert(tag.to_u16(), (<T>::FIELD_TYPE, value.count(), bytes));
     }
 
-    pub fn modify_tag<T: TiffValue>(&mut self, tag: ifd::Tag, offset: u64, value: T) {
-        // TODO: handle errors
-        let bytes = &mut self.ifd.get_mut(&tag.to_u16()).unwrap().2;
+    pub fn modify_tag<T: TiffValue>(&mut self, tag: ifd::Tag, offset: u64, value: T) -> TiffResult<()> {
+        let bytes = &mut self.ifd.get_mut(&tag.to_u16())
+            .ok_or(TiffError::FormatError(TiffFormatError::RequiredTagNotFound(tag)))?.2;
+
         let mut writer = TiffWriter::new(std::io::Cursor::new(bytes));
 
-        writer.goto_offset(offset).unwrap();
-        value.write(&mut writer).unwrap();
+        writer.goto_offset(offset)?;
+        value.write(&mut writer)?;
+        Ok(())
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
@@ -241,7 +242,7 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
 
     pub fn write_data<T: TiffValue>(&mut self, value: T) -> TiffResult<u64> {
         let offset = self.writer.offset();
-        value.write(&mut self.writer);
+        value.write(&mut self.writer)?;
         Ok(offset)
     }
 
@@ -330,14 +331,14 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     pub fn write_strip(&mut self, value: &[T::Inner]) -> TiffResult<()> {
         // TODO: Compression
         let offset = self.encoder.write_data(value)?;
-        self.encoder.modify_tag(ifd::Tag::StripOffsets, self.strip_idx as u64 * 4, offset as u32);
-        self.encoder.modify_tag(ifd::Tag::StripByteCounts, self.strip_idx as u64 * 4, value.bytes() as u32);
+        self.encoder.modify_tag(ifd::Tag::StripOffsets, self.strip_idx as u64 * 4, offset as u32)?;
+        self.encoder.modify_tag(ifd::Tag::StripByteCounts, self.strip_idx as u64 * 4, value.bytes() as u32)?;
 
         self.strip_idx += 1;
         Ok(())
     }
 
-    pub fn finish(mut self) -> TiffResult<()> {
+    pub fn finish(self) -> TiffResult<()> {
         self.encoder.finish()
     }
 }

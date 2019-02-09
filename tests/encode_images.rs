@@ -1,11 +1,11 @@
 extern crate tiff;
+extern crate tempfile;
 
 use tiff::ColorType;
-use tiff::decoder::{Decoder, DecodingResult, ifd::Tag, ifd::Value};
+use tiff::decoder::{Decoder, DecodingResult};
 use tiff::encoder::{TiffEncoder, RGB8};
 
-use std::fs::File;
-
+use std::io::{Seek, SeekFrom};
 
 #[test]
 fn encode_decode() {
@@ -18,9 +18,9 @@ fn encode_decode() {
             image_data.push(val);
         }
     }
+    let mut file = tempfile::tempfile().unwrap();
     {
-        let file = std::fs::File::create("test.tiff").unwrap();
-        let mut tiff = TiffEncoder::new(file).unwrap();
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
 
         let mut image = tiff.new_image::<RGB8>(100, 100).unwrap();
     
@@ -33,8 +33,8 @@ fn encode_decode() {
         image.finish().unwrap();
     }
     {
-        let file = File::open("test.tiff").unwrap();
-        let mut decoder = Decoder::new(file).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut decoder = Decoder::new(&mut file).unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
         if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
@@ -44,6 +44,4 @@ fn encode_decode() {
             panic!("Wrong data type");
         }
     }
-    
-    std::fs::remove_file("test.tiff").unwrap();
 }
