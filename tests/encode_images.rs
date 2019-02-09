@@ -57,7 +57,7 @@ fn test_gray_u8_roundtrip()
         let mut tiff = TiffEncoder::new(&mut file).unwrap();
     
         let (width, height) = decoder.dimensions().unwrap();
-        tiff.write_image::<colortype::Grey8>(width, height, &image_data).unwrap();
+        tiff.write_image::<colortype::Gray8>(width, height, &image_data).unwrap();
     }
     file.seek(SeekFrom::Start(0)).unwrap();
     {
@@ -119,7 +119,7 @@ fn test_gray_u16_roundtrip()
         let mut tiff = TiffEncoder::new(&mut file).unwrap();
     
         let (width, height) = decoder.dimensions().unwrap();
-        tiff.write_image::<colortype::Grey16>(width, height, &image_data).unwrap();
+        tiff.write_image::<colortype::Gray16>(width, height, &image_data).unwrap();
     }
     file.seek(SeekFrom::Start(0)).unwrap();
     {

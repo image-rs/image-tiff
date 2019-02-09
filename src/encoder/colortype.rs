@@ -1,11 +1,15 @@
+/// Trait for different colortypes that can be encoded.
 pub trait ColorType {
+    /// The type of each sample of thes colortype
     type Inner: super::TiffValue;
+    /// The value of the tiff tag `PhotometricInterpretation`
     const TIFF_VALUE: u8;
+    /// The value of the tiff tag `BitsPerSample`
     fn bits_per_sample() -> Vec<u16>;
 }
 
-pub struct Grey8;
-impl ColorType for Grey8 {
+pub struct Gray8;
+impl ColorType for Gray8 {
     type Inner = u8;
     const TIFF_VALUE: u8 = 1;
     fn bits_per_sample() -> Vec<u16> {
@@ -13,8 +17,8 @@ impl ColorType for Grey8 {
     }
 }
 
-pub struct Grey16;
-impl ColorType for Grey16 {
+pub struct Gray16;
+impl ColorType for Gray16 {
     type Inner = u16;
     const TIFF_VALUE: u8 = 1;
     fn bits_per_sample() -> Vec<u16> {

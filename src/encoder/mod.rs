@@ -2,7 +2,7 @@ use std::io::{Write, Seek};
 use std::collections::BTreeMap;
 use byteorder::{NativeEndian};
 
-use crate::decoder::ifd;
+use crate::decoder::ifd::Tag;
 use crate::error::{TiffResult, TiffFormatError, TiffError};
 
 mod writer;
@@ -11,11 +11,13 @@ pub mod colortype;
 use self::writer::*;
 use self::colortype::*;
 
+/// Type to represent tiff values of type `RATIONAL`
 pub struct Rational {
     pub n: u32,
     pub d: u32,
 }
 
+/// Trait for types that can be encoded in a tiff file
 pub trait TiffValue {
     const BYTE_LEN: u32;
     const FIELD_TYPE: u16;
@@ -119,9 +121,32 @@ impl TiffValue for str {
     }
 }
 
-
-
-
+/// Tiff encoder.
+///
+/// With this type you can get a `DirectoryEncoder` or a `ImageEncoder`
+/// to encode tiff ifd directories with images.
+///
+/// See `DirectoryEncoder` and `ImageEncoder`.
+///
+/// # Examples
+/// ```
+/// # extern crate tempfile;
+/// # let mut file = tempfile::tempfile().unwrap();
+/// # let mut image_data = Vec::new();
+/// # for x in 0..100 {
+/// #     for y in 0..100u8 {
+/// #         let val = x + y;
+/// #         image_data.push(val);
+/// #         image_data.push(val);
+/// #         image_data.push(val);
+/// #     }
+/// # }
+/// use tiff::encoder::*;
+///
+/// let mut tiff = TiffEncoder::new(&mut file).unwrap();
+///
+/// tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
+/// ```
 pub struct TiffEncoder<W> {
     writer: TiffWriter<W>,
 }
@@ -137,15 +162,18 @@ impl<W: Write + Seek> TiffEncoder<W> {
         Ok(encoder)
     }
 
+    /// Create a `DirectoryEncoder` to encode an ifd directory.
     pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W>> {
         DirectoryEncoder::new(&mut self.writer)
     }
 
+    /// Create an 'ImageEncoder' to encode an image one slice at a time.
     pub fn new_image<C: ColorType>(&mut self, width: u32, height: u32) -> TiffResult<ImageEncoder<W, C>> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         ImageEncoder::new(encoder, width, height)
     }
 
+    /// Convenience function to write an entire image from memory.
     pub fn write_image<C: ColorType>(&mut self, width: u32, height: u32, data: &[C::Inner]) -> TiffResult<()> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height).unwrap();
@@ -160,7 +188,11 @@ impl<W: Write + Seek> TiffEncoder<W> {
     }
 }
 
-pub struct DirectoryEncoder<'a, W> {
+/// Low level interface to encode ifd directories.
+///
+/// You should call `finish` on this when you are finished with it.
+/// Encoding can silently fail while this is dropping.
+pub struct DirectoryEncoder<'a, W: Write + Seek> {
     writer: &'a mut TiffWriter<W>,
     dropped: bool,
     // We use BTreeMap to make sure tags are written in correct order
@@ -181,7 +213,8 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
         })
     }
 
-    pub fn write_tag<T: TiffValue>(&mut self, tag: ifd::Tag, value: T) {
+    /// Write a single ifd tag.
+    pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) {
         let len = <T>::BYTE_LEN * value.count();
         let mut bytes = Vec::with_capacity(len as usize);
         {
@@ -190,17 +223,6 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
         }
 
         self.ifd.insert(tag.to_u16(), (<T>::FIELD_TYPE, value.count(), bytes));
-    }
-
-    pub fn modify_tag<T: TiffValue>(&mut self, tag: ifd::Tag, offset: u64, value: T) -> TiffResult<()> {
-        let bytes = &mut self.ifd.get_mut(&tag.to_u16())
-            .ok_or(TiffError::FormatError(TiffFormatError::RequiredTagNotFound(tag)))?.2;
-
-        let mut writer = TiffWriter::new(std::io::Cursor::new(bytes));
-
-        writer.goto_offset(offset)?;
-        value.write(&mut writer)?;
-        Ok(())
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
@@ -233,13 +255,16 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
         Ok(offset)
     }
 
+    /// Write some data to the tiff file, the offset of the data is returned.
+    ///
+    /// This could be used to write tiff strips.
     pub fn write_data<T: TiffValue>(&mut self, value: T) -> TiffResult<u64> {
         let offset = self.writer.offset();
         value.write(&mut self.writer)?;
         Ok(offset)
     }
 
-    pub fn finish(mut self) -> TiffResult<()> {
+    fn finish_internal(&mut self) -> TiffResult<()> {
         let ifd_pointer = self.write_directory()?;
         let curr_pos = self.writer.offset();
 
@@ -252,29 +277,68 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
 
         Ok(())
     }
+
+    /// Write out the ifd directory.
+    pub fn finish(mut self) -> TiffResult<()> {
+        self.finish_internal()
+    }
 }
 
-impl<'a, W> Drop for DirectoryEncoder<'a, W> {
+impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
     fn drop(&mut self) {
         if !self.dropped {
-            panic!("Illegal to drop DirectoryEncoder: you should call `DirectoryEncoder::finish`")
+            let _ = self.finish_internal();
         }
     }
 }
 
-pub struct ImageEncoder<'a, W, T> {
+
+/// Type to encode images strip by strip.
+///
+/// You should call `finish` on this when you are finished with it.
+/// Encoding can silently fail while this is dropping.
+///
+/// # Examples
+/// ```
+/// # extern crate tempfile;
+/// # let mut file = tempfile::tempfile().unwrap();
+/// # let mut image_data = Vec::new();
+/// # for x in 0..100 {
+/// #     for y in 0..100u8 {
+/// #         let val = x + y;
+/// #         image_data.push(val);
+/// #         image_data.push(val);
+/// #         image_data.push(val);
+/// #     }
+/// # }
+/// use tiff::encoder::*;
+///
+/// let mut tiff = TiffEncoder::new(&mut file).unwrap();
+/// let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
+///
+/// let mut idx = 0;
+/// while image.next_strip_sample_count() > 0 {
+///     let sample_count = image.next_strip_sample_count() as usize;
+///     image.write_strip(&image_data[idx..idx+sample_count]).unwrap();
+///     idx += sample_count;
+/// }
+/// image.finish().unwrap();
+/// ```
+pub struct ImageEncoder<'a, W: Write + Seek, C: ColorType> {
     encoder: DirectoryEncoder<'a, W>,
     strip_idx: u64,
     strip_count: u64,
     row_samples: u64,
     height: u32,
     rows_per_strip: u64,
-    _phantom: std::marker::PhantomData<T>,
+    strip_offsets: Vec<u32>,
+    strip_byte_count: Vec<u32>,
+    dropped: bool,
+    _phantom: std::marker::PhantomData<C>,
 }
 
 impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     fn new(mut encoder: DirectoryEncoder<'a, W>, width: u32, height: u32) -> TiffResult<ImageEncoder<'a, W, T>> {
-        use self::ifd::Tag;
         let row_samples = width as u64 * <T>::bits_per_sample().len() as u64;
         let row_bytes = row_samples * <T::Inner>::BYTE_LEN as u64;
 
@@ -290,8 +354,6 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         encoder.write_tag(Tag::BitsPerSample, &<T>::bits_per_sample() as &[u16]);
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE);
 
-        encoder.write_tag(Tag::StripOffsets, &vec![0u32; strip_count as usize] as &[u32]);
-        encoder.write_tag(Tag::StripByteCounts, &vec![0u32; strip_count as usize] as &[u32]);
         encoder.write_tag(Tag::RowsPerStrip, rows_per_strip as u32);
 
         encoder.write_tag(Tag::SamplesPerPixel, <T>::bits_per_sample().len() as u16);
@@ -306,10 +368,14 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
             row_samples,
             rows_per_strip,
             height,
+            strip_offsets: Vec::new(),
+            strip_byte_count: Vec::new(),
+            dropped: false,
             _phantom: std::marker::PhantomData,
         })
     }
 
+    /// Number of samples the next strip should have.
     pub fn next_strip_sample_count(&self) -> u64 {
         if self.strip_idx >= self.strip_count {
             return 0
@@ -321,17 +387,39 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         (end_row - start_row) * self.row_samples
     }
 
+    /// Write a single strip.
     pub fn write_strip(&mut self, value: &[T::Inner]) -> TiffResult<()> {
         // TODO: Compression
+        let samples = self.next_strip_sample_count();
+        assert_eq!(value.len() as u64, samples);
+
         let offset = self.encoder.write_data(value)?;
-        self.encoder.modify_tag(ifd::Tag::StripOffsets, self.strip_idx as u64 * 4, offset as u32)?;
-        self.encoder.modify_tag(ifd::Tag::StripByteCounts, self.strip_idx as u64 * 4, value.bytes() as u32)?;
+        self.strip_offsets.push(offset as u32);
+        self.strip_byte_count.push(value.bytes() as u32);
 
         self.strip_idx += 1;
         Ok(())
     }
 
-    pub fn finish(self) -> TiffResult<()> {
-        self.encoder.finish()
+    fn finish_internal(&mut self) -> TiffResult<()> {
+        self.encoder.write_tag(Tag::StripOffsets, &*self.strip_offsets);
+        self.encoder.write_tag(Tag::StripByteCounts, &*self.strip_byte_count);
+        self.dropped = true;
+
+        self.encoder.finish_internal()
+    }
+
+    /// Write out image and ifd directory.
+    pub fn finish(mut self) -> TiffResult<()> {
+        self.finish_internal()
     }
 }
+
+impl<'a, W: Write + Seek, C: ColorType> Drop for ImageEncoder<'a, W, C> {
+    fn drop(&mut self) {
+        if !self.dropped {
+            let _ = self.finish_internal();
+        }
+    }
+}
+
