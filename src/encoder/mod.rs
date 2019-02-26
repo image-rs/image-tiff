@@ -36,7 +36,7 @@ pub trait TiffValue {
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()>;
 }
 
-impl TiffValue for &[u8] {
+impl TiffValue for [u8] {
     const BYTE_LEN: u32 = 1;
     const FIELD_TYPE: ifd::Type = ifd::Type::BYTE;
 
@@ -50,7 +50,7 @@ impl TiffValue for &[u8] {
     }
 }
 
-impl TiffValue for &[u16] {
+impl TiffValue for [u16] {
     const BYTE_LEN: u32 = 2;
     const FIELD_TYPE: ifd::Type = ifd::Type::SHORT;
 
@@ -68,7 +68,7 @@ impl TiffValue for &[u16] {
     }
 }
 
-impl TiffValue for &[u32] {
+impl TiffValue for [u32] {
     const BYTE_LEN: u32 = 4;
     const FIELD_TYPE: ifd::Type = ifd::Type::LONG;
 
@@ -86,7 +86,7 @@ impl TiffValue for &[u32] {
     }
 }
 
-impl TiffValue for &[Rational] {
+impl TiffValue for [Rational] {
     const BYTE_LEN: u32 = 8;
     const FIELD_TYPE: ifd::Type = ifd::Type::RATIONAL;
 
@@ -95,7 +95,7 @@ impl TiffValue for &[Rational] {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        for x in *self {
+        for x in self {
             x.write(writer)?;
         }
         Ok(())
@@ -168,7 +168,7 @@ impl TiffValue for str {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        if self.is_ascii() {
+        if self.is_ascii() && !self.bytes().any(|b| b == 0) {
             writer.write_bytes(self.as_bytes())?;
             writer.write_u8(0)?;
             Ok(())
@@ -176,6 +176,19 @@ impl TiffValue for str {
         else {
             Err(TiffError::FormatError(TiffFormatError::InvalidTag))
         }
+    }
+}
+
+impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
+    const BYTE_LEN: u32 = T::BYTE_LEN;
+    const FIELD_TYPE: ifd::Type = T::FIELD_TYPE;
+
+    fn count(&self) -> u32 {
+        (*self).count()
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        (*self).write(writer)
     }
 }
 
@@ -224,7 +237,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
     }
 
     /// Convenience function to write an entire image from memory.
-    pub fn write_image<'a, C: ColorType>(&mut self, width: u32, height: u32, data: &'a [C::Inner]) -> TiffResult<()> where &'a [C::Inner]: TiffValue {
+    pub fn write_image<C: ColorType>(&mut self, width: u32, height: u32, data: &[C::Inner]) -> TiffResult<()> where [C::Inner]: TiffValue {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height).unwrap();
 
@@ -381,7 +394,7 @@ pub struct ImageEncoder<'a, W: Write + Seek, C: ColorType> {
 
 impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     fn new(mut encoder: DirectoryEncoder<'a, W>, width: u32, height: u32) -> TiffResult<ImageEncoder<'a, W, T>> {
-        let row_samples = u64::from(width) * <T>::bits_per_sample().len() as u64;
+        let row_samples = u64::from(width) * <T>::BITS_PER_SAMPLE.len() as u64;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
         // As per tiff spec each strip should be about 8k long
@@ -393,12 +406,12 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         encoder.write_tag(Tag::ImageLength, height);
         encoder.write_tag(Tag::Compression, 1u16);
 
-        encoder.write_tag(Tag::BitsPerSample, &<T>::bits_per_sample() as &[u16]);
+        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE);
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE as u16);
 
         encoder.write_tag(Tag::RowsPerStrip, rows_per_strip as u32);
 
-        encoder.write_tag(Tag::SamplesPerPixel, <T>::bits_per_sample().len() as u16);
+        encoder.write_tag(Tag::SamplesPerPixel, <T>::BITS_PER_SAMPLE.len() as u16);
         encoder.write_tag(Tag::XResolution, Rational {n: 1, d: 1});
         encoder.write_tag(Tag::YResolution, Rational {n: 1, d: 1});
         encoder.write_tag(Tag::ResolutionUnit, 1u16);
@@ -430,7 +443,7 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     }
 
     /// Write a single strip.
-    pub fn write_strip<'b>(&mut self, value: &'b [T::Inner]) -> TiffResult<()> where &'b [T::Inner]: TiffValue {
+    pub fn write_strip(&mut self, value: &[T::Inner]) -> TiffResult<()> where [T::Inner]: TiffValue {
         // TODO: Compression
         let samples = self.next_strip_sample_count();
         assert_eq!(value.len() as u64, samples);

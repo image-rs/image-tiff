@@ -77,8 +77,10 @@ impl<W: Write> TiffWriter<W> {
     }
 
     pub fn pad_word_boundary(&mut self) -> Result<(), io::Error> {
-        while self.offset % 4 != 0 {
-            self.writer.write_u8(0)?;
+        if self.offset % 4 != 0 {
+            let padding = [0, 0, 0];
+            let padd_len = 4 - (self.offset % 4);
+            self.writer.write_all(&padding[..padd_len as usize])?;
         }
     
         Ok(())
