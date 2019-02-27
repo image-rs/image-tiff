@@ -63,6 +63,20 @@ pub enum DecodingBuffer<'a> {
 }
 
 impl<'a> DecodingBuffer<'a> {
+    fn len(&self) -> usize {
+        match self {
+            DecodingBuffer::U8(ref buf) => buf.len(),
+            DecodingBuffer::U16(ref buf) => buf.len(),
+        }
+    }
+
+    fn byte_len(&self) -> usize {
+        match self {
+            DecodingBuffer::U8(ref buf) => 1,
+            DecodingBuffer::U16(ref buf) => 2,
+        }
+    }
+
     fn copy<'b>(&'b mut self) -> DecodingBuffer<'b> where 'a: 'b {
         match self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
@@ -481,6 +495,11 @@ impl<R: Read + Seek> Decoder<R> {
             },
             method => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedCompressionMethod(method)))
         };
+        
+        if bytes > max_uncompressed_length*buffer.byte_len() {
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+        }
+
         Ok(match (color_type, buffer) {
             (ColorType:: RGB(8), DecodingBuffer::U8(ref mut buffer)) |
             (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) |
@@ -541,15 +560,21 @@ impl<R: Read + Seek> Decoder<R> {
         self.initialize_strip_decoder()?;
 
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
-        let offset = self.strip_decoder.as_ref().unwrap().strip_offsets[index];
-        let byte_count = self.strip_decoder.as_ref().unwrap().strip_bytes[index];
+        let offset = *self.strip_decoder.as_ref().unwrap().strip_offsets.get(index)
+            .ok_or(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))?;
+        let byte_count = *self.strip_decoder.as_ref().unwrap().strip_bytes.get(index)
+            .ok_or(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))?;
 
         let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height) as usize;
 
         let strip_height = std::cmp::min(rows_per_strip, self.height as usize - index * rows_per_strip);
 
-        let buffer_size = self.width as usize * strip_height * self.bits_per_sample.iter().count();
+        let buffer_size = self.width as usize * strip_height * self.bits_per_sample.len();
+
+        if buffer.len() < buffer_size || byte_count as usize > buffer_size*buffer.byte_len() {
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+        }
 
         let units_read = self.expand_strip(buffer.copy(), offset, byte_count, buffer_size)?;
 
