@@ -28,6 +28,24 @@ pub enum DecodingResult {
 }
 
 impl DecodingResult {
+    fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size as u64 > limits.decoding_buffer_size {
+            Err(TiffError::LimitsExceeded)
+        }
+        else {
+            Ok(DecodingResult::U8(vec![0; size]))
+        }
+    }
+
+    fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size as u64*2 > limits.decoding_buffer_size {
+            Err(TiffError::LimitsExceeded)
+        }
+        else {
+            Ok(DecodingResult::U16(vec![0; size]))
+        }
+    }
+
     pub fn to_buffer(&mut self, start: usize) -> DecodingBuffer {
         match self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
@@ -95,6 +113,28 @@ struct StripDecodeState {
     strip_bytes: Vec<u32>,
 }
 
+/// Decoding limits
+#[derive(Clone, Debug)]
+pub struct Limits {
+    /// The maximum size of any `DecodingResult` in bytes, the default is 
+    /// 256MiB. If the entire image is decoded at once, then this will
+    /// be the maximum size of the image. If it is decoded one strip at a
+    /// time, this will be the maximum size of a strip.
+    decoding_buffer_size: u64,
+    /// The maximum size of any ifd value in bytes, the default is 
+    /// 1MiB.
+    ifd_value_size: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits {
+            decoding_buffer_size: 256*1024*1024,
+            ifd_value_size: 1024*1024,
+        }
+    }
+}
+
 /// The representation of a TIFF decoder
 ///
 /// Currently does not support decoding of interlaced images
@@ -102,6 +142,7 @@ struct StripDecodeState {
 pub struct Decoder<R> where R: Read + Seek {
     reader: SmartReader<R>,
     byte_order: ByteOrder,
+    limits: Limits,
     next_ifd: Option<u32>,
     ifd: Option<Directory>,
     width: u32,
@@ -167,6 +208,7 @@ impl<R: Read + Seek> Decoder<R> {
         Decoder {
             reader: SmartReader::wrap(r, ByteOrder::LittleEndian),
             byte_order: ByteOrder::LittleEndian,
+            limits: Default::default(),
             next_ifd: None,
             ifd: None,
             width: 0,
@@ -177,6 +219,11 @@ impl<R: Read + Seek> Decoder<R> {
             compression_method: CompressionMethod::None,
             strip_decoder: None,
         }.init()
+    }
+
+    pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
+        self.limits = limits;
+        self
     }
 
     pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
@@ -373,7 +420,9 @@ impl<R: Read + Seek> Decoder<R> {
             Some(entry) => entry.clone(),
         };
 
-        Ok(Some(try!(entry.val(self))))
+        let limits = self.limits.clone();
+
+        Ok(Some(try!(entry.val(&limits, self))))
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
@@ -542,8 +591,8 @@ impl<R: Read + Seek> Decoder<R> {
         let buffer_size = self.width as usize * strip_height * self.bits_per_sample.iter().count();
 
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::U8(vec![0; buffer_size]),
-            n if n <= 16 => DecodingResult::U16(vec![0; buffer_size]),
+            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
+            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
             n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
         };
 
@@ -563,8 +612,8 @@ impl<R: Read + Seek> Decoder<R> {
         let buffer_size = self.width as usize * self.height as usize * self.bits_per_sample.iter().count();
 
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::U8(vec![0; buffer_size]),
-            n if n <= 16 => DecodingResult::U16(vec![0; buffer_size]),
+            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
+            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
             n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
         };
 

@@ -154,7 +154,7 @@ impl Entry {
         )
     }
 
-    pub fn val<R: Read + Seek>(&self, decoder: &mut super::Decoder<R>)
+    pub fn val<R: Read + Seek>(&self, limits: &super::Limits, decoder: &mut super::Decoder<R>)
     -> TiffResult<Value> {
         let bo = decoder.byte_order();
         match (self.type_, self.count) {
@@ -170,6 +170,10 @@ impl Entry {
                 ]))
             },
             (Type::SHORT, n) => {
+                // each value is ~8 bytes
+                if n as u64*8 > limits.decoding_buffer_size {
+                    return Err(TiffError::LimitsExceeded)
+                }
                 let mut v = Vec::with_capacity(n as usize);
                 try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
                 for _ in 0 .. n {
@@ -179,6 +183,10 @@ impl Entry {
             },
             (Type::LONG, 1) => Ok(Unsigned(try!(self.r(bo).read_u32()))),
             (Type::LONG, n) => {
+                // each value is ~8 bytes
+                if n as u64*8 > limits.decoding_buffer_size {
+                    return Err(TiffError::LimitsExceeded)
+                }
                 let mut v = Vec::with_capacity(n as usize);
                 try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
                 for _ in 0 .. n {
@@ -193,6 +201,10 @@ impl Entry {
                 Ok(Rational(numerator, denominator))
             },
             (Type::RATIONAL, n) => {
+                // each value is ~8 bytes
+                if n as u64*8 > limits.decoding_buffer_size {
+                    return Err(TiffError::LimitsExceeded)
+                }
                 let mut v = Vec::with_capacity(n as usize);
                 try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
                 for _ in 0 .. n {
@@ -203,6 +215,9 @@ impl Entry {
                 Ok(List(v))
             },
             (Type::ASCII, n) => {
+                if n as u64 > limits.decoding_buffer_size {
+                    return Err(TiffError::LimitsExceeded)
+                }
                 try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
                 let string = try!(decoder.read_string(n as usize));
                 Ok(Ascii(string))
