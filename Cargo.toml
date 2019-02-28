@@ -9,7 +9,8 @@ authors = [
     "HeroicKatora",
     "Calum",
     "CensoredUsername <cens.username@gmail.com>",
-    "Robzz"]
+    "Robzz",
+    "birktj"]
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
 repository = "https://github.com/PistonDevelopers/image-tiff"
