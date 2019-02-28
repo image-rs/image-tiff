@@ -1,7 +1,6 @@
 use std::io::{self, Read, Seek};
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
-use std::string::FromUtf8Error;
 
 use ::{ColorType, TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
 
@@ -46,7 +45,7 @@ impl DecodingResult {
         }
     }
 
-    pub fn to_buffer(&mut self, start: usize) -> DecodingBuffer {
+    pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
@@ -72,8 +71,8 @@ impl<'a> DecodingBuffer<'a> {
 
     fn byte_len(&self) -> usize {
         match self {
-            DecodingBuffer::U8(ref buf) => 1,
-            DecodingBuffer::U16(ref buf) => 2,
+            DecodingBuffer::U8(_) => 1,
+            DecodingBuffer::U16(_) => 2,
         }
     }
 
@@ -206,14 +205,15 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
         ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::CMYK(8) => 4,
         _ => return Err(TiffError::UnsupportedError(TiffUnsupportedError::HorizontalPredictor(color_type)))
     };
-    Ok(match image {
+    match image {
         DecodingBuffer::U8(buf) => {
-            rev_hpredict_nsamp(buf, size, samples)
+            rev_hpredict_nsamp(buf, size, samples);
         },
         DecodingBuffer::U16(buf) => {
-            rev_hpredict_nsamp(buf, size, samples)
+            rev_hpredict_nsamp(buf, size, samples);
         }
-    })
+    }
+    Ok(())
 }
 
 impl<R: Read + Seek> Decoder<R> {
@@ -332,10 +332,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns `true` if there is at least one more image available.
     pub fn more_images(&self) -> bool {
-        match self.next_ifd {
-            Some(_) => true,
-            None => false
-        }
+        self.next_ifd.is_some()
     }
 
     /// Returns the byte_order
@@ -357,12 +354,12 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Reads a string
     #[inline]
-    pub fn read_string(&mut self, length: usize) -> Result<String, FromUtf8Error> {
+    pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
         let mut out = String::with_capacity(length);
-        self.reader.read_to_string(&mut out);
+        self.reader.read_to_string(&mut out)?;
         // Strings may be null-terminated, so we trim anything downstream of the null byte
         let trimmed = out.bytes().take_while(|&n| n != 0).collect::<Vec<u8>>();
-        String::from_utf8(trimmed)
+        Ok(String::from_utf8(trimmed)?)
     }
 
     /// Reads a TIFF IFA offset/value field
@@ -621,7 +618,7 @@ impl<R: Read + Seek> Decoder<R> {
             n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
         };
 
-        self.read_strip_to_buffer(result.to_buffer(0))?;
+        self.read_strip_to_buffer(result.as_buffer(0))?;
 
         Ok(result)
     }
@@ -643,7 +640,7 @@ impl<R: Read + Seek> Decoder<R> {
         };
 
         for i in 0..self.strip_count()? as usize {
-            self.read_strip_to_buffer(result.to_buffer(samples_per_strip * i))?;
+            self.read_strip_to_buffer(result.as_buffer(samples_per_strip * i))?;
         }
 
         Ok(result)
