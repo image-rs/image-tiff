@@ -247,13 +247,23 @@ impl<W: Write + Seek> TiffEncoder<W> {
     where
         [C::Inner]: TiffValue,
     {
+        let num_pix = (width as usize).checked_mul(height as usize)
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Image width * height exceeds usize"))?;
+        if data.len() < num_pix {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Input data slice is undersized for provided dimensions").into());
+        }
+
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height).unwrap();
+        let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height)?;
 
         let mut idx = 0;
         while image.next_strip_sample_count() > 0 {
             let sample_count = image.next_strip_sample_count() as usize;
-            image.write_strip(&data[idx..idx + sample_count]).unwrap();
+            image.write_strip(&data[idx..idx + sample_count])?;
             idx += sample_count;
         }
         image.finish()

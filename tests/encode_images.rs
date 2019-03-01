@@ -6,7 +6,7 @@ use tiff::encoder::{colortype, TiffEncoder};
 use tiff::ColorType;
 
 use std::fs::File;
-use std::io::{Seek, SeekFrom};
+use std::io::{Cursor, Seek, SeekFrom};
 
 #[test]
 fn encode_decode() {
@@ -38,6 +38,21 @@ fn encode_decode() {
         }
     }
 }
+
+#[test]
+/// Test that attempting to encode when the input buffer is undersized returns
+/// an error rather than panicking.
+/// See: https://github.com/PistonDevelopers/image-tiff/issues/35
+fn test_encode_undersized_buffer() {
+    let input_data = vec![1, 2, 3];
+    let output = Vec::new();
+    let mut output_stream = Cursor::new(output);
+    if let Ok(mut tiff) = TiffEncoder::new(&mut output_stream) {
+        let res = tiff.write_image::<colortype::RGB8>(50, 50, &input_data);
+        assert!(res.is_err());
+    }
+}
+
 
 #[test]
 fn test_gray_u8_roundtrip() {
