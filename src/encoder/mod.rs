@@ -474,7 +474,11 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     {
         // TODO: Compression
         let samples = self.next_strip_sample_count();
-        assert_eq!(value.len() as u64, samples);
+        if value.len() as u64 != samples {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Slice is wrong size for strip").into());
+        }
 
         let offset = self.encoder.write_data(value)?;
         self.strip_offsets.push(offset as u32);
