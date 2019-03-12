@@ -170,8 +170,7 @@ impl Entry {
                 ]))
             },
             (Type::SHORT, n) => {
-                // each value is ~8 bytes
-                if u64::from(n)*8 > limits.decoding_buffer_size {
+                if n as usize > limits.decoding_buffer_size / std::mem::size_of::<Value>() {
                     return Err(TiffError::LimitsExceeded)
                 }
                 let mut v = Vec::with_capacity(n as usize);
@@ -183,8 +182,7 @@ impl Entry {
             },
             (Type::LONG, 1) => Ok(Unsigned(try!(self.r(bo).read_u32()))),
             (Type::LONG, n) => {
-                // each value is ~8 bytes
-                if u64::from(n)*8 > limits.decoding_buffer_size {
+                if n as usize > limits.decoding_buffer_size / std::mem::size_of::<Value>() {
                     return Err(TiffError::LimitsExceeded)
                 }
                 let mut v = Vec::with_capacity(n as usize);
@@ -201,8 +199,7 @@ impl Entry {
                 Ok(Rational(numerator, denominator))
             },
             (Type::RATIONAL, n) => {
-                // each value is ~8 bytes
-                if u64::from(n)*8 > limits.decoding_buffer_size {
+                if n as usize > limits.decoding_buffer_size / std::mem::size_of::<Value>() {
                     return Err(TiffError::LimitsExceeded)
                 }
                 let mut v = Vec::with_capacity(n as usize);
@@ -215,7 +212,7 @@ impl Entry {
                 Ok(List(v))
             },
             (Type::ASCII, n) => {
-                if u64::from(n) > limits.decoding_buffer_size {
+                if n as usize > limits.decoding_buffer_size {
                     return Err(TiffError::LimitsExceeded)
                 }
                 try!(decoder.goto_offset(try!(self.r(bo).read_u32())));

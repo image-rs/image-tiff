@@ -28,7 +28,7 @@ pub enum DecodingResult {
 
 impl DecodingResult {
     fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size as u64 > limits.decoding_buffer_size {
+        if size > limits.decoding_buffer_size {
             Err(TiffError::LimitsExceeded)
         }
         else {
@@ -37,7 +37,7 @@ impl DecodingResult {
     }
 
     fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size as u64*2 > limits.decoding_buffer_size {
+        if size > limits.decoding_buffer_size / 2 {
             Err(TiffError::LimitsExceeded)
         }
         else {
@@ -133,10 +133,10 @@ pub struct Limits {
     /// 256MiB. If the entire image is decoded at once, then this will
     /// be the maximum size of the image. If it is decoded one strip at a
     /// time, this will be the maximum size of a strip.
-    decoding_buffer_size: u64,
+    decoding_buffer_size: usize,
     /// The maximum size of any ifd value in bytes, the default is 
     /// 1MiB.
-    ifd_value_size: u64,
+    ifd_value_size: usize,
 }
 
 impl Default for Limits {
@@ -493,7 +493,7 @@ impl<R: Read + Seek> Decoder<R> {
             method => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedCompressionMethod(method)))
         };
         
-        if bytes > max_uncompressed_length*buffer.byte_len() {
+        if bytes / buffer.byte_len() > max_uncompressed_length {
             return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
         }
 
@@ -569,7 +569,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let buffer_size = self.width as usize * strip_height * self.bits_per_sample.len();
 
-        if buffer.len() < buffer_size || byte_count as usize > buffer_size*buffer.byte_len() {
+        if buffer.len() < buffer_size || byte_count as usize / buffer.byte_len() > buffer_size {
             return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
         }
 
