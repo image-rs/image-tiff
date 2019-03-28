@@ -224,13 +224,14 @@ impl<R: Read + Seek> Decoder<R> {
     /// Initializes the decoder.
     pub fn init(mut self) -> TiffResult<Decoder<R>> {
         try!(self.read_header());
-        self.next_image()
+        self.next_image()?;
+        Ok(self)
     }
 
     /// Reads in the next image.
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
-    pub fn next_image(mut self) -> TiffResult<Decoder<R>> {
+    pub fn next_image(&mut self) -> TiffResult<()> {
         self.ifd = Some(try!(self.read_ifd()));
         self.width = try!(self.get_tag_u32(ifd::Tag::ImageWidth));
         self.height = try!(self.get_tag_u32(ifd::Tag::ImageLength));
@@ -266,7 +267,7 @@ impl<R: Read + Seek> Decoder<R> {
             }
             _ => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedSampleDepth(self.samples)))
         }
-        Ok(self)
+        Ok(())
     }
 
     /// Returns `true` if there is at least one more image available.
