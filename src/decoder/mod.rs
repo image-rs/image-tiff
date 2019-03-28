@@ -1,7 +1,6 @@
 use std::io::{self, Read, Seek};
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
-use std::string::FromUtf8Error;
 
 use ::{ColorType, TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
 
@@ -28,7 +27,25 @@ pub enum DecodingResult {
 }
 
 impl DecodingResult {
-    pub fn to_buffer(&mut self, start: usize) -> DecodingBuffer {
+    fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size {
+            Err(TiffError::LimitsExceeded)
+        }
+        else {
+            Ok(DecodingResult::U8(vec![0; size]))
+        }
+    }
+
+    fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / 2 {
+            Err(TiffError::LimitsExceeded)
+        }
+        else {
+            Ok(DecodingResult::U16(vec![0; size]))
+        }
+    }
+
+    pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
@@ -45,6 +62,20 @@ pub enum DecodingBuffer<'a> {
 }
 
 impl<'a> DecodingBuffer<'a> {
+    fn len(&self) -> usize {
+        match self {
+            DecodingBuffer::U8(ref buf) => buf.len(),
+            DecodingBuffer::U16(ref buf) => buf.len(),
+        }
+    }
+
+    fn byte_len(&self) -> usize {
+        match self {
+            DecodingBuffer::U8(_) => 1,
+            DecodingBuffer::U16(_) => 2,
+        }
+    }
+
     fn copy<'b>(&'b mut self) -> DecodingBuffer<'b> where 'a: 'b {
         match self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
@@ -95,6 +126,28 @@ struct StripDecodeState {
     strip_bytes: Vec<u32>,
 }
 
+/// Decoding limits
+#[derive(Clone, Debug)]
+pub struct Limits {
+    /// The maximum size of any `DecodingResult` in bytes, the default is 
+    /// 256MiB. If the entire image is decoded at once, then this will
+    /// be the maximum size of the image. If it is decoded one strip at a
+    /// time, this will be the maximum size of a strip.
+    decoding_buffer_size: usize,
+    /// The maximum size of any ifd value in bytes, the default is 
+    /// 1MiB.
+    ifd_value_size: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits {
+            decoding_buffer_size: 256*1024*1024,
+            ifd_value_size: 1024*1024,
+        }
+    }
+}
+
 /// The representation of a TIFF decoder
 ///
 /// Currently does not support decoding of interlaced images
@@ -102,6 +155,7 @@ struct StripDecodeState {
 pub struct Decoder<R> where R: Read + Seek {
     reader: SmartReader<R>,
     byte_order: ByteOrder,
+    limits: Limits,
     next_ifd: Option<u32>,
     ifd: Option<Directory>,
     width: u32,
@@ -151,14 +205,15 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
         ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::CMYK(8) => 4,
         _ => return Err(TiffError::UnsupportedError(TiffUnsupportedError::HorizontalPredictor(color_type)))
     };
-    Ok(match image {
+    match image {
         DecodingBuffer::U8(buf) => {
-            rev_hpredict_nsamp(buf, size, samples)
+            rev_hpredict_nsamp(buf, size, samples);
         },
         DecodingBuffer::U16(buf) => {
-            rev_hpredict_nsamp(buf, size, samples)
+            rev_hpredict_nsamp(buf, size, samples);
         }
-    })
+    }
+    Ok(())
 }
 
 impl<R: Read + Seek> Decoder<R> {
@@ -167,6 +222,7 @@ impl<R: Read + Seek> Decoder<R> {
         Decoder {
             reader: SmartReader::wrap(r, ByteOrder::LittleEndian),
             byte_order: ByteOrder::LittleEndian,
+            limits: Default::default(),
             next_ifd: None,
             ifd: None,
             width: 0,
@@ -177,6 +233,11 @@ impl<R: Read + Seek> Decoder<R> {
             compression_method: CompressionMethod::None,
             strip_decoder: None,
         }.init()
+    }
+
+    pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
+        self.limits = limits;
+        self
     }
 
     pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
@@ -271,10 +332,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns `true` if there is at least one more image available.
     pub fn more_images(&self) -> bool {
-        match self.next_ifd {
-            Some(_) => true,
-            None => false
-        }
+        self.next_ifd.is_some()
     }
 
     /// Returns the byte_order
@@ -296,12 +354,12 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Reads a string
     #[inline]
-    pub fn read_string(&mut self, length: usize) -> Result<String, FromUtf8Error> {
+    pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
         let mut out = String::with_capacity(length);
-        self.reader.read_to_string(&mut out);
+        self.reader.read_to_string(&mut out)?;
         // Strings may be null-terminated, so we trim anything downstream of the null byte
         let trimmed = out.bytes().take_while(|&n| n != 0).collect::<Vec<u8>>();
-        String::from_utf8(trimmed)
+        Ok(String::from_utf8(trimmed)?)
     }
 
     /// Reads a TIFF IFA offset/value field
@@ -373,7 +431,9 @@ impl<R: Read + Seek> Decoder<R> {
             Some(entry) => entry.clone(),
         };
 
-        Ok(Some(try!(entry.val(self))))
+        let limits = self.limits.clone();
+
+        Ok(Some(try!(entry.val(&limits, self))))
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
@@ -432,6 +492,11 @@ impl<R: Read + Seek> Decoder<R> {
             },
             method => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedCompressionMethod(method)))
         };
+        
+        if bytes / buffer.byte_len() > max_uncompressed_length {
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+        }
+
         Ok(match (color_type, buffer) {
             (ColorType:: RGB(8), DecodingBuffer::U8(ref mut buffer)) |
             (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) |
@@ -492,15 +557,21 @@ impl<R: Read + Seek> Decoder<R> {
         self.initialize_strip_decoder()?;
 
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
-        let offset = self.strip_decoder.as_ref().unwrap().strip_offsets[index];
-        let byte_count = self.strip_decoder.as_ref().unwrap().strip_bytes[index];
+        let offset = *self.strip_decoder.as_ref().unwrap().strip_offsets.get(index)
+            .ok_or(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))?;
+        let byte_count = *self.strip_decoder.as_ref().unwrap().strip_bytes.get(index)
+            .ok_or(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))?;
 
         let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height) as usize;
 
         let strip_height = std::cmp::min(rows_per_strip, self.height as usize - index * rows_per_strip);
 
-        let buffer_size = self.width as usize * strip_height * self.bits_per_sample.iter().count();
+        let buffer_size = self.width as usize * strip_height * self.bits_per_sample.len();
+
+        if buffer.len() < buffer_size || byte_count as usize / buffer.byte_len() > buffer_size {
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+        }
 
         let units_read = self.expand_strip(buffer.copy(), offset, byte_count, buffer_size)?;
 
@@ -542,12 +613,12 @@ impl<R: Read + Seek> Decoder<R> {
         let buffer_size = self.width as usize * strip_height * self.bits_per_sample.iter().count();
 
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::U8(vec![0; buffer_size]),
-            n if n <= 16 => DecodingResult::U16(vec![0; buffer_size]),
+            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
+            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
             n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
         };
 
-        self.read_strip_to_buffer(result.to_buffer(0))?;
+        self.read_strip_to_buffer(result.as_buffer(0))?;
 
         Ok(result)
     }
@@ -563,13 +634,13 @@ impl<R: Read + Seek> Decoder<R> {
         let buffer_size = self.width as usize * self.height as usize * self.bits_per_sample.iter().count();
 
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::U8(vec![0; buffer_size]),
-            n if n <= 16 => DecodingResult::U16(vec![0; buffer_size]),
+            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
+            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
             n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
         };
 
         for i in 0..self.strip_count()? as usize {
-            self.read_strip_to_buffer(result.to_buffer(samples_per_strip * i))?;
+            self.read_strip_to_buffer(result.as_buffer(samples_per_strip * i))?;
         }
 
         Ok(result)

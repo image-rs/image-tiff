@@ -18,6 +18,9 @@ pub enum TiffError {
 
     /// An I/O Error occurred while decoding the image
     IoError(io::Error),
+
+    /// The Limits of the Decoder is exceeded,
+    LimitsExceeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -89,6 +92,7 @@ impl fmt::Display for TiffError {
             TiffError::UnsupportedError(ref f) => write!(fmt, "The Decoder does not support the \
                                                                  image format `{}`", f),
             TiffError::IoError(ref e) => e.fmt(fmt),
+            TiffError::LimitsExceeded => write!(fmt, "The Decoder limits are exceeded"),
         }
     }
 }
@@ -99,6 +103,7 @@ impl Error for TiffError {
             TiffError::FormatError(..) => "Format error",
             TiffError::UnsupportedError(..) => "Unsupported error",
             TiffError::IoError(..) => "IO error",
+            TiffError::LimitsExceeded => "Decoder limits exceeded",
         }
     }
 

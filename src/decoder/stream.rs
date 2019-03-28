@@ -101,7 +101,11 @@ impl PackBitsReader {
         let mut buffer = Vec::new();
         let mut read: usize = 0;
         while read < length {
-            read += try!(read_packbits_run(&mut reader, &mut buffer));
+            let lread = read_packbits_run(&mut reader, &mut buffer)?;
+            if lread == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into())
+            }
+            read += lread;
         }
         Ok((buffer.len(), PackBitsReader {
             buffer: io::Cursor::new(buffer),

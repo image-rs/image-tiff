@@ -139,8 +139,6 @@ fn test_rgb_u16_roundtrip()
     let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(16));
-    let img_res = decoder.read_image();
-    assert!(img_res.is_ok());
 
     let image_data = match decoder.read_image().unwrap() {
         DecodingResult::U16(res) => res,
