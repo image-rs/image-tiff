@@ -1,18 +1,12 @@
-use std::io::{self, Read, Seek};
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
+use std::io::{self, Read, Seek};
 
-use ::{ColorType, TiffError, TiffFormatError, TiffUnsupportedError, TiffResult};
+use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
 
-use self::stream::{
-    ByteOrder,
-    EndianReader,
-    SmartReader,
-    LZWReader,
-    PackBitsReader
-};
+use self::stream::{ByteOrder, EndianReader, LZWReader, PackBitsReader, SmartReader};
 
 pub mod ifd;
 mod stream;
@@ -23,15 +17,14 @@ pub enum DecodingResult {
     /// A vector of unsigned bytes
     U8(Vec<u8>),
     /// A vector of unsigned words
-    U16(Vec<u16>)
+    U16(Vec<u16>),
 }
 
 impl DecodingResult {
     fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size {
             Err(TiffError::LimitsExceeded)
-        }
-        else {
+        } else {
             Ok(DecodingResult::U8(vec![0; size]))
         }
     }
@@ -39,8 +32,7 @@ impl DecodingResult {
     fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / 2 {
             Err(TiffError::LimitsExceeded)
-        }
-        else {
+        } else {
             Ok(DecodingResult::U16(vec![0; size]))
         }
     }
@@ -58,7 +50,7 @@ pub enum DecodingBuffer<'a> {
     /// A slice of unsigned bytes
     U8(&'a mut [u8]),
     /// A slice of unsigned words
-    U16(&'a mut [u16])
+    U16(&'a mut [u16]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -76,7 +68,10 @@ impl<'a> DecodingBuffer<'a> {
         }
     }
 
-    fn copy<'b>(&'b mut self) -> DecodingBuffer<'b> where 'a: 'b {
+    fn copy<'b>(&'b mut self) -> DecodingBuffer<'b>
+    where
+        'a: 'b,
+    {
         match self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
@@ -104,19 +99,19 @@ pub enum CompressionMethod {
     Fax4 = 4,
     LZW = 5,
     JPEG = 6,
-    PackBits = 0x8005
+    PackBits = 0x8005,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
 pub enum PlanarConfiguration {
     Chunky = 1,
-    Planar = 2
+    Planar = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
 enum Predictor {
     None = 1,
-    Horizontal = 2
+    Horizontal = 2,
 }
 
 #[derive(Debug)]
@@ -129,12 +124,12 @@ struct StripDecodeState {
 /// Decoding limits
 #[derive(Clone, Debug)]
 pub struct Limits {
-    /// The maximum size of any `DecodingResult` in bytes, the default is 
+    /// The maximum size of any `DecodingResult` in bytes, the default is
     /// 256MiB. If the entire image is decoded at once, then this will
     /// be the maximum size of the image. If it is decoded one strip at a
     /// time, this will be the maximum size of a strip.
     decoding_buffer_size: usize,
-    /// The maximum size of any ifd value in bytes, the default is 
+    /// The maximum size of any ifd value in bytes, the default is
     /// 1MiB.
     ifd_value_size: usize,
 }
@@ -142,8 +137,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Limits {
         Limits {
-            decoding_buffer_size: 256*1024*1024,
-            ifd_value_size: 1024*1024,
+            decoding_buffer_size: 256 * 1024 * 1024,
+            ifd_value_size: 1024 * 1024,
         }
     }
 }
@@ -152,7 +147,10 @@ impl Default for Limits {
 ///
 /// Currently does not support decoding of interlaced images
 #[derive(Debug)]
-pub struct Decoder<R> where R: Read + Seek {
+pub struct Decoder<R>
+where
+    R: Read + Seek,
+{
     reader: SmartReader<R>,
     byte_order: ByteOrder,
     limits: Limits,
@@ -183,10 +181,10 @@ impl Wrapping for u16 {
     }
 }
 
-fn rev_hpredict_nsamp<T>(image: &mut [T],
-                         size: (u32, u32),
-                         samples: usize)
-                         where T: Num + Copy + Wrapping {
+fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize)
+where
+    T: Num + Copy + Wrapping,
+{
     let width = size.0 as usize;
     let height = size.1 as usize;
     for row in 0..height {
@@ -203,12 +201,16 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
         ColorType::Gray(8) | ColorType::Gray(16) => 1,
         ColorType::RGB(8) | ColorType::RGB(16) => 3,
         ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::CMYK(8) => 4,
-        _ => return Err(TiffError::UnsupportedError(TiffUnsupportedError::HorizontalPredictor(color_type)))
+        _ => {
+            return Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::HorizontalPredictor(color_type),
+            ))
+        }
     };
     match image {
         DecodingBuffer::U8(buf) => {
             rev_hpredict_nsamp(buf, size, samples);
-        },
+        }
         DecodingBuffer::U16(buf) => {
             rev_hpredict_nsamp(buf, size, samples);
         }
@@ -232,7 +234,8 @@ impl<R: Read + Seek> Decoder<R> {
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
             strip_decoder: None,
-        }.init()
+        }
+        .init()
     }
 
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
@@ -247,16 +250,34 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
             // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => Ok(ColorType::RGBA(8)),
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8] => Ok(ColorType::RGB(8)),
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16, 16] => Ok(ColorType::RGBA(16)),
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16] => Ok(ColorType::RGB(16)),
-            PhotometricInterpretation::CMYK if self.bits_per_sample == [8, 8, 8, 8] => Ok(ColorType::CMYK(8)),
+            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => {
+                Ok(ColorType::RGBA(8))
+            }
+            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8] => {
+                Ok(ColorType::RGB(8))
+            }
+            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16, 16] => {
+                Ok(ColorType::RGBA(16))
+            }
+            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16] => {
+                Ok(ColorType::RGB(16))
+            }
+            PhotometricInterpretation::CMYK if self.bits_per_sample == [8, 8, 8, 8] => {
+                Ok(ColorType::CMYK(8))
+            }
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                                           if self.bits_per_sample.len() == 1 => Ok(ColorType::Gray(self.bits_per_sample[0])),
+                if self.bits_per_sample.len() == 1 =>
+            {
+                Ok(ColorType::Gray(self.bits_per_sample[0]))
+            }
 
             // TODO: this is bad we should not fail at this point
-            _ => Err(TiffError::UnsupportedError(TiffUnsupportedError::InterpretationWithBits(self.photometric_interpretation, self.bits_per_sample.clone())))
+            _ => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::InterpretationWithBits(
+                    self.photometric_interpretation,
+                    self.bits_per_sample.clone(),
+                ),
+            )),
         }
     }
 
@@ -266,18 +287,26 @@ impl<R: Read + Seek> Decoder<R> {
         match &*endianess {
             b"II" => {
                 self.byte_order = ByteOrder::LittleEndian;
-                self.reader.byte_order = ByteOrder::LittleEndian; },
+                self.reader.byte_order = ByteOrder::LittleEndian;
+            }
             b"MM" => {
                 self.byte_order = ByteOrder::BigEndian;
-                self.reader.byte_order = ByteOrder::BigEndian;  },
-            _ => return Err(TiffError::FormatError(TiffFormatError::TiffSignatureNotFound))
+                self.reader.byte_order = ByteOrder::BigEndian;
+            }
+            _ => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::TiffSignatureNotFound,
+                ))
+            }
         }
         if try!(self.read_short()) != 42 {
-            return Err(TiffError::FormatError(TiffFormatError::TiffSignatureInvalid))
+            return Err(TiffError::FormatError(
+                TiffFormatError::TiffSignatureInvalid,
+            ));
         }
         self.next_ifd = match try!(self.read_long()) {
             0 => None,
-            n => Some(n)
+            n => Some(n),
         };
         Ok(())
     }
@@ -296,18 +325,24 @@ impl<R: Read + Seek> Decoder<R> {
         self.width = try!(self.get_tag_u32(ifd::Tag::ImageWidth));
         self.height = try!(self.get_tag_u32(ifd::Tag::ImageLength));
         self.strip_decoder = None;
-        self.photometric_interpretation = match FromPrimitive::from_u32(
-            try!(self.get_tag_u32(ifd::Tag::PhotometricInterpretation))
-        ) {
+        self.photometric_interpretation = match FromPrimitive::from_u32(try!(
+            self.get_tag_u32(ifd::Tag::PhotometricInterpretation)
+        )) {
             Some(val) => val,
-            None => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnknownInterpretation))
+            None => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnknownInterpretation,
+                ))
+            }
         };
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::Compression)) {
             match FromPrimitive::from_u32(val) {
-                Some(method) =>  {
-                    self.compression_method = method
-                },
-                None => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnknownCompressionMethod))
+                Some(method) => self.compression_method = method,
+                None => {
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::UnknownCompressionMethod,
+                    ))
+                }
             }
         }
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::SamplesPerPixel)) {
@@ -323,9 +358,12 @@ impl<R: Read + Seek> Decoder<R> {
                 if let Some(val) = try!(self.find_tag_u32_vec(ifd::Tag::BitsPerSample)) {
                     self.bits_per_sample = val.iter().map(|&v| v as u8).collect()
                 }
-
             }
-            _ => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedSampleDepth(self.samples)))
+            _ => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedSampleDepth(self.samples),
+                ))
+            }
         }
         Ok(self)
     }
@@ -373,7 +411,9 @@ impl<R: Read + Seek> Decoder<R> {
     /// Moves the cursor to the specified offset
     #[inline]
     pub fn goto_offset(&mut self, offset: u32) -> io::Result<()> {
-        self.reader.seek(io::SeekFrom::Start(u64::from(offset))).map(|_| ())
+        self.reader
+            .seek(io::SeekFrom::Start(u64::from(offset)))
+            .map(|_| ())
     }
 
     /// Reads a IFD entry.
@@ -391,34 +431,40 @@ impl<R: Read + Seek> Decoder<R> {
                 // Unknown type. Skip this entry according to spec.
                 try!(self.read_long());
                 try!(self.read_long());
-                return Ok(None)
-
+                return Ok(None);
             }
         };
-        Ok(Some((tag, ifd::Entry::new(
-            type_,
-            try!(self.read_long()), // count
-            try!(self.read_offset())  // offset
-        ))))
+        Ok(Some((
+            tag,
+            ifd::Entry::new(
+                type_,
+                try!(self.read_long()),   // count
+                try!(self.read_offset()), // offset
+            ),
+        )))
     }
 
     /// Reads the next IFD
     fn read_ifd(&mut self) -> TiffResult<Directory> {
         let mut dir: Directory = HashMap::new();
         match self.next_ifd {
-            None => return Err(TiffError::FormatError(TiffFormatError::ImageFileDirectoryNotFound)),
-            Some(offset) => try!(self.goto_offset(offset))
+            None => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::ImageFileDirectoryNotFound,
+                ))
+            }
+            Some(offset) => try!(self.goto_offset(offset)),
         }
         for _ in 0..try!(self.read_short()) {
             let (tag, entry) = match try!(self.read_entry()) {
                 Some(val) => val,
-                None => continue // Unknown data type in tag, skip
+                None => continue, // Unknown data type in tag, skip
             };
             dir.insert(tag, entry);
         }
         self.next_ifd = match try!(self.read_long()) {
             0 => None,
-            n => Some(n)
+            n => Some(n),
         };
         Ok(dir)
     }
@@ -440,7 +486,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn find_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<Option<u32>> {
         match self.find_tag(tag)? {
             Some(val) => val.into_u32().map(Some),
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 
@@ -448,7 +494,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn find_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Option<Vec<u32>>> {
         match self.find_tag(tag)? {
             Some(val) => val.into_u32_vec().map(Some),
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 
@@ -457,7 +503,9 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn get_tag(&mut self, tag: ifd::Tag) -> TiffResult<ifd::Value> {
         match try!(self.find_tag(tag)) {
             Some(val) => Ok(val),
-            None => Err(TiffError::FormatError(TiffFormatError::RequiredTagNotFound(tag))),
+            None => Err(TiffError::FormatError(
+                TiffFormatError::RequiredTagNotFound(tag),
+            )),
         }
     }
 
@@ -473,50 +521,73 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decompresses the strip into the supplied buffer.
     /// Returns the number of bytes read.
-    fn expand_strip<'a>(&mut self, buffer: DecodingBuffer<'a>, offset: u32, length: u32, max_uncompressed_length: usize) -> TiffResult<usize> {
+    fn expand_strip<'a>(
+        &mut self,
+        buffer: DecodingBuffer<'a>,
+        offset: u32,
+        length: u32,
+        max_uncompressed_length: usize,
+    ) -> TiffResult<usize> {
         let color_type = try!(self.colortype());
         try!(self.goto_offset(offset));
         let (bytes, mut reader): (usize, Box<EndianReader>) = match self.compression_method {
             CompressionMethod::None => {
                 let order = self.reader.byte_order;
-                (length as usize, Box::new(SmartReader::wrap(&mut self.reader, order)))
-            },
+                (
+                    length as usize,
+                    Box::new(SmartReader::wrap(&mut self.reader, order)),
+                )
+            }
             CompressionMethod::LZW => {
-                let (bytes, reader) = try!(LZWReader::new(&mut self.reader, length as usize, max_uncompressed_length));
+                let (bytes, reader) = try!(LZWReader::new(
+                    &mut self.reader,
+                    length as usize,
+                    max_uncompressed_length
+                ));
                 (bytes, Box::new(reader))
-            },
+            }
             CompressionMethod::PackBits => {
                 let order = self.reader.byte_order;
-                let (bytes, reader) = try!(PackBitsReader::new(&mut self.reader, order, length as usize));
+                let (bytes, reader) = try!(PackBitsReader::new(
+                    &mut self.reader,
+                    order,
+                    length as usize
+                ));
                 (bytes, Box::new(reader))
-            },
-            method => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedCompressionMethod(method)))
+            }
+            method => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedCompressionMethod(method),
+                ))
+            }
         };
-        
+
         if bytes / buffer.byte_len() > max_uncompressed_length {
-            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
         }
 
         Ok(match (color_type, buffer) {
-            (ColorType:: RGB(8), DecodingBuffer::U8(ref mut buffer)) |
-            (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer)) |
-            (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
+            (ColorType::RGB(8), DecodingBuffer::U8(ref mut buffer))
+            | (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer))
+            | (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
                 try!(reader.read_exact(&mut buffer[..bytes]));
                 bytes
             }
-            (ColorType::RGBA(16), DecodingBuffer::U16(ref mut buffer)) |
-            (ColorType:: RGB(16), DecodingBuffer::U16(ref mut buffer)) => {
-                try!(reader.read_u16_into(&mut buffer[..bytes/2]));
-                bytes/2
+            (ColorType::RGBA(16), DecodingBuffer::U16(ref mut buffer))
+            | (ColorType::RGB(16), DecodingBuffer::U16(ref mut buffer)) => {
+                try!(reader.read_u16_into(&mut buffer[..bytes / 2]));
+                bytes / 2
             }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                try!(reader.read_u16_into(&mut buffer[..bytes/2]));
+                try!(reader.read_u16_into(&mut buffer[..bytes / 2]));
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    for datum in buffer[..bytes/2].iter_mut() {
+                    for datum in buffer[..bytes / 2].iter_mut() {
                         *datum = 0xffff - *datum
                     }
                 }
-                bytes/2
+                bytes / 2
             }
             (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
                 try!(reader.read_exact(&mut buffer[..bytes]));
@@ -527,15 +598,20 @@ impl<R: Read + Seek> Decoder<R> {
                 }
                 bytes
             }
-            (type_, _) => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedColorType(type_))),
+            (type_, _) => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedColorType(type_),
+                ))
+            }
         })
     }
 
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
-        let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
+        let rows_per_strip = self
+            .get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height);
-        
+
         Ok((self.height + rows_per_strip - 1) / rows_per_strip)
     }
 
@@ -557,20 +633,40 @@ impl<R: Read + Seek> Decoder<R> {
         self.initialize_strip_decoder()?;
 
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
-        let offset = *self.strip_decoder.as_ref().unwrap().strip_offsets.get(index)
-            .ok_or(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))?;
-        let byte_count = *self.strip_decoder.as_ref().unwrap().strip_bytes.get(index)
-            .ok_or(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))?;
+        let offset = *self
+            .strip_decoder
+            .as_ref()
+            .unwrap()
+            .strip_offsets
+            .get(index)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
+        let byte_count = *self
+            .strip_decoder
+            .as_ref()
+            .unwrap()
+            .strip_bytes
+            .get(index)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
 
-        let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
+        let rows_per_strip = self
+            .get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height) as usize;
 
-        let strip_height = std::cmp::min(rows_per_strip, self.height as usize - index * rows_per_strip);
+        let strip_height = std::cmp::min(
+            rows_per_strip,
+            self.height as usize - index * rows_per_strip,
+        );
 
         let buffer_size = self.width as usize * strip_height * self.bits_per_sample.len();
 
         if buffer.len() < buffer_size || byte_count as usize / buffer.byte_len() > buffer_size {
-            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
         }
 
         let units_read = self.expand_strip(buffer.copy(), offset, byte_count, buffer_size)?;
@@ -582,7 +678,9 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         if units_read < buffer_size {
-            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
         }
         if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
             match FromPrimitive::from_u32(predictor) {
@@ -591,10 +689,14 @@ impl<R: Read + Seek> Decoder<R> {
                     rev_hpredict(
                         buffer.copy(),
                         (self.width, strip_height as u32),
-                        self.colortype()?
+                        self.colortype()?,
                     )?;
-                },
-                None => return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(predictor))),
+                }
+                None => {
+                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
+                        predictor,
+                    )))
+                }
             }
         }
         Ok(())
@@ -605,17 +707,25 @@ impl<R: Read + Seek> Decoder<R> {
         self.initialize_strip_decoder()?;
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
 
-        let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
+        let rows_per_strip = self
+            .get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height) as usize;
 
-        let strip_height = std::cmp::min(rows_per_strip, self.height as usize - index * rows_per_strip);
+        let strip_height = std::cmp::min(
+            rows_per_strip,
+            self.height as usize - index * rows_per_strip,
+        );
 
         let buffer_size = self.width as usize * strip_height * self.bits_per_sample.iter().count();
 
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
             n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
-            n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
+            n => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                ))
+            }
         };
 
         self.read_strip_to_buffer(result.as_buffer(0))?;
@@ -626,17 +736,24 @@ impl<R: Read + Seek> Decoder<R> {
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         self.initialize_strip_decoder()?;
-        let rows_per_strip = self.get_tag_u32(ifd::Tag::RowsPerStrip)
+        let rows_per_strip = self
+            .get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height) as usize;
 
-        let samples_per_strip = self.width as usize * rows_per_strip * self.bits_per_sample.iter().count();
+        let samples_per_strip =
+            self.width as usize * rows_per_strip * self.bits_per_sample.iter().count();
 
-        let buffer_size = self.width as usize * self.height as usize * self.bits_per_sample.iter().count();
+        let buffer_size =
+            self.width as usize * self.height as usize * self.bits_per_sample.iter().count();
 
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
             n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
-            n => return Err(TiffError::UnsupportedError(TiffUnsupportedError::UnsupportedBitsPerChannel(n))),
+            n => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                ))
+            }
         };
 
         for i in 0..self.strip_count()? as usize {
