@@ -21,7 +21,7 @@ fn decode_tiff(file: File) -> TiffResult<()> {
 #[test]
 fn oor_panic() {
     test_directory("./tests/fuzz_images/oor_panic", |file| {
-        decode_tiff(file).ok();
+        let _ = decode_tiff(file);
         true
     });
 }
@@ -36,7 +36,16 @@ fn oom_crash() {
 #[test]
 fn inf_loop() {
     test_directory("./tests/fuzz_images/inf_loop", |file| {
-        decode_tiff(file).ok();
+        let _ = decode_tiff(file);
+        true
+    });
+}
+
+// https://github.com/image-rs/image-tiff/issues/33
+#[test]
+fn divide_by_zero() {
+    test_directory("./tests/fuzz_images/divide_by_zero", |file| {
+        let _ = decode_tiff(file);
         true
     });
 }
