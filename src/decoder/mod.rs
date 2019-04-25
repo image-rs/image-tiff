@@ -612,6 +612,10 @@ impl<R: Read + Seek> Decoder<R> {
             .get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height);
 
+        if rows_per_strip == 0 {
+            return Ok(0);
+        }
+
         Ok((self.height + rows_per_strip - 1) / rows_per_strip)
     }
 

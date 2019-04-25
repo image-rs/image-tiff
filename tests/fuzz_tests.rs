@@ -40,3 +40,12 @@ fn inf_loop() {
         true
     });
 }
+
+// https://github.com/image-rs/image-tiff/issues/33
+#[test]
+fn divide_by_zero() {
+    test_directory("./tests/fuzz_images/divide_by_zero", |file| {
+        decode_tiff(file).ok();
+        true
+    });
+}
