@@ -1,15 +1,15 @@
-use std::io::{Write, Seek};
+use byteorder::NativeEndian;
 use std::collections::BTreeMap;
-use byteorder::{NativeEndian};
+use std::io::{Seek, Write};
 
 use crate::decoder::ifd::{self, Tag};
-use crate::error::{TiffResult, TiffFormatError, TiffError};
+use crate::error::{TiffError, TiffFormatError, TiffResult};
 
-mod writer;
 pub mod colortype;
+mod writer;
 
-use self::writer::*;
 use self::colortype::*;
+use self::writer::*;
 
 /// Type to represent tiff values of type `RATIONAL`
 #[derive(Clone)]
@@ -60,9 +60,8 @@ impl TiffValue for [u16] {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         // We write using nativeedian so this sould be safe
-        let slice = unsafe {
-            std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len()*2)
-        };
+        let slice =
+            unsafe { std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 2) };
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -78,9 +77,8 @@ impl TiffValue for [u32] {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         // We write using nativeedian so this sould be safe
-        let slice = unsafe {
-            std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len()*4)
-        };
+        let slice =
+            unsafe { std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 4) };
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -172,8 +170,7 @@ impl TiffValue for str {
             writer.write_bytes(self.as_bytes())?;
             writer.write_u8(0)?;
             Ok(())
-        }
-        else {
+        } else {
             Err(TiffError::FormatError(TiffFormatError::InvalidTag))
         }
     }
@@ -219,7 +216,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
         let mut encoder = TiffEncoder {
             writer: TiffWriter::new(writer),
         };
-        
+
         NativeEndian::write_header(&mut encoder.writer)?;
 
         Ok(encoder)
@@ -231,20 +228,32 @@ impl<W: Write + Seek> TiffEncoder<W> {
     }
 
     /// Create an 'ImageEncoder' to encode an image one slice at a time.
-    pub fn new_image<C: ColorType>(&mut self, width: u32, height: u32) -> TiffResult<ImageEncoder<W, C>> {
+    pub fn new_image<C: ColorType>(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> TiffResult<ImageEncoder<W, C>> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         ImageEncoder::new(encoder, width, height)
     }
 
     /// Convenience function to write an entire image from memory.
-    pub fn write_image<C: ColorType>(&mut self, width: u32, height: u32, data: &[C::Inner]) -> TiffResult<()> where [C::Inner]: TiffValue {
+    pub fn write_image<C: ColorType>(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: &[C::Inner],
+    ) -> TiffResult<()>
+    where
+        [C::Inner]: TiffValue,
+    {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height).unwrap();
 
         let mut idx = 0;
         while image.next_strip_sample_count() > 0 {
             let sample_count = image.next_strip_sample_count() as usize;
-            image.write_strip(&data[idx..idx+sample_count]).unwrap();
+            image.write_strip(&data[idx..idx + sample_count]).unwrap();
             idx += sample_count;
         }
         image.finish()
@@ -285,7 +294,8 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
             value.write(&mut writer).unwrap();
         }
 
-        self.ifd.insert(tag.to_u16(), (<T>::FIELD_TYPE as u16, value.count(), bytes));
+        self.ifd
+            .insert(tag.to_u16(), (<T>::FIELD_TYPE as u16, value.count(), bytes));
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
@@ -297,15 +307,14 @@ impl<'a, W: Write + Seek> DirectoryEncoder<'a, W> {
                 *bytes = vec![0, 0, 0, 0];
                 let mut writer = TiffWriter::new(bytes as &mut [u8]);
                 writer.write_u32(offset as u32)?;
-            }
-            else {
+            } else {
                 while bytes.len() < 4 {
                     bytes.push(0);
                 }
             }
         }
 
-        let offset = self.writer.offset();  
+        let offset = self.writer.offset();
 
         self.writer.write_u16(self.ifd.len() as u16)?;
         for (tag, (field_type, count, offset)) in self.ifd.iter() {
@@ -355,7 +364,6 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
     }
 }
 
-
 /// Type to encode images strip by strip.
 ///
 /// You should call `finish` on this when you are finished with it.
@@ -393,7 +401,11 @@ pub struct ImageEncoder<'a, W: Write + Seek, C: ColorType> {
 }
 
 impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
-    fn new(mut encoder: DirectoryEncoder<'a, W>, width: u32, height: u32) -> TiffResult<ImageEncoder<'a, W, T>> {
+    fn new(
+        mut encoder: DirectoryEncoder<'a, W>,
+        width: u32,
+        height: u32,
+    ) -> TiffResult<ImageEncoder<'a, W, T>> {
         let row_samples = u64::from(width) * <T>::BITS_PER_SAMPLE.len() as u64;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
@@ -412,10 +424,10 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         encoder.write_tag(Tag::RowsPerStrip, rows_per_strip as u32);
 
         encoder.write_tag(Tag::SamplesPerPixel, <T>::BITS_PER_SAMPLE.len() as u16);
-        encoder.write_tag(Tag::XResolution, Rational {n: 1, d: 1});
-        encoder.write_tag(Tag::YResolution, Rational {n: 1, d: 1});
+        encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 });
+        encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 });
         encoder.write_tag(Tag::ResolutionUnit, 1u16);
-        
+
         Ok(ImageEncoder {
             encoder,
             strip_count,
@@ -433,17 +445,23 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     /// Number of samples the next strip should have.
     pub fn next_strip_sample_count(&self) -> u64 {
         if self.strip_idx >= self.strip_count {
-            return 0
+            return 0;
         }
 
         let start_row = std::cmp::min(u64::from(self.height), self.strip_idx * self.rows_per_strip);
-        let end_row = std::cmp::min(u64::from(self.height), (self.strip_idx+1)*self.rows_per_strip);
+        let end_row = std::cmp::min(
+            u64::from(self.height),
+            (self.strip_idx + 1) * self.rows_per_strip,
+        );
 
         (end_row - start_row) * self.row_samples
     }
 
     /// Write a single strip.
-    pub fn write_strip(&mut self, value: &[T::Inner]) -> TiffResult<()> where [T::Inner]: TiffValue {
+    pub fn write_strip(&mut self, value: &[T::Inner]) -> TiffResult<()>
+    where
+        [T::Inner]: TiffValue,
+    {
         // TODO: Compression
         let samples = self.next_strip_sample_count();
         assert_eq!(value.len() as u64, samples);
@@ -479,8 +497,10 @@ impl<'a, W: Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     }
 
     fn finish_internal(&mut self) -> TiffResult<()> {
-        self.encoder.write_tag(Tag::StripOffsets, &*self.strip_offsets);
-        self.encoder.write_tag(Tag::StripByteCounts, &*self.strip_byte_count);
+        self.encoder
+            .write_tag(Tag::StripOffsets, &*self.strip_offsets);
+        self.encoder
+            .write_tag(Tag::StripByteCounts, &*self.strip_byte_count);
         self.dropped = true;
 
         self.encoder.finish_internal()
@@ -504,4 +524,3 @@ impl<'a, W: Write + Seek, C: ColorType> Drop for ImageEncoder<'a, W, C> {
         }
     }
 }
-

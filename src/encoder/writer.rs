@@ -1,6 +1,6 @@
-use std::io::{self, Write, Seek, SeekFrom};
-use byteorder::{ByteOrder, WriteBytesExt, BigEndian, LittleEndian, NativeEndian};
 use crate::error::TiffResult;
+use byteorder::{BigEndian, ByteOrder, LittleEndian, NativeEndian, WriteBytesExt};
+use std::io::{self, Seek, SeekFrom, Write};
 
 pub trait TiffByteOrder: ByteOrder {
     fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()>;
@@ -33,10 +33,7 @@ pub struct TiffWriter<W> {
 
 impl<W: Write> TiffWriter<W> {
     pub fn new(writer: W) -> Self {
-        Self {
-            writer,
-            offset: 0,
-        }
+        Self { writer, offset: 0 }
     }
 
     pub fn offset(&self) -> u64 {
@@ -82,7 +79,7 @@ impl<W: Write> TiffWriter<W> {
             let padd_len = 4 - (self.offset % 4);
             self.writer.write_all(&padding[..padd_len as usize])?;
         }
-    
+
         Ok(())
     }
 }

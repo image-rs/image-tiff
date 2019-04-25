@@ -1,7 +1,7 @@
 extern crate tiff;
 
-use tiff::TiffResult;
 use tiff::decoder::Decoder;
+use tiff::TiffResult;
 
 use std::fs::File;
 

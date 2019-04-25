@@ -1,14 +1,14 @@
 extern crate tiff;
 
+use tiff::decoder::{ifd::Tag, ifd::Value, Decoder, DecodingResult};
 use tiff::ColorType;
-use tiff::decoder::{Decoder, DecodingResult, ifd::Tag, ifd::Value};
 
 use std::fs::File;
 
 #[test]
-fn test_gray_u8()
-{
-    let img_file = File::open("./tests/images/minisblack-1c-8b.tiff").expect("Cannot find test image!");
+fn test_gray_u8() {
+    let img_file =
+        File::open("./tests/images/minisblack-1c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
     let img_res = decoder.read_image();
@@ -16,8 +16,7 @@ fn test_gray_u8()
 }
 
 #[test]
-fn test_rgb_u8()
-{
+fn test_rgb_u8() {
     let img_file = File::open("./tests/images/rgb-3c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
@@ -26,9 +25,9 @@ fn test_rgb_u8()
 }
 
 #[test]
-fn test_gray_u16()
-{
-    let img_file = File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
+fn test_gray_u16() {
+    let img_file =
+        File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(16));
     let img_res = decoder.read_image();
@@ -36,8 +35,7 @@ fn test_gray_u16()
 }
 
 #[test]
-fn test_rgb_u16()
-{
+fn test_rgb_u16() {
     let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(16));
@@ -46,8 +44,7 @@ fn test_rgb_u16()
 }
 
 #[test]
-fn test_string_tags()
-{
+fn test_string_tags() {
     // these files have null-terminated strings for their Software tag. One has extra bytes after
     // the null byte, so we check both to ensure that we're truncating properly
     let filenames = vec!["minisblack-1c-16b.tiff", "rgb-3c-16b.tiff"];
@@ -55,10 +52,13 @@ fn test_string_tags()
         let path = format!("./tests/images/{}", filename);
         let img_file = File::open(path).expect("can't open file");
         let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-        let software= decoder.get_tag(Tag::Software).unwrap();
+        let software = decoder.get_tag(Tag::Software).unwrap();
         match software {
-            Value::Ascii(s) => assert_eq!(s, String::from("GraphicsMagick 1.2 unreleased Q16 http://www.GraphicsMagick.org/")),
-            _ => assert!(false)
+            Value::Ascii(s) => assert_eq!(
+                s,
+                String::from("GraphicsMagick 1.2 unreleased Q16 http://www.GraphicsMagick.org/")
+            ),
+            _ => assert!(false),
         };
     }
 }
@@ -80,8 +80,7 @@ fn test_decode_data() {
     assert_eq!(decoder.dimensions().unwrap(), (100, 100));
     if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
         assert_eq!(image_data, img_res);
-    }
-    else {
+    } else {
         panic!("Wrong data type");
     }
 }
@@ -90,9 +89,9 @@ fn test_decode_data() {
 //#[test]
 //fn test_gray_alpha_u8()
 //{
-    //let img_file = File::open("./tests/images/minisblack-2c-8b-alpha.tiff").expect("Cannot find test image!");
-    //let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    //assert_eq!(decoder.colortype().unwrap(), ColorType::GrayA(8));
-    //let img_res = decoder.read_image();
-    //assert!(img_res.is_ok());
+//let img_file = File::open("./tests/images/minisblack-2c-8b-alpha.tiff").expect("Cannot find test image!");
+//let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+//assert_eq!(decoder.colortype().unwrap(), ColorType::GrayA(8));
+//let img_res = decoder.read_image();
+//assert!(img_res.is_ok());
 //}
