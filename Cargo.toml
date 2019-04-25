@@ -1,6 +1,6 @@
 [package]
 name = "tiff"
-version = "0.2.2"
+version = "0.3.0"
 authors = [
     "ccgn",
     "bvssvni <bvssvni@gmail.com>",
@@ -14,6 +14,7 @@ authors = [
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
 repository = "https://github.com/image-rs/image-tiff"
+exclude = ["tests/images/*", "tests/fuzz_images/*"]
 
 [dependencies]
 byteorder = "1.2"
