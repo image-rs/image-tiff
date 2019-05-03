@@ -1,4 +1,4 @@
-use crate::decoder::PhotometricInterpretation;
+use decoder::PhotometricInterpretation;
 
 /// Trait for different colortypes that can be encoded.
 pub trait ColorType {

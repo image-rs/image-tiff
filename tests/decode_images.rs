@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::{ifd::Tag, ifd::Value, Decoder, DecodingResult};
+use tiff::decoder::{ifd, Decoder, DecodingResult};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -52,9 +52,9 @@ fn test_string_tags() {
         let path = format!("./tests/images/{}", filename);
         let img_file = File::open(path).expect("can't open file");
         let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-        let software = decoder.get_tag(Tag::Software).unwrap();
+        let software = decoder.get_tag(ifd::Tag::Software).unwrap();
         match software {
-            Value::Ascii(s) => assert_eq!(
+            ifd::Value::Ascii(s) => assert_eq!(
                 s,
                 String::from("GraphicsMagick 1.2 unreleased Q16 http://www.GraphicsMagick.org/")
             ),

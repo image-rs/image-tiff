@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
+use std::mem;
 
 use super::stream::{ByteOrder, EndianReader, SmartReader};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
@@ -27,9 +28,9 @@ macro_rules! tags {
                 }
             }
             pub fn to_u16(&self) -> u16 {
-                match self {
+                match *self {
                     $( Tag::$tag => $val, )*
-                    Tag::Unknown(n) => *n,
+                    Tag::Unknown(n) => n,
                 }
             }
         }
@@ -174,7 +175,7 @@ impl Entry {
                 ]))
             }
             (Type::SHORT, n) => {
-                if n as usize > limits.decoding_buffer_size / std::mem::size_of::<Value>() {
+                if n as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
                     return Err(TiffError::LimitsExceeded);
                 }
                 let mut v = Vec::with_capacity(n as usize);
@@ -186,7 +187,7 @@ impl Entry {
             }
             (Type::LONG, 1) => Ok(Unsigned(try!(self.r(bo).read_u32()))),
             (Type::LONG, n) => {
-                if n as usize > limits.decoding_buffer_size / std::mem::size_of::<Value>() {
+                if n as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
                     return Err(TiffError::LimitsExceeded);
                 }
                 let mut v = Vec::with_capacity(n as usize);
@@ -203,7 +204,7 @@ impl Entry {
                 Ok(Rational(numerator, denominator))
             }
             (Type::RATIONAL, n) => {
-                if n as usize > limits.decoding_buffer_size / std::mem::size_of::<Value>() {
+                if n as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
                     return Err(TiffError::LimitsExceeded);
                 }
                 let mut v = Vec::with_capacity(n as usize);
