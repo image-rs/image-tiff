@@ -1,4 +1,4 @@
-use crate::error::TiffResult;
+use error::TiffResult;
 use byteorder::{BigEndian, ByteOrder, LittleEndian, NativeEndian, WriteBytesExt};
 use std::io::{self, Seek, SeekFrom, Write};
 

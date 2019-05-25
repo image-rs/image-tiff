@@ -1,6 +1,7 @@
 use num_traits::{FromPrimitive, Num};
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
+use std::cmp;
 
 use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
@@ -38,7 +39,7 @@ impl DecodingResult {
     }
 
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
-        match self {
+        match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
         }
@@ -55,14 +56,14 @@ pub enum DecodingBuffer<'a> {
 
 impl<'a> DecodingBuffer<'a> {
     fn len(&self) -> usize {
-        match self {
+        match *self {
             DecodingBuffer::U8(ref buf) => buf.len(),
             DecodingBuffer::U16(ref buf) => buf.len(),
         }
     }
 
     fn byte_len(&self) -> usize {
-        match self {
+        match *self {
             DecodingBuffer::U8(_) => 1,
             DecodingBuffer::U16(_) => 2,
         }
@@ -72,7 +73,7 @@ impl<'a> DecodingBuffer<'a> {
     where
         'a: 'b,
     {
-        match self {
+        match *self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
         }
@@ -661,7 +662,7 @@ impl<R: Read + Seek> Decoder<R> {
             .get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height) as usize;
 
-        let strip_height = std::cmp::min(
+        let strip_height = cmp::min(
             rows_per_strip,
             self.height as usize - index * rows_per_strip,
         );
@@ -716,7 +717,7 @@ impl<R: Read + Seek> Decoder<R> {
             .get_tag_u32(ifd::Tag::RowsPerStrip)
             .unwrap_or(self.height) as usize;
 
-        let strip_height = std::cmp::min(
+        let strip_height = cmp::min(
             rows_per_strip,
             self.height as usize - index * rows_per_strip,
         );
