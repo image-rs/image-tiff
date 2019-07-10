@@ -90,6 +90,7 @@ pub enum PhotometricInterpretation {
     CMYK = 5,
     YCbCr = 6,
     CIELab = 8,
+    CFA = 32803,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
