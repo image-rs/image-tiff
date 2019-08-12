@@ -100,6 +100,8 @@ pub enum CompressionMethod {
     Fax4 = 4,
     LZW = 5,
     JPEG = 6,
+    Deflate = 8,
+    OldDeflate = 0x80B2,
     PackBits = 0x8005,
 }
 
