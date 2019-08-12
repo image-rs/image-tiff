@@ -19,9 +19,6 @@ pub enum DecodingResult {
     U8(Vec<u8>),
     /// A vector of unsigned words
     U16(Vec<u16>),
-    /// Potentially mixed image types
-    //TODO: Check for all u16s and all u8s and act accordingly?
-    Mixed(Vec<u8>),
 }
 
 impl DecodingResult {
@@ -30,14 +27,6 @@ impl DecodingResult {
             Err(TiffError::LimitsExceeded)
         } else {
             Ok(DecodingResult::U8(vec![0; size]))
-        }
-    }
-
-    fn new_mixed(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::Mixed(vec![0; size]))
         }
     }
 
@@ -52,7 +41,6 @@ impl DecodingResult {
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
-            DecodingResult::Mixed(ref mut buf) => DecodingBuffer::Mixed(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
         }
     }
@@ -64,8 +52,6 @@ pub enum DecodingBuffer<'a> {
     U8(&'a mut [u8]),
     /// A slice of unsigned words
     U16(&'a mut [u16]),
-    /// A slice of potentially mixed image types 
-    Mixed(&'a mut [u8]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -73,7 +59,6 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref buf) => buf.len(),
             DecodingBuffer::U16(ref buf) => buf.len(),
-            DecodingBuffer::Mixed(ref buf) => buf.len(),
         }
     }
 
@@ -81,7 +66,6 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(_) => 1,
             DecodingBuffer::U16(_) => 2,
-            DecodingBuffer::Mixed(_) => 1,
         }
     }
 
@@ -92,7 +76,6 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
-            DecodingBuffer::Mixed(ref mut buf) => DecodingBuffer::Mixed(buf),
         }
     }
 }
@@ -230,9 +213,6 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
             rev_hpredict_nsamp(buf, size, samples);
         }
         DecodingBuffer::U16(buf) => {
-            rev_hpredict_nsamp(buf, size, samples);
-        }
-        DecodingBuffer::Mixed(buf) => {
             rev_hpredict_nsamp(buf, size, samples);
         }
     }
