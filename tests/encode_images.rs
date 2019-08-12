@@ -29,7 +29,7 @@ fn encode_decode() {
     {
         file.seek(SeekFrom::Start(0)).unwrap();
         let mut decoder = Decoder::new(&mut file).unwrap();
-        assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+        assert_eq!(decoder.colortype(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
         if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
             assert_eq!(image_data, img_res);
@@ -59,7 +59,7 @@ fn test_gray_u8_roundtrip() {
     let img_file =
         File::open("./tests/images/minisblack-1c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
+    assert_eq!(decoder.colortype(), ColorType::Gray(8));
 
     let image_data = match decoder.read_image().unwrap() {
         DecodingResult::U8(res) => res,
@@ -89,7 +89,7 @@ fn test_gray_u8_roundtrip() {
 fn test_rgb_u8_roundtrip() {
     let img_file = File::open("./tests/images/rgb-3c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+    assert_eq!(decoder.colortype(), ColorType::RGB(8));
 
     let image_data = match decoder.read_image().unwrap() {
         DecodingResult::U8(res) => res,
@@ -120,7 +120,7 @@ fn test_gray_u16_roundtrip() {
     let img_file =
         File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(16));
+    assert_eq!(decoder.colortype(), ColorType::Gray(16));
 
     let image_data = match decoder.read_image().unwrap() {
         DecodingResult::U16(res) => res,
@@ -150,7 +150,7 @@ fn test_gray_u16_roundtrip() {
 fn test_rgb_u16_roundtrip() {
     let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(16));
+    assert_eq!(decoder.colortype(), ColorType::RGB(16));
 
     let image_data = match decoder.read_image().unwrap() {
         DecodingResult::U16(res) => res,

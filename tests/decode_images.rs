@@ -10,7 +10,7 @@ fn test_gray_u8() {
     let img_file =
         File::open("./tests/images/minisblack-1c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
+    assert_eq!(decoder.colortype(), ColorType::Gray(8));
     let img_res = decoder.read_image();
     assert!(img_res.is_ok());
 }
@@ -19,7 +19,7 @@ fn test_gray_u8() {
 fn test_rgb_u8() {
     let img_file = File::open("./tests/images/rgb-3c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+    assert_eq!(decoder.colortype(), ColorType::RGB(8));
     let img_res = decoder.read_image();
     assert!(img_res.is_ok());
 }
@@ -29,7 +29,7 @@ fn test_gray_u16() {
     let img_file =
         File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(16));
+    assert_eq!(decoder.colortype(), ColorType::Gray(16));
     let img_res = decoder.read_image();
     assert!(img_res.is_ok());
 }
@@ -38,7 +38,7 @@ fn test_gray_u16() {
 fn test_rgb_u16() {
     let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(16));
+    assert_eq!(decoder.colortype(), ColorType::RGB(16));
     let img_res = decoder.read_image();
     assert!(img_res.is_ok());
 }
@@ -76,7 +76,7 @@ fn test_decode_data() {
     }
     let file = File::open("./tests/decodedata-rgb-3c-8b.tiff").unwrap();
     let mut decoder = Decoder::new(file).unwrap();
-    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+    assert_eq!(decoder.colortype(), ColorType::RGB(8));
     assert_eq!(decoder.dimensions().unwrap(), (100, 100));
     if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
         assert_eq!(image_data, img_res);
@@ -91,7 +91,7 @@ fn test_decode_data() {
 //{
 //let img_file = File::open("./tests/images/minisblack-2c-8b-alpha.tiff").expect("Cannot find test image!");
 //let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-//assert_eq!(decoder.colortype().unwrap(), ColorType::GrayA(8));
+//assert_eq!(decoder.colortype(), ColorType::GrayA(8));
 //let img_res = decoder.read_image();
 //assert!(img_res.is_ok());
 //}

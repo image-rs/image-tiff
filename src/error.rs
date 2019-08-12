@@ -62,7 +62,6 @@ pub enum TiffUnsupportedError {
     UnknownInterpretation,
     UnknownCompressionMethod,
     UnsupportedCompressionMethod(CompressionMethod),
-    UnsupportedSampleDepth(u8),
     UnsupportedColorType(ColorType),
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),
@@ -72,7 +71,7 @@ pub enum TiffUnsupportedError {
 impl fmt::Display for TiffUnsupportedError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::TiffUnsupportedError::*;
-        match *self {
+        match self {
             HorizontalPredictor(color_type) => write!(
                 fmt,
                 "Horizontal predictor for {:?} is unsupported.",
@@ -90,9 +89,6 @@ impl fmt::Display for TiffUnsupportedError {
             UnknownCompressionMethod => write!(fmt, "Unknown compression method."),
             UnsupportedCompressionMethod(method) => {
                 write!(fmt, "Compression method {:?} is unsupported", method)
-            }
-            UnsupportedSampleDepth(samples) => {
-                write!(fmt, "{} samples per pixel is supported.", samples)
             }
             UnsupportedColorType(color_type) => {
                 write!(fmt, "Color type {:?} is unsupported", color_type)

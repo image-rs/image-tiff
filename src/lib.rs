@@ -19,7 +19,7 @@ mod error;
 pub use self::error::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 /// An enumeration over supported color types and their bit depths
-#[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum ColorType {
     /// Pixel is grayscale
     Gray(u8),
@@ -38,4 +38,7 @@ pub enum ColorType {
 
     /// Pixel is CMYK
     CMYK(u8),
+
+    /// Other color types (Such as multi-channel)
+    Other(Box<[u8]>),
 }

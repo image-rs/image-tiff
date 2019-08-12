@@ -19,6 +19,9 @@ pub enum DecodingResult {
     U8(Vec<u8>),
     /// A vector of unsigned words
     U16(Vec<u16>),
+    /// Potentially mixed image types
+    //TODO: Check for all u16s and all u8s and act accordingly?
+    Mixed(Vec<u8>),
 }
 
 impl DecodingResult {
@@ -27,6 +30,14 @@ impl DecodingResult {
             Err(TiffError::LimitsExceeded)
         } else {
             Ok(DecodingResult::U8(vec![0; size]))
+        }
+    }
+
+    fn new_mixed(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::Mixed(vec![0; size]))
         }
     }
 
@@ -41,6 +52,7 @@ impl DecodingResult {
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
+            DecodingResult::Mixed(ref mut buf) => DecodingBuffer::Mixed(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
         }
     }
@@ -52,6 +64,8 @@ pub enum DecodingBuffer<'a> {
     U8(&'a mut [u8]),
     /// A slice of unsigned words
     U16(&'a mut [u16]),
+    /// A slice of potentially mixed image types 
+    Mixed(&'a mut [u8]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -59,6 +73,7 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref buf) => buf.len(),
             DecodingBuffer::U16(ref buf) => buf.len(),
+            DecodingBuffer::Mixed(ref buf) => buf.len(),
         }
     }
 
@@ -66,6 +81,7 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(_) => 1,
             DecodingBuffer::U16(_) => 2,
+            DecodingBuffer::Mixed(_) => 1,
         }
     }
 
@@ -76,6 +92,7 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
+            DecodingBuffer::Mixed(ref mut buf) => DecodingBuffer::Mixed(buf),
         }
     }
 }
@@ -215,6 +232,9 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
         DecodingBuffer::U16(buf) => {
             rev_hpredict_nsamp(buf, size, samples);
         }
+        DecodingBuffer::Mixed(buf) => {
+            rev_hpredict_nsamp(buf, size, samples);
+        }
     }
     Ok(())
 }
@@ -248,37 +268,30 @@ impl<R: Read + Seek> Decoder<R> {
         Ok((self.width, self.height))
     }
 
-    pub fn colortype(&mut self) -> TiffResult<ColorType> {
+    pub fn colortype(&mut self) -> ColorType {
         match self.photometric_interpretation {
             // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
             PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => {
-                Ok(ColorType::RGBA(8))
+                ColorType::RGBA(8)
             }
             PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8] => {
-                Ok(ColorType::RGB(8))
+                ColorType::RGB(8)
             }
             PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16, 16] => {
-                Ok(ColorType::RGBA(16))
+                ColorType::RGBA(16)
             }
             PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16] => {
-                Ok(ColorType::RGB(16))
+                ColorType::RGB(16)
             }
             PhotometricInterpretation::CMYK if self.bits_per_sample == [8, 8, 8, 8] => {
-                Ok(ColorType::CMYK(8))
+                ColorType::CMYK(8)
             }
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
                 if self.bits_per_sample.len() == 1 =>
             {
-                Ok(ColorType::Gray(self.bits_per_sample[0]))
+                ColorType::Gray(self.bits_per_sample[0])
             }
-
-            // TODO: this is bad we should not fail at this point
-            _ => Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::InterpretationWithBits(
-                    self.photometric_interpretation,
-                    self.bits_per_sample.clone(),
-                ),
-            )),
+            _ => ColorType::Other(self.bits_per_sample.clone().into_boxed_slice()),
         }
     }
 
@@ -339,6 +352,7 @@ impl<R: Read + Seek> Decoder<R> {
         };
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::Compression)) {
             match FromPrimitive::from_u32(val) {
+                
                 Some(method) => self.compression_method = method,
                 None => {
                     return Err(TiffError::UnsupportedError(
@@ -346,6 +360,7 @@ impl<R: Read + Seek> Decoder<R> {
                     ))
                 }
             }
+           self.compression_method = CompressionMethod::None;
         }
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::SamplesPerPixel)) {
             self.samples = val as u8
@@ -356,15 +371,10 @@ impl<R: Read + Seek> Decoder<R> {
                     self.bits_per_sample = vec![val as u8]
                 }
             }
-            3 | 4 => {
+            _ => {
                 if let Some(val) = try!(self.find_tag_u32_vec(ifd::Tag::BitsPerSample)) {
                     self.bits_per_sample = val.iter().map(|&v| v as u8).collect()
                 }
-            }
-            _ => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedSampleDepth(self.samples),
-                ))
             }
         }
         Ok(())
@@ -530,7 +540,7 @@ impl<R: Read + Seek> Decoder<R> {
         length: u32,
         max_uncompressed_length: usize,
     ) -> TiffResult<usize> {
-        let color_type = try!(self.colortype());
+        let color_type = self.colortype();
         try!(self.goto_offset(offset));
         let (bytes, mut reader): (usize, Box<EndianReader>) = match self.compression_method {
             CompressionMethod::None => {
@@ -598,6 +608,10 @@ impl<R: Read + Seek> Decoder<R> {
                         *byte = 0xff - *byte
                     }
                 }
+                bytes
+            }
+            (ColorType::Other(_), DecodingBuffer::U8(ref mut buffer)) => {
+                try!(reader.read_exact(&mut buffer[..bytes]));
                 bytes
             }
             (type_, _) => {
@@ -695,7 +709,7 @@ impl<R: Read + Seek> Decoder<R> {
                     rev_hpredict(
                         buffer.copy(),
                         (self.width, strip_height as u32),
-                        self.colortype()?,
+                        self.colortype(),
                     )?;
                 }
                 None => {
