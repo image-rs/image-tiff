@@ -7,7 +7,7 @@ use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
 
-use self::stream::{ByteOrder, EndianReader, LZWReader, PackBitsReader, SmartReader};
+use self::stream::{ByteOrder, EndianReader, LZWReader, DeflateReader, PackBitsReader, SmartReader};
 
 pub mod ifd;
 mod stream;
@@ -577,6 +577,12 @@ impl<R: Read + Seek> Decoder<R> {
                     order,
                     length as usize
                 )?;
+                (bytes, Box::new(reader))
+            }
+            CompressionMethod::OldDeflate => {
+                let (bytes, reader) = DeflateReader::new(
+                    &mut self.reader,
+                    max_uncompressed_length)?;
                 (bytes, Box::new(reader))
             }
             method => {

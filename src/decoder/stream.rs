@@ -3,6 +3,7 @@
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use lzw;
 use std::io::{self, Read, Seek};
+use libflate::zlib;
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -64,6 +65,40 @@ pub trait EndianReader: Read {
             ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_i32::<LittleEndian>(self),
             ByteOrder::BigEndian => <Self as ReadBytesExt>::read_i32::<BigEndian>(self),
         }
+    }
+}
+
+/// Reader that decompresses DEFLATE streams
+pub struct DeflateReader {
+    buffer: io::Cursor<Vec<u8>>,
+    byte_order: ByteOrder,
+}
+
+impl DeflateReader {
+    pub fn new<R: Read + Seek>(
+        reader: &mut SmartReader<R>,
+        max_uncompressed_length: usize,
+    ) -> io::Result<(usize, Self)> {
+        let byte_order = reader.byte_order;
+        let mut decoder = zlib::Decoder::new(reader)?;
+        let mut uncompressed = Vec::with_capacity(max_uncompressed_length);
+        let bytes_read = decoder.read_to_end(&mut uncompressed)?;
+        Ok((bytes_read, Self {
+            byte_order,
+            buffer: io::Cursor::new(uncompressed),
+        }))
+    }
+}
+
+impl Read for DeflateReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.buffer.read(buf)
+    }
+}
+
+impl EndianReader for DeflateReader {
+    fn byte_order(&self) -> ByteOrder {
+        self.byte_order
     }
 }
 
