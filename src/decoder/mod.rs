@@ -352,7 +352,6 @@ impl<R: Read + Seek> Decoder<R> {
         };
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::Compression)) {
             match FromPrimitive::from_u32(val) {
-                
                 Some(method) => self.compression_method = method,
                 None => {
                     return Err(TiffError::UnsupportedError(
@@ -360,7 +359,6 @@ impl<R: Read + Seek> Decoder<R> {
                     ))
                 }
             }
-           self.compression_method = CompressionMethod::None;
         }
         if let Some(val) = try!(self.find_tag_u32(ifd::Tag::SamplesPerPixel)) {
             self.samples = val as u8
