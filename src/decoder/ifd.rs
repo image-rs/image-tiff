@@ -7,7 +7,7 @@ use std::mem;
 use super::stream::{ByteOrder, EndianReader, SmartReader};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
-use self::Value::{Ascii, List, Rational, Unsigned};
+use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational};
 
 macro_rules! tags {
     {$(
@@ -89,15 +89,20 @@ pub enum Type {
     SHORT = 3,
     LONG = 4,
     RATIONAL = 5,
+    SBYTE = 6,
+    SSHORT = 8,
+    SLONG = 9,
+    SRATIONAL = 10,
 }
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Value {
-    //Signed(i32),
+    Signed(i32),
     Unsigned(u32),
     List(Vec<Value>),
     Rational(u32, u32),
+    SRational(i32, i32),
     Ascii(String),
 }
 
@@ -110,6 +115,16 @@ impl Value {
             )),
         }
     }
+
+    pub fn into_i32(self) -> TiffResult<i32> {
+        match self {
+            Signed(val) => Ok(val),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
     pub fn into_u32_vec(self) -> TiffResult<Vec<u32>> {
         match self {
             List(vec) => {
@@ -122,6 +137,32 @@ impl Value {
             Unsigned(val) => Ok(vec![val]),
             Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
             Ascii(val) => Ok(val.chars().map(|x| x as u32).collect()),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_i32_vec(self) -> TiffResult<Vec<i32>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    match v {
+                        SRational(numerator, denominator) => {
+                            new_vec.push(numerator);
+                            new_vec.push(denominator);
+                        }
+                        _ => new_vec.push(v.into_i32()?)
+                    }
+                }
+                Ok(new_vec)
+            }
+            Signed(val) => Ok(vec![val]),
+            SRational(numerator, denominator) => Ok(vec![numerator, denominator]),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
         }
     }
 }
@@ -166,7 +207,21 @@ impl Entry {
             // TODO check if this could give wrong results
             // at a different endianess of file/computer.
             (Type::BYTE, 1) => Ok(Unsigned(u32::from(self.offset[0]))),
+            (Type::BYTE, 2) => offset_to_bytes(2, self),
+            (Type::BYTE, 3) => offset_to_bytes(3, self),
+            (Type::BYTE, 4) => offset_to_bytes(4, self),
+            (Type::BYTE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(Unsigned(u32::from(decoder.read_byte()?)))
+            }),
+            (Type::SBYTE, 1) => Ok(Signed(i32::from(self.offset[0] as i8))),
+            (Type::SBYTE, 2) => offset_to_sbytes(2, self),
+            (Type::SBYTE, 3) => offset_to_sbytes(3, self),
+            (Type::SBYTE, 4) => offset_to_sbytes(4, self),
+            (Type::SBYTE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(Signed(i32::from(decoder.read_byte()? as i8)))
+            }),
             (Type::SHORT, 1) => Ok(Unsigned(u32::from(self.r(bo).read_u16()?))),
+            (Type::SSHORT, 1) => Ok(Signed(i32::from(self.r(bo).read_i16()?))),
             (Type::SHORT, 2) => {
                 let mut r = self.r(bo);
                 Ok(List(vec![
@@ -174,48 +229,51 @@ impl Entry {
                     Unsigned(u32::from(r.read_u16()?)),
                 ]))
             }
-            (Type::SHORT, n) => {
-                if n as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
-                    return Err(TiffError::LimitsExceeded);
-                }
-                let mut v = Vec::with_capacity(n as usize);
-                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
-                for _ in 0..n {
-                    v.push(Unsigned(u32::from(decoder.read_short()?)))
-                }
-                Ok(List(v))
+            (Type::SSHORT, 2) => {
+                let mut r = self.r(bo);
+                Ok(List(vec![
+                    Signed(i32::from(r.read_i16()?)),
+                    Signed(i32::from(r.read_i16()?)),
+                ]))
             }
+            (Type::SHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(Unsigned(u32::from(decoder.read_short()?)))
+            }),
+            (Type::SSHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(Signed(i32::from(decoder.read_sshort()?)))
+            }),
             (Type::LONG, 1) => Ok(Unsigned(try!(self.r(bo).read_u32()))),
-            (Type::LONG, n) => {
-                if n as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
-                    return Err(TiffError::LimitsExceeded);
-                }
-                let mut v = Vec::with_capacity(n as usize);
-                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
-                for _ in 0..n {
-                    v.push(Unsigned(try!(decoder.read_long())))
-                }
-                Ok(List(v))
-            }
+            (Type::SLONG, 1) => Ok(Signed(self.r(bo).read_i32()?)),
+            (Type::LONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(Unsigned(decoder.read_long()?))
+            }),
+            (Type::SLONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(Signed(decoder.read_slong()?))
+            }),
             (Type::RATIONAL, 1) => {
                 try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
                 let numerator = try!(decoder.read_long());
                 let denominator = try!(decoder.read_long());
                 Ok(Rational(numerator, denominator))
             }
-            (Type::RATIONAL, n) => {
-                if n as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
-                    return Err(TiffError::LimitsExceeded);
-                }
-                let mut v = Vec::with_capacity(n as usize);
-                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
-                for _ in 0..n {
-                    let numerator = try!(decoder.read_long());
-                    let denominator = try!(decoder.read_long());
-                    v.push(Rational(numerator, denominator))
-                }
-                Ok(List(v))
+            (Type::SRATIONAL, 1) => {
+                decoder.goto_offset(self.r(bo).read_u32()?)?;
+                let numerator = decoder.read_slong()?;
+                let denominator = decoder.read_slong()?;
+                Ok(SRational(numerator, denominator))
             }
+            (Type::RATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(Rational(
+                    decoder.read_long()?,
+                    decoder.read_long()?,
+                ))
+            }),
+            (Type::SRATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                Ok(SRational(
+                    decoder.read_slong()?,
+                    decoder.read_slong()?,
+                ))
+            }),
             (Type::ASCII, n) => {
                 if n as usize > limits.decoding_buffer_size {
                     return Err(TiffError::LimitsExceeded);
@@ -229,6 +287,46 @@ impl Entry {
             )),
         }
     }
+
+    #[inline]
+    fn decode_offset<R, F>(&self, value_count: u32, bo: ByteOrder, limits: &super::Limits, decoder: &mut super::Decoder<R>, decode_fn: F) -> TiffResult<Value>
+        where
+            R: Read + Seek,
+            F: Fn(&mut super::Decoder<R>) -> TiffResult<Value>,
+    {
+        if value_count as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
+            return Err(TiffError::LimitsExceeded);
+        }
+
+        let mut v = Vec::with_capacity(value_count as usize);
+        decoder.goto_offset(self.r(bo).read_u32()?)?;
+        for _ in 0..value_count {
+            v.push(decode_fn(decoder)?)
+        }
+        Ok(List(v))
+    }
+}
+
+/// Extracts a list of BYTE tags stored in an offset
+#[inline]
+fn offset_to_bytes(n: usize, entry: &Entry) -> TiffResult<Value> {
+    Ok(List(
+        entry.offset[0..n]
+            .iter()
+            .map(|&e| Unsigned(u32::from(e)))
+            .collect()
+    ))
+}
+
+/// Extracts a list of SBYTE tags stored in an offset
+#[inline]
+fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
+    Ok(List(
+        entry.offset[0..n]
+            .iter()
+            .map(|&e| Signed(i32::from(e as i8)))
+            .collect()
+    ))
 }
 
 /// Type representing an Image File Directory

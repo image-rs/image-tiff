@@ -2,7 +2,8 @@ extern crate tempfile;
 extern crate tiff;
 
 use tiff::decoder::{Decoder, DecodingResult};
-use tiff::encoder::{colortype, TiffEncoder};
+use tiff::decoder::ifd::Tag;
+use tiff::encoder::{colortype, TiffEncoder, SRational};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -173,5 +174,90 @@ fn test_rgb_u16_roundtrip() {
         } else {
             panic!("Wrong data type");
         }
+    }
+}
+
+#[test]
+fn test_multiple_byte() {
+    let mut data = Cursor::new(Vec::new());
+
+    {
+        let mut tiff = TiffEncoder::new(&mut data).unwrap();
+        let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
+        let encoder = image_encoder.encoder();
+
+        encoder.write_tag(Tag::Unknown(65000), &[1_u8][..]);
+        encoder.write_tag(Tag::Unknown(65001), &[1_u8, 2][..]);
+        encoder.write_tag(Tag::Unknown(65002), &[1_u8, 2, 3][..]);
+        encoder.write_tag(Tag::Unknown(65003), &[1_u8, 2, 3, 4][..]);
+        encoder.write_tag(Tag::Unknown(65004), &[1_u8, 2, 3, 4, 5][..]);
+    }
+
+    data.set_position(0);
+    {
+        let mut decoder = Decoder::new(&mut data).unwrap();
+
+        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_u32_vec().unwrap(), [1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_u32_vec().unwrap(), [1, 2]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_u32_vec().unwrap(), [1, 2, 3]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_u32_vec().unwrap(), [1, 2, 3, 4]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_u32_vec().unwrap(), [1, 2, 3, 4, 5]);
+    }
+}
+
+#[test]
+/// Test writing signed tags from TIFF 6.0
+fn test_signed() {
+    let mut data = Cursor::new(Vec::new());
+
+    {
+        let mut tiff = TiffEncoder::new(&mut data).unwrap();
+        let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
+        let encoder = image_encoder.encoder();
+
+        //Use the "reusable" tags section as per the TIFF6 spec
+        encoder.write_tag(Tag::Unknown(65000), -1_i8);
+        encoder.write_tag(Tag::Unknown(65001), &[-1_i8][..]);
+        encoder.write_tag(Tag::Unknown(65002), &[-1_i8, 2][..]);
+        encoder.write_tag(Tag::Unknown(65003), &[-1_i8, 2, -3][..]);
+        encoder.write_tag(Tag::Unknown(65004), &[-1_i8, 2, -3, 4][..]);
+        encoder.write_tag(Tag::Unknown(65005), &[-1_i8, 2, -3, 4, -5][..]);
+
+        encoder.write_tag(Tag::Unknown(65010), -1_i16);
+        encoder.write_tag(Tag::Unknown(65011), -1_i16);
+        encoder.write_tag(Tag::Unknown(65012), &[-1_i16, 2][..]);
+        encoder.write_tag(Tag::Unknown(65013), &[-1_i16, 2, -3][..]);
+
+        encoder.write_tag(Tag::Unknown(65020), -1_i32);
+        encoder.write_tag(Tag::Unknown(65021), &[-1_i32][..]);
+        encoder.write_tag(Tag::Unknown(65022), &[-1_i32, 2][..]);
+
+        encoder.write_tag(Tag::Unknown(65030), SRational { n: -1, d: 100 });
+        encoder.write_tag(Tag::Unknown(65031), &[SRational { n: -1, d: 100 }, SRational { n: 2, d: 100 }][..]);
+    }
+
+    //Rewind the cursor for reading
+    data.set_position(0);
+    {
+        let mut decoder = Decoder::new(&mut data).unwrap();
+
+        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_i32().unwrap(), -1, );
+        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_i32_vec().unwrap(), [-1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3, 4]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65005)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3, 4, -5], );
+
+        assert_eq!(decoder.get_tag(Tag::Unknown(65010)).unwrap().into_i32().unwrap(), -1);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65011)).unwrap().into_i32_vec().unwrap(), [-1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65012)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65013)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3]);
+
+        assert_eq!(decoder.get_tag(Tag::Unknown(65020)).unwrap().into_i32().unwrap(), -1);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65021)).unwrap().into_i32_vec().unwrap(), [-1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65022)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
+
+        assert_eq!(decoder.get_tag(Tag::Unknown(65030)).unwrap().into_i32_vec().unwrap(), [-1, 100]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65031)).unwrap().into_i32_vec().unwrap(), [-1_i32, 100, 2, 100]);
     }
 }

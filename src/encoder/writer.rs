@@ -52,6 +52,12 @@ impl<W: Write> TiffWriter<W> {
         Ok(())
     }
 
+    pub fn write_i8(&mut self, n: i8) -> Result<(), io::Error> {
+        self.writer.write_i8(n)?;
+        self.offset += 1;
+        Ok(())
+    }
+
     pub fn write_u16(&mut self, n: u16) -> Result<(), io::Error> {
         self.writer.write_u16::<NativeEndian>(n)?;
         self.offset += 2;
@@ -59,8 +65,22 @@ impl<W: Write> TiffWriter<W> {
         Ok(())
     }
 
+    pub fn write_i16(&mut self, n: i16) -> Result<(), io::Error> {
+        self.writer.write_i16::<NativeEndian>(n)?;
+        self.offset += 2;
+
+        Ok(())
+    }
+
     pub fn write_u32(&mut self, n: u32) -> Result<(), io::Error> {
         self.writer.write_u32::<NativeEndian>(n)?;
+        self.offset += 4;
+
+        Ok(())
+    }
+
+    pub fn write_i32(&mut self, n: i32) -> Result<(), io::Error> {
+        self.writer.write_i32::<NativeEndian>(n)?;
         self.offset += 4;
 
         Ok(())
