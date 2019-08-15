@@ -202,6 +202,7 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
         ColorType::Gray(8) | ColorType::Gray(16) => 1,
         ColorType::RGB(8) | ColorType::RGB(16) => 3,
         ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::CMYK(8) => 4,
+        ColorType::Other(sample_bits) => sample_bits.len(),
         _ => {
             return Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::HorizontalPredictor(color_type),
