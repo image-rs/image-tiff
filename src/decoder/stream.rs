@@ -3,7 +3,7 @@
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use lzw;
 use std::io::{self, Read, Seek};
-use libflate::zlib;
+use miniz_oxide::inflate;
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -77,16 +77,20 @@ pub struct DeflateReader {
 impl DeflateReader {
     pub fn new<R: Read + Seek>(
         reader: &mut SmartReader<R>,
-        max_uncompressed_length: usize,
     ) -> io::Result<(usize, Self)> {
         let byte_order = reader.byte_order;
-        let mut decoder = zlib::Decoder::new(reader)?;
-        let mut uncompressed = Vec::with_capacity(max_uncompressed_length);
-        let bytes_read = decoder.read_to_end(&mut uncompressed)?;
-        Ok((bytes_read, Self {
-            byte_order,
-            buffer: io::Cursor::new(uncompressed),
-        }))
+        let mut compressed = Vec::new();
+        reader.read_to_end(&mut compressed)?;
+        let uncompressed = inflate::decompress_to_vec_zlib(&compressed).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("DEFLATE error: {:?}", error))
+        })?;
+        Ok((
+            uncompressed.len(),
+            Self {
+                byte_order,
+                buffer: io::Cursor::new(uncompressed),
+            },
+        ))
     }
 }
 

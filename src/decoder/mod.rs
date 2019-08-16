@@ -580,9 +580,7 @@ impl<R: Read + Seek> Decoder<R> {
                 (bytes, Box::new(reader))
             }
             CompressionMethod::OldDeflate => {
-                let (bytes, reader) = DeflateReader::new(
-                    &mut self.reader,
-                    max_uncompressed_length)?;
+                let (bytes, reader) = DeflateReader::new(&mut self.reader)?;
                 (bytes, Box::new(reader))
             }
             method => {
