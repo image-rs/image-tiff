@@ -380,16 +380,36 @@ impl<R: Read + Seek> Decoder<R> {
         self.byte_order
     }
 
+    /// Reads a TIFF byte value
+    #[inline]
+    pub fn read_byte(&mut self) -> Result<u8, io::Error> {
+        let mut buf = [0; 1];
+        self.reader.read_exact(&mut buf)?;
+        Ok(buf[0])
+    }
+
     /// Reads a TIFF short value
     #[inline]
     pub fn read_short(&mut self) -> Result<u16, io::Error> {
         self.reader.read_u16()
     }
 
+    /// Reads a TIFF sshort value
+    #[inline]
+    pub fn read_sshort(&mut self) -> Result<i16, io::Error> {
+        self.reader.read_i16()
+    }
+
     /// Reads a TIFF long value
     #[inline]
     pub fn read_long(&mut self) -> Result<u32, io::Error> {
         self.reader.read_u32()
+    }
+
+    /// Reads a TIFF slong value
+    #[inline]
+    pub fn read_slong(&mut self) -> Result<i32, io::Error> {
+        self.reader.read_i32()
     }
 
     /// Reads a string

@@ -18,6 +18,12 @@ pub struct Rational {
     pub d: u32,
 }
 
+/// Type to represent tiff values of type `SRATIONAL`
+pub struct SRational {
+    pub n: i32,
+    pub d: i32,
+}
+
 /// Type to represent resolution units
 pub enum ResolutionUnit {
     None = 1,
@@ -50,6 +56,23 @@ impl TiffValue for [u8] {
     }
 }
 
+impl TiffValue for [i8] {
+    const BYTE_LEN: u32 = 1;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SBYTE;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        // We write using nativeedian so this should be safe
+        let slice =
+            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len()) };
+        writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for [u16] {
     const BYTE_LEN: u32 = 2;
     const FIELD_TYPE: ifd::Type = ifd::Type::SHORT;
@@ -62,6 +85,23 @@ impl TiffValue for [u16] {
         // We write using nativeedian so this sould be safe
         let slice =
             unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 2) };
+        writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for [i16] {
+    const BYTE_LEN: u32 = 2;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SSHORT;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        // We write using nativeedian so this should be safe
+        let slice =
+            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * Self::BYTE_LEN as usize) };
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -84,9 +124,42 @@ impl TiffValue for [u32] {
     }
 }
 
+impl TiffValue for [i32] {
+    const BYTE_LEN: u32 = 4;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SLONG;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        // We write using nativeedian so this should be safe
+        let slice =
+            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * Self::BYTE_LEN as usize) };
+        writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for [Rational] {
     const BYTE_LEN: u32 = 8;
     const FIELD_TYPE: ifd::Type = ifd::Type::RATIONAL;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        for x in self {
+            x.write(writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl TiffValue for [SRational] {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SRATIONAL;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -114,6 +187,20 @@ impl TiffValue for u8 {
     }
 }
 
+impl TiffValue for i8 {
+    const BYTE_LEN: u32 = 1;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SBYTE;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_i8(*self)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for u16 {
     const BYTE_LEN: u32 = 2;
     const FIELD_TYPE: ifd::Type = ifd::Type::SHORT;
@@ -124,6 +211,20 @@ impl TiffValue for u16 {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         writer.write_u16(*self)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for i16 {
+    const BYTE_LEN: u32 = 2;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SSHORT;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_i16(*self)?;
         Ok(())
     }
 }
@@ -142,6 +243,20 @@ impl TiffValue for u32 {
     }
 }
 
+impl TiffValue for i32 {
+    const BYTE_LEN: u32 = 4;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SLONG;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_i32(*self)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for Rational {
     const BYTE_LEN: u32 = 8;
     const FIELD_TYPE: ifd::Type = ifd::Type::RATIONAL;
@@ -153,6 +268,21 @@ impl TiffValue for Rational {
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         writer.write_u32(self.n)?;
         writer.write_u32(self.d)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for SRational {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: ifd::Type = ifd::Type::SRATIONAL;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_i32(self.n)?;
+        writer.write_i32(self.d)?;
         Ok(())
     }
 }

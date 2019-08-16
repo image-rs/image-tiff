@@ -39,12 +39,30 @@ pub trait EndianReader: Read {
         }
     }
 
+    /// Reads an i16
+    #[inline(always)]
+    fn read_i16(&mut self) -> Result<i16, io::Error> {
+        match self.byte_order() {
+            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_i16::<LittleEndian>(self),
+            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_i16::<BigEndian>(self),
+        }
+    }
+
     /// Reads an u32
     #[inline(always)]
     fn read_u32(&mut self) -> Result<u32, io::Error> {
         match self.byte_order() {
             ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_u32::<LittleEndian>(self),
             ByteOrder::BigEndian => <Self as ReadBytesExt>::read_u32::<BigEndian>(self),
+        }
+    }
+
+    /// Reads an i32
+    #[inline(always)]
+    fn read_i32(&mut self) -> Result<i32, io::Error> {
+        match self.byte_order() {
+            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_i32::<LittleEndian>(self),
+            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_i32::<BigEndian>(self),
         }
     }
 }
