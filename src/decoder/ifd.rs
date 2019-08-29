@@ -242,7 +242,7 @@ impl Entry {
             (Type::SSHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
                 Ok(Signed(i32::from(decoder.read_sshort()?)))
             }),
-            (Type::LONG, 1) => Ok(Unsigned(try!(self.r(bo).read_u32()))),
+            (Type::LONG, 1) => Ok(Unsigned(self.r(bo).read_u32()?)),
             (Type::SLONG, 1) => Ok(Signed(self.r(bo).read_i32()?)),
             (Type::LONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
                 Ok(Unsigned(decoder.read_long()?))
@@ -251,9 +251,9 @@ impl Entry {
                 Ok(Signed(decoder.read_slong()?))
             }),
             (Type::RATIONAL, 1) => {
-                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
-                let numerator = try!(decoder.read_long());
-                let denominator = try!(decoder.read_long());
+                decoder.goto_offset(self.r(bo).read_u32()?)?;
+                let numerator = decoder.read_long()?;
+                let denominator = decoder.read_long()?;
                 Ok(Rational(numerator, denominator))
             }
             (Type::SRATIONAL, 1) => {
@@ -278,8 +278,8 @@ impl Entry {
                 if n as usize > limits.decoding_buffer_size {
                     return Err(TiffError::LimitsExceeded);
                 }
-                try!(decoder.goto_offset(try!(self.r(bo).read_u32())));
-                let string = try!(decoder.read_string(n as usize));
+                decoder.goto_offset(self.r(bo).read_u32()?)?;
+                let string = decoder.read_string(n as usize)?;
                 Ok(Ascii(string))
             }
             _ => Err(TiffError::UnsupportedError(

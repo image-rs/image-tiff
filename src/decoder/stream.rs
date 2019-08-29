@@ -85,12 +85,12 @@ impl LZWReader {
     {
         let order = reader.byte_order;
         let mut compressed = vec![0; compressed_length as usize];
-        try!(reader.read_exact(&mut compressed[..]));
+        reader.read_exact(&mut compressed[..])?;
         let mut uncompressed = Vec::with_capacity(max_uncompressed_length);
         let mut decoder = lzw::DecoderEarlyChange::new(lzw::MsbReader::new(), 8);
         let mut bytes_read = 0;
         while bytes_read < compressed_length && uncompressed.len() < max_uncompressed_length {
-            let (len, bytes) = try!(decoder.decode_bytes(&compressed[bytes_read..]));
+            let (len, bytes) = decoder.decode_bytes(&compressed[bytes_read..])?;
             bytes_read += len;
             uncompressed.extend_from_slice(bytes);
         }
@@ -155,7 +155,7 @@ impl PackBitsReader {
 fn read_packbits_run<R: Read + Seek>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<usize> {
     let mut header: [u8; 1] = [0];
 
-    let bytes = try!(reader.read(&mut header));
+    let bytes = reader.read(&mut header)?;
 
     match bytes {
         0 => Ok(0),
@@ -163,7 +163,7 @@ fn read_packbits_run<R: Read + Seek>(reader: &mut R, buffer: &mut Vec<u8>) -> io
             -128 => Ok(1),
             h if h >= -127 && h <= -1 => {
                 let new_len = buffer.len() + (1 - h as isize) as usize;
-                try!(reader.read_exact(&mut header));
+                reader.read_exact(&mut header)?;
                 buffer.resize(new_len, header[0]);
                 Ok(2)
             }
@@ -171,7 +171,7 @@ fn read_packbits_run<R: Read + Seek>(reader: &mut R, buffer: &mut Vec<u8>) -> io
                 let num_vals = h as usize + 1;
                 let start = buffer.len();
                 buffer.resize(start + num_vals, 0);
-                try!(reader.read_exact(&mut buffer[start..]));
+                reader.read_exact(&mut buffer[start..])?;
                 Ok(num_vals + 1)
             }
         },
