@@ -1,9 +1,10 @@
 //! All IO functionality needed for TIFF decoding
 
+use crate::error::TiffResult;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use lzw;
-use std::io::{self, Read, Seek};
 use miniz_oxide::inflate;
+use std::io::{self, Read, Seek};
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -75,15 +76,12 @@ pub struct DeflateReader {
 }
 
 impl DeflateReader {
-    pub fn new<R: Read + Seek>(
-        reader: &mut SmartReader<R>,
-    ) -> io::Result<(usize, Self)> {
+    pub fn new<R: Read + Seek>(reader: &mut SmartReader<R>) -> TiffResult<(usize, Self)> {
         let byte_order = reader.byte_order;
         let mut compressed = Vec::new();
         reader.read_to_end(&mut compressed)?;
-        let uncompressed = inflate::decompress_to_vec_zlib(&compressed).map_err(|error| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("DEFLATE error: {:?}", error))
-        })?;
+        let uncompressed = inflate::decompress_to_vec_zlib(&compressed)?;
+
         Ok((
             uncompressed.len(),
             Self {
