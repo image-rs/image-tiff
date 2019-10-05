@@ -67,15 +67,15 @@ pub struct InflateError {
     status: TINFLStatus,
 }
 
-impl From<TINFLStatus> for TiffFormatError {
-    fn from(status: TINFLStatus) -> Self {
-        TiffFormatError::InflateError(InflateError { status })
+impl InflateError {
+    pub fn new(status: TINFLStatus) -> Self {
+        Self { status }
     }
 }
 
-impl From<TINFLStatus> for TiffError {
-    fn from(status: TINFLStatus) -> Self {
-        TiffError::FormatError(status.into())
+impl TiffError {
+    pub(crate) fn from_inflate_status(status: TINFLStatus) -> Self {
+        TiffError::FormatError(TiffFormatError::InflateError(InflateError::new(status)))
     }
 }
 
