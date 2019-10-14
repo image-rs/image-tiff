@@ -129,10 +129,14 @@ pub struct Limits {
     /// 256MiB. If the entire image is decoded at once, then this will
     /// be the maximum size of the image. If it is decoded one strip at a
     /// time, this will be the maximum size of a strip.
-    decoding_buffer_size: usize,
+    pub decoding_buffer_size: usize,
     /// The maximum size of any ifd value in bytes, the default is
     /// 1MiB.
-    ifd_value_size: usize,
+    pub ifd_value_size: usize,
+    /// The purpose of this is to prevent all the fields of the struct from
+    /// being public, as this would make adding new fields a major version
+    /// bump.
+    _non_exhaustive: (),
 }
 
 impl Default for Limits {
@@ -140,6 +144,7 @@ impl Default for Limits {
         Limits {
             decoding_buffer_size: 256 * 1024 * 1024,
             ifd_value_size: 1024 * 1024,
+            _non_exhaustive: (),
         }
     }
 }
