@@ -11,8 +11,18 @@ fn test_gray_u8() {
         File::open("./tests/images/minisblack-1c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
-    let img_res = decoder.read_image();
-    assert!(img_res.is_ok());
+    let img_res = decoder.read_image().unwrap();
+    if let DecodingResult::U8(res) = img_res {
+        let mut res_sum: u64 = 0;
+        for x in res {
+            res_sum += x as u64;
+        }
+
+        assert_eq!(res_sum, 2840893);
+    }
+    else {
+        panic!("Wrong bit depth")
+    }
 }
 
 #[test]
@@ -20,8 +30,18 @@ fn test_rgb_u8() {
     let img_file = File::open("./tests/images/rgb-3c-8b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
-    let img_res = decoder.read_image();
-    assert!(img_res.is_ok());
+    let img_res = decoder.read_image().unwrap();
+    if let DecodingResult::U8(res) = img_res {
+        let mut res_sum: u64 = 0;
+        for x in res {
+            res_sum += x as u64;
+        }
+
+        assert_eq!(res_sum, 7842108)
+    }
+    else {
+        panic!("Wrong bit depth")
+    }
 }
 
 #[test]
@@ -30,8 +50,18 @@ fn test_gray_u16() {
         File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(16));
-    let img_res = decoder.read_image();
-    assert!(img_res.is_ok());
+    let img_res = decoder.read_image().unwrap();
+    if let DecodingResult::U16(res) = img_res {
+        let mut res_sum: u64 = 0;
+        for x in res {
+            res_sum += x as u64;
+        }
+
+        assert_eq!(res_sum, 733126239);
+    }
+    else {
+        panic!("Wrong bit depth")
+    }
 }
 
 #[test]
@@ -39,8 +69,18 @@ fn test_rgb_u16() {
     let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(16));
-    let img_res = decoder.read_image();
-    assert!(img_res.is_ok());
+    let img_res = decoder.read_image().unwrap();
+    if let DecodingResult::U16(res) = img_res {
+        let mut res_sum: u64 = 0;
+        for x in res {
+            res_sum += x as u64;
+        }
+
+        assert_eq!(res_sum, 2024349944);
+    }
+    else {
+        panic!("Wrong bit depth")
+    }
 }
 
 #[test]
