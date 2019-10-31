@@ -7,7 +7,7 @@ use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
 
-use self::stream::{ByteOrder, EndianReader, LZWReader, PackBitsReader, SmartReader};
+use self::stream::{ByteOrder, EndianReader, LZWReader, DeflateReader, PackBitsReader, SmartReader};
 
 pub mod ifd;
 mod stream;
@@ -100,6 +100,8 @@ pub enum CompressionMethod {
     Fax4 = 4,
     LZW = 5,
     JPEG = 6,
+    Deflate = 8,
+    OldDeflate = 0x80B2,
     PackBits = 0x8005,
 }
 
@@ -580,6 +582,10 @@ impl<R: Read + Seek> Decoder<R> {
                     order,
                     length as usize
                 )?;
+                (bytes, Box::new(reader))
+            }
+            CompressionMethod::OldDeflate => {
+                let (bytes, reader) = DeflateReader::new(&mut self.reader, max_uncompressed_length)?;
                 (bytes, Box::new(reader))
             }
             method => {

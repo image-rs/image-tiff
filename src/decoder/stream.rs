@@ -1,7 +1,9 @@
 //! All IO functionality needed for TIFF decoding
 
+use crate::error::{TiffError, TiffResult};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use lzw;
+use miniz_oxide::inflate;
 use std::io::{self, Read, Seek};
 
 /// Byte order of the TIFF file.
@@ -64,6 +66,52 @@ pub trait EndianReader: Read {
             ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_i32::<LittleEndian>(self),
             ByteOrder::BigEndian => <Self as ReadBytesExt>::read_i32::<BigEndian>(self),
         }
+    }
+}
+
+/// Reader that decompresses DEFLATE streams
+pub struct DeflateReader {
+    buffer: io::Cursor<Vec<u8>>,
+    byte_order: ByteOrder,
+}
+
+impl DeflateReader {
+    pub fn new<R: Read + Seek>(
+        reader: &mut SmartReader<R>,
+        max_uncompressed_length: usize,
+    ) -> TiffResult<(usize, Self)> {
+        let byte_order = reader.byte_order;
+        let mut compressed = Vec::new();
+        reader.read_to_end(&mut compressed)?;
+
+        // TODO: Implement streaming compression, and remove this (temporary) and somewhat
+        // misleading workaround.
+        if compressed.len() > max_uncompressed_length {
+            return Err(TiffError::LimitsExceeded);
+        }
+
+        let uncompressed =
+            inflate::decompress_to_vec_zlib(&compressed).map_err(TiffError::from_inflate_status)?;
+
+        Ok((
+            uncompressed.len(),
+            Self {
+                byte_order,
+                buffer: io::Cursor::new(uncompressed),
+            },
+        ))
+    }
+}
+
+impl Read for DeflateReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.buffer.read(buf)
+    }
+}
+
+impl EndianReader for DeflateReader {
+    fn byte_order(&self) -> ByteOrder {
+        self.byte_order
     }
 }
 

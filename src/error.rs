@@ -5,6 +5,7 @@ use std::string;
 
 use decoder::ifd::{Tag, Value};
 use decoder::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration};
+use miniz_oxide::inflate::TINFLStatus;
 use ColorType;
 
 /// Tiff error kinds.
@@ -34,6 +35,7 @@ pub enum TiffFormatError {
     UnknownPredictor(u32),
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
+    InflateError(InflateError),
 }
 
 impl fmt::Display for TiffFormatError {
@@ -55,7 +57,25 @@ impl fmt::Display for TiffFormatError {
             SignedIntegerExpected(ref val) => {
                 write!(fmt, "Expected signed integer, {:?} found.", val)
             }
+            InflateError(_) => write!(fmt, "Failed to decode inflate data."),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InflateError {
+    status: TINFLStatus,
+}
+
+impl InflateError {
+    pub fn new(status: TINFLStatus) -> Self {
+        Self { status }
+    }
+}
+
+impl TiffError {
+    pub(crate) fn from_inflate_status(status: TINFLStatus) -> Self {
+        TiffError::FormatError(TiffFormatError::InflateError(InflateError::new(status)))
     }
 }
 
@@ -138,7 +158,7 @@ impl Error for TiffError {
         }
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         match *self {
             TiffError::IoError(ref e) => Some(e),
             _ => None,
