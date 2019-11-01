@@ -10,27 +10,35 @@ use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational};
 
 macro_rules! tags {
-    {$(
-        $tag:ident
-        $val:expr;
-    )*} => {
-
-        /// TIFF tag
-        #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-        pub enum Tag {
-            $($tag,)*
-            Unknown(u16)
+    {
+        // Permit arbitrary meta items, which include documentation.
+        $( #[$enum_attr:meta] )*
+        pub enum $name:ident($ty:ty) {
+            // Each of the `Name = Val,` permitting documentation.
+            $($(#[$ident_attr:meta])* $tag:ident = $val:expr,)*
         }
-        impl Tag {
-            pub fn from_u16(n: u16) -> Tag {
-                $(if n == $val { Tag::$tag } else)* {
-                    Tag::Unknown(n)
+    } => {
+        $( #[$enum_attr] )*
+        #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+        pub enum $name {
+            $($(#[$ident_attr])* $tag,)*
+            Unknown($ty),
+            #[doc(hidden)]
+            __NonExhaustive,
+        }
+
+        impl $name {
+            fn __from_inner_type(n: u16) -> Self {
+                $(if n == $val { $name::$tag } else)* {
+                    $name::Unknown(n)
                 }
             }
-            pub fn to_u16(&self) -> u16 {
+
+            fn __to_inner_type(&self) -> u16 {
                 match *self {
-                    $( Tag::$tag => $val, )*
-                    Tag::Unknown(n) => n,
+                    $( $name::$tag => $val, )*
+                    $name::Unknown(n) => n,
+                    $name::__NonExhaustive => unreachable!(),
                 }
             }
         }
@@ -39,47 +47,60 @@ macro_rules! tags {
 
 // Note: These tags appear in the order they are mentioned in the TIFF reference
 tags! {
+/// TIFF tags
+pub enum Tag(u16) {
     // Baseline tags:
-    Artist 315;
+    Artist = 315,
     // grayscale images PhotometricInterpretation 1 or 3
-    BitsPerSample 258;
-    CellLength 265; // TODO add support
-    CellWidth 264; // TODO add support
+    BitsPerSample = 258,
+    CellLength = 265, // TODO add support
+    CellWidth = 264, // TODO add support
     // palette-color images (PhotometricInterpretation 3)
-    ColorMap 320; // TODO add support
-    Compression 259; // TODO add support for 2 and 32773
-    Copyright 33_432;
-    DateTime 306;
-    ExtraSamples 338; // TODO add support
-    FillOrder 266; // TODO add support
-    FreeByteCounts 289; // TODO add support
-    FreeOffsets 288; // TODO add support
-    GrayResponseCurve 291; // TODO add support
-    GrayResponseUnit 290; // TODO add support
-    HostComputer 316;
-    ImageDescription 270;
-    ImageLength 257;
-    ImageWidth 256;
-    Make 271;
-    MaxSampleValue 281; // TODO add support
-    MinSampleValue 280; // TODO add support
-    Model 272;
-    NewSubfileType 254; // TODO add support
-    Orientation 274; // TODO add support
-    PhotometricInterpretation 262;
-    PlanarConfiguration 284;
-    ResolutionUnit 296; // TODO add support
-    RowsPerStrip 278;
-    SamplesPerPixel 277;
-    Software 305;
-    StripByteCounts 279;
-    StripOffsets 273;
-    SubfileType 255; // TODO add support
-    Threshholding 263; // TODO add support
-    XResolution 282;
-    YResolution 283;
+    ColorMap = 320, // TODO add support
+    Compression = 259, // TODO add support for 2 and 32773
+    Copyright = 33_432,
+    DateTime = 306,
+    ExtraSamples = 338, // TODO add support
+    FillOrder = 266, // TODO add support
+    FreeByteCounts = 289, // TODO add support
+    FreeOffsets = 288, // TODO add support
+    GrayResponseCurve = 291, // TODO add support
+    GrayResponseUnit = 290, // TODO add support
+    HostComputer = 316,
+    ImageDescription = 270,
+    ImageLength = 257,
+    ImageWidth = 256,
+    Make = 271,
+    MaxSampleValue = 281, // TODO add support
+    MinSampleValue = 280, // TODO add support
+    Model = 272,
+    NewSubfileType = 254, // TODO add support
+    Orientation = 274, // TODO add support
+    PhotometricInterpretation = 262,
+    PlanarConfiguration = 284,
+    ResolutionUnit = 296, // TODO add support
+    RowsPerStrip = 278,
+    SamplesPerPixel = 277,
+    Software = 305,
+    StripByteCounts = 279,
+    StripOffsets = 273,
+    SubfileType = 255, // TODO add support
+    Threshholding = 263, // TODO add support
+    XResolution = 282,
+    YResolution = 283,
     // Advanced tags
-    Predictor 317;
+    Predictor = 317,
+}
+}
+
+impl Tag {
+    pub fn from_u16(val: u16) -> Self {
+        Self::__from_inner_type(val)
+    }
+
+    pub fn to_u16(&self) -> u16 {
+        Self::__to_inner_type(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, FromPrimitive)]
@@ -93,6 +114,8 @@ pub enum Type {
     SSHORT = 8,
     SLONG = 9,
     SRATIONAL = 10,
+    #[doc(hidden)] // Do not match against this.
+    __NonExhaustive,
 }
 
 #[allow(unused_qualifications)]
@@ -104,6 +127,8 @@ pub enum Value {
     Rational(u32, u32),
     SRational(i32, i32),
     Ascii(String),
+    #[doc(hidden)] // Do not match against this.
+    __NonExhaustive,
 }
 
 impl Value {
