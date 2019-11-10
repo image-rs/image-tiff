@@ -13,7 +13,7 @@ macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
         $( #[$enum_attr:meta] )*
-        pub enum $name:ident($ty:ty) $(unknown($unknown_doc:literal))* {
+        $vis:vis enum $name:ident($ty:ty) $(unknown($unknown_doc:literal))* {
             // Each of the `Name = Val,` permitting documentation.
             $($(#[$ident_attr:meta])* $tag:ident = $val:expr,)*
         }
@@ -33,14 +33,14 @@ macro_rules! tags {
 
         impl $name {
             #[inline(always)]
-            fn __from_inner_type(n: u16) -> Result<Self, $ty> {
+            fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
                 $(if n == $val { Ok($name::$tag) } else)* {
                     Err(n)
                 }
             }
 
             #[inline(always)]
-            fn __to_inner_type(&self) -> u16 {
+            fn __to_inner_type(&self) -> $ty {
                 match *self {
                     $( $name::$tag => $val, )*
                     $( $name::Unknown(n) => { $unknown_doc; n }, )*

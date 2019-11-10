@@ -1,4 +1,4 @@
-use num_traits::{FromPrimitive, Num};
+use num_traits::{Num};
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
 use std::cmp;
@@ -9,6 +9,7 @@ use self::ifd::Directory;
 
 use self::stream::{ByteOrder, EndianReader, LZWReader, DeflateReader, PackBitsReader, SmartReader};
 
+#[macro_use]
 pub mod ifd;
 mod stream;
 
@@ -80,8 +81,8 @@ impl<'a> DecodingBuffer<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
-pub enum PhotometricInterpretation {
+tags! {
+pub enum PhotometricInterpretation(u32) {
     WhiteIsZero = 0,
     BlackIsZero = 1,
     RGB = 2,
@@ -91,9 +92,10 @@ pub enum PhotometricInterpretation {
     YCbCr = 6,
     CIELab = 8,
 }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
-pub enum CompressionMethod {
+tags! {
+pub enum CompressionMethod(u32) {
     None = 1,
     Huffman = 2,
     Fax3 = 3,
@@ -104,17 +106,60 @@ pub enum CompressionMethod {
     OldDeflate = 0x80B2,
     PackBits = 0x8005,
 }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
-pub enum PlanarConfiguration {
+tags! {
+pub enum PlanarConfiguration(u32) {
     Chunky = 1,
     Planar = 2,
 }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive)]
-enum Predictor {
+tags! {
+enum Predictor(u32) {
     None = 1,
     Horizontal = 2,
+}
+}
+
+impl PhotometricInterpretation {
+    pub fn from_u32(val: u32) -> Option<Self> {
+        Self::__from_inner_type(val).ok()
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        Self::__to_inner_type(self)
+    }
+}
+
+impl CompressionMethod {
+    pub fn from_u32(val: u32) -> Option<Self> {
+        Self::__from_inner_type(val).ok()
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        Self::__to_inner_type(self)
+    }
+}
+
+impl PlanarConfiguration {
+    pub fn from_u32(val: u32) -> Option<Self> {
+        Self::__from_inner_type(val).ok()
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        Self::__to_inner_type(self)
+    }
+}
+
+impl Predictor {
+    pub fn from_u32(val: u32) -> Option<Self> {
+        Self::__from_inner_type(val).ok()
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        Self::__to_inner_type(self)
+    }
 }
 
 #[derive(Debug)]
@@ -334,7 +379,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.width = self.get_tag_u32(ifd::Tag::ImageWidth)?;
         self.height = self.get_tag_u32(ifd::Tag::ImageLength)?;
         self.strip_decoder = None;
-        self.photometric_interpretation = match FromPrimitive::from_u32(
+        self.photometric_interpretation = match PhotometricInterpretation::from_u32(
             self.get_tag_u32(ifd::Tag::PhotometricInterpretation)?
         ) {
             Some(val) => val,
@@ -345,7 +390,7 @@ impl<R: Read + Seek> Decoder<R> {
             }
         };
         if let Some(val) = self.find_tag_u32(ifd::Tag::Compression)? {
-            match FromPrimitive::from_u32(val) {
+            match CompressionMethod::from_u32(val) {
                 Some(method) => self.compression_method = method,
                 None => {
                     return Err(TiffError::UnsupportedError(
@@ -720,7 +765,7 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
         if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
-            match FromPrimitive::from_u32(predictor) {
+            match Predictor::from_u32(predictor) {
                 Some(Predictor::None) => (),
                 Some(Predictor::Horizontal) => {
                     rev_hpredict(
@@ -734,6 +779,7 @@ impl<R: Read + Seek> Decoder<R> {
                         predictor,
                     )))
                 }
+                Some(Predictor::__NonExhaustive) => unreachable!(),
             }
         }
         Ok(())
