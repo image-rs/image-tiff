@@ -13,7 +13,7 @@ macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
         $( #[$enum_attr:meta] )*
-        pub enum $name:ident($ty:ty) {
+        pub enum $name:ident($ty:ty) $(unknown($unknown_doc:literal))* {
             // Each of the `Name = Val,` permitting documentation.
             $($(#[$ident_attr:meta])* $tag:ident = $val:expr,)*
         }
@@ -22,22 +22,28 @@ macro_rules! tags {
         #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
         pub enum $name {
             $($(#[$ident_attr])* $tag,)*
-            Unknown($ty),
+            // FIXME: switch to non_exhaustive once stabilized and compiler requirement new enough
             #[doc(hidden)]
             __NonExhaustive,
+            $( 
+                #[doc = $unknown_doc]
+                Unknown($ty),
+            )*
         }
 
         impl $name {
-            fn __from_inner_type(n: u16) -> Self {
-                $(if n == $val { $name::$tag } else)* {
-                    $name::Unknown(n)
+            #[inline(always)]
+            fn __from_inner_type(n: u16) -> Result<Self, $ty> {
+                $(if n == $val { Ok($name::$tag) } else)* {
+                    Err(n)
                 }
             }
 
+            #[inline(always)]
             fn __to_inner_type(&self) -> u16 {
                 match *self {
                     $( $name::$tag => $val, )*
-                    $name::Unknown(n) => n,
+                    $( $name::Unknown(n) => { $unknown_doc; n }, )*
                     $name::__NonExhaustive => unreachable!(),
                 }
             }
@@ -48,7 +54,7 @@ macro_rules! tags {
 // Note: These tags appear in the order they are mentioned in the TIFF reference
 tags! {
 /// TIFF tags
-pub enum Tag(u16) {
+pub enum Tag(u16) unknown("A private or extension tag") {
     // Baseline tags:
     Artist = 315,
     // grayscale images PhotometricInterpretation 1 or 3
@@ -95,7 +101,7 @@ pub enum Tag(u16) {
 
 impl Tag {
     pub fn from_u16(val: u16) -> Self {
-        Self::__from_inner_type(val)
+        Self::__from_inner_type(val).unwrap_or_else(Tag::Unknown)
     }
 
     pub fn to_u16(&self) -> u16 {
@@ -103,8 +109,9 @@ impl Tag {
     }
 }
 
-#[derive(Clone, Copy, Debug, FromPrimitive)]
-pub enum Type {
+tags! {
+/// The type of an IFD entry (a 2 byte field).
+pub enum Type(u16) {
     BYTE = 1,
     ASCII = 2,
     SHORT = 3,
@@ -114,9 +121,19 @@ pub enum Type {
     SSHORT = 8,
     SLONG = 9,
     SRATIONAL = 10,
-    #[doc(hidden)] // Do not match against this.
-    __NonExhaustive,
 }
+}
+
+impl Type {
+    pub fn from_u16(val: u16) -> Option<Self> {
+        Self::__from_inner_type(val).ok()
+    }
+
+    pub fn to_u16(&self) -> u16 {
+        Self::__to_inner_type(self)
+    }
+}
+
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

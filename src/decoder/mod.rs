@@ -454,7 +454,7 @@ impl<R: Read + Seek> Decoder<R> {
     // Value 4 bytes either a pointer the value itself
     fn read_entry(&mut self) -> TiffResult<Option<(ifd::Tag, ifd::Entry)>> {
         let tag = ifd::Tag::from_u16(self.read_short()?);
-        let type_: ifd::Type = match FromPrimitive::from_u16(self.read_short()?) {
+        let type_ = match ifd::Type::from_u16(self.read_short()?) {
             Some(t) => t,
             None => {
                 // Unknown type. Skip this entry according to spec.
