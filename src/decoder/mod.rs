@@ -82,7 +82,7 @@ impl<'a> DecodingBuffer<'a> {
 }
 
 tags! {
-pub enum PhotometricInterpretation(u32) {
+pub enum PhotometricInterpretation(u16) {
     WhiteIsZero = 0,
     BlackIsZero = 1,
     RGB = 2,
@@ -95,7 +95,7 @@ pub enum PhotometricInterpretation(u32) {
 }
 
 tags! {
-pub enum CompressionMethod(u32) {
+pub enum CompressionMethod(u16) {
     None = 1,
     Huffman = 2,
     Fax3 = 3,
@@ -109,55 +109,55 @@ pub enum CompressionMethod(u32) {
 }
 
 tags! {
-pub enum PlanarConfiguration(u32) {
+pub enum PlanarConfiguration(u16) {
     Chunky = 1,
     Planar = 2,
 }
 }
 
 tags! {
-enum Predictor(u32) {
+enum Predictor(u16) {
     None = 1,
     Horizontal = 2,
 }
 }
 
 impl PhotometricInterpretation {
-    pub fn from_u32(val: u32) -> Option<Self> {
+    pub fn from_u16(val: u16) -> Option<Self> {
         Self::__from_inner_type(val).ok()
     }
 
-    pub fn to_u32(&self) -> u32 {
+    pub fn to_u16(&self) -> u16 {
         Self::__to_inner_type(self)
     }
 }
 
 impl CompressionMethod {
-    pub fn from_u32(val: u32) -> Option<Self> {
+    pub fn from_u16(val: u16) -> Option<Self> {
         Self::__from_inner_type(val).ok()
     }
 
-    pub fn to_u32(&self) -> u32 {
+    pub fn to_u16(&self) -> u16 {
         Self::__to_inner_type(self)
     }
 }
 
 impl PlanarConfiguration {
-    pub fn from_u32(val: u32) -> Option<Self> {
+    pub fn from_u16(val: u16) -> Option<Self> {
         Self::__from_inner_type(val).ok()
     }
 
-    pub fn to_u32(&self) -> u32 {
+    pub fn to_u16(&self) -> u16 {
         Self::__to_inner_type(self)
     }
 }
 
 impl Predictor {
-    pub fn from_u32(val: u32) -> Option<Self> {
+    pub fn from_u16(val: u16) -> Option<Self> {
         Self::__from_inner_type(val).ok()
     }
 
-    pub fn to_u32(&self) -> u32 {
+    pub fn to_u16(&self) -> u16 {
         Self::__to_inner_type(self)
     }
 }
@@ -379,8 +379,9 @@ impl<R: Read + Seek> Decoder<R> {
         self.width = self.get_tag_u32(ifd::Tag::ImageWidth)?;
         self.height = self.get_tag_u32(ifd::Tag::ImageLength)?;
         self.strip_decoder = None;
-        self.photometric_interpretation = match PhotometricInterpretation::from_u32(
-            self.get_tag_u32(ifd::Tag::PhotometricInterpretation)?
+        // TODO: error on non-SHORT value.
+        self.photometric_interpretation = match PhotometricInterpretation::from_u16(
+            self.get_tag_u32(ifd::Tag::PhotometricInterpretation)? as u16
         ) {
             Some(val) => val,
             None => {
@@ -389,8 +390,9 @@ impl<R: Read + Seek> Decoder<R> {
                 ))
             }
         };
+        // TODO: error on non-SHORT value.
         if let Some(val) = self.find_tag_u32(ifd::Tag::Compression)? {
-            match CompressionMethod::from_u32(val) {
+            match CompressionMethod::from_u16(val as u16) {
                 Some(method) => self.compression_method = method,
                 None => {
                     return Err(TiffError::UnsupportedError(
@@ -765,7 +767,8 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
         if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
-            match Predictor::from_u32(predictor) {
+            // TODO: error on non-SHORT value.
+            match Predictor::from_u16(predictor as u16) {
                 Some(Predictor::None) => (),
                 Some(Predictor::Horizontal) => {
                     rev_hpredict(
