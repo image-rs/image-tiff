@@ -9,8 +9,6 @@
 extern crate byteorder;
 extern crate lzw;
 extern crate miniz_oxide;
-#[macro_use]
-extern crate num_derive;
 extern crate num_traits;
 
 pub mod decoder;
