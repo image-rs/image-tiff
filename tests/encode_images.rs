@@ -269,7 +269,7 @@ fn test_multipage_image() {
 
     {
         // first create a multipage image with 2 images
-        let mut img_encoder = TiffEncoder::new(&img_file).unwrap();
+        let mut img_encoder = TiffEncoder::new(&mut img_file).unwrap();
 
         // write first grayscale image (2x2 16-bit)
         let img1: Vec<u16> = [1, 2, 3, 4].to_vec();
@@ -283,7 +283,7 @@ fn test_multipage_image() {
     img_file.seek(SeekFrom::Start(0)).unwrap();
 
     {
-        let mut img_decoder = Decoder::new(&img_file).unwrap();
+        let mut img_decoder = Decoder::new(&mut img_file).unwrap();
 
         // check the dimensions of the image in the first page
         assert_eq!(img_decoder.dimensions().unwrap(), (2, 2));
