@@ -34,8 +34,9 @@ macro_rules! tags {
         impl $name {
             #[inline(always)]
             fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
-                $(if n == $val { Ok($name::$tag) } else)* {
-                    Err(n)
+                match n {
+                    $( $val => Ok($name::$tag), )*
+                    n => Err(n),
                 }
             }
 
