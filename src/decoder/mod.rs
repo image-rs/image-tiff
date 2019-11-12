@@ -1,4 +1,3 @@
-use num_traits::{Num};
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
 use std::cmp;
@@ -236,7 +235,7 @@ impl Wrapping for u16 {
 
 fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize)
 where
-    T: Num + Copy + Wrapping,
+    T: Copy + Wrapping,
 {
     let width = size.0 as usize;
     let height = size.1 as usize;

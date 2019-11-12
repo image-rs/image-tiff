@@ -19,7 +19,6 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 [dependencies]
 byteorder = "1.2"
 lzw = "0.10"
-num-traits = "0.2"
 miniz_oxide = "0.3"
 
 [dev-dependencies]
