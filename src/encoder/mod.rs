@@ -441,7 +441,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
         }
 
         self.ifd
-            .insert(tag.to_u16(), (<T>::FIELD_TYPE as u16, value.count(), bytes));
+            .insert(tag.to_u16(), (<T>::FIELD_TYPE.to_u16(), value.count(), bytes));
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
@@ -568,7 +568,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         encoder.write_tag(Tag::Compression, 1u16);
 
         encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE);
-        encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE as u16);
+        encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16());
 
         encoder.write_tag(Tag::RowsPerStrip, rows_per_strip as u32);
 
