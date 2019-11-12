@@ -265,7 +265,7 @@ fn test_signed() {
 #[test]
 /// check multipage image handling
 fn test_multipage_image() {
-    let mut img_file = tempfile::tempfile().unwrap();
+    let mut img_file = Cursor::new(Vec::new());
 
     {
         // first create a multipage image with 2 images
