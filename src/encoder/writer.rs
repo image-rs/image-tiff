@@ -98,6 +98,7 @@ impl<W: Write> TiffWriter<W> {
             let padding = [0, 0, 0];
             let padd_len = 4 - (self.offset % 4);
             self.writer.write_all(&padding[..padd_len as usize])?;
+            self.offset += padd_len;
         }
 
         Ok(())

@@ -261,3 +261,34 @@ fn test_signed() {
         assert_eq!(decoder.get_tag(Tag::Unknown(65031)).unwrap().into_i32_vec().unwrap(), [-1_i32, 100, 2, 100]);
     }
 }
+
+#[test]
+/// check multipage image handling
+fn test_multipage_image() {
+    let mut img_file = Cursor::new(Vec::new());
+
+    {
+        // first create a multipage image with 2 images
+        let mut img_encoder = TiffEncoder::new(&mut img_file).unwrap();
+
+        // write first grayscale image (2x2 16-bit)
+        let img1: Vec<u16> = [1, 2, 3, 4].to_vec();
+        img_encoder.write_image::<colortype::Gray16>(2, 2, &img1[..]);
+        // write second grayscale image (3x3 8-bit)
+        let img2: Vec<u8> = [9, 8, 7, 6, 5, 4, 3, 2, 1].to_vec();
+        img_encoder.write_image::<colortype::Gray8>(3, 3, &img2[..]);
+    }
+
+    // seek to the beginning of the file, so that it can be decoded
+    img_file.seek(SeekFrom::Start(0)).unwrap();
+
+    {
+        let mut img_decoder = Decoder::new(&mut img_file).unwrap();
+
+        // check the dimensions of the image in the first page
+        assert_eq!(img_decoder.dimensions().unwrap(), (2, 2));
+        img_decoder.next_image().unwrap();
+        // check the dimensions of the image in the second page
+        assert_eq!(img_decoder.dimensions().unwrap(), (3, 3));
+    }
+}
