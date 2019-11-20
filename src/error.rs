@@ -68,7 +68,7 @@ pub struct InflateError {
 }
 
 impl InflateError {
-    pub fn new(status: TINFLStatus) -> Self {
+    pub(crate) fn new(status: TINFLStatus) -> Self {
         Self { status }
     }
 }
