@@ -26,7 +26,7 @@ pub enum TiffError {
 
 /// The image is not formatted properly.
 ///
-/// The indicate that the encoder producing the image might behave incorrectly or that the input
+/// This indicates that the encoder producing the image might behave incorrectly or that the input
 /// file has been corrupted.
 ///
 /// The list of variants may grow to incorporate errors of future features. Matching against this
