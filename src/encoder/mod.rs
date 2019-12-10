@@ -142,6 +142,23 @@ impl TiffValue for [i32] {
     }
 }
 
+impl TiffValue for [u64] {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: ifd::Type = ifd::Type::LONG8;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        // We write using nativeedian so this sould be safe
+        let slice =
+            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 8) };
+        writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for [Rational] {
     const BYTE_LEN: u32 = 8;
     const FIELD_TYPE: ifd::Type = ifd::Type::RATIONAL;
@@ -254,6 +271,20 @@ impl TiffValue for i32 {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         writer.write_i32(*self)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for u64 {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: ifd::Type = ifd::Type::LONG8;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_u64(*self)?;
         Ok(())
     }
 }
