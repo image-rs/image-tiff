@@ -273,10 +273,10 @@ fn test_multipage_image() {
 
         // write first grayscale image (2x2 16-bit)
         let img1: Vec<u16> = [1, 2, 3, 4].to_vec();
-        img_encoder.write_image::<colortype::Gray16>(2, 2, &img1[..]);
+        img_encoder.write_image::<colortype::Gray16>(2, 2, &img1[..]).unwrap();
         // write second grayscale image (3x3 8-bit)
         let img2: Vec<u8> = [9, 8, 7, 6, 5, 4, 3, 2, 1].to_vec();
-        img_encoder.write_image::<colortype::Gray8>(3, 3, &img2[..]);
+        img_encoder.write_image::<colortype::Gray8>(3, 3, &img2[..]).unwrap();
     }
 
     // seek to the beginning of the file, so that it can be decoded
