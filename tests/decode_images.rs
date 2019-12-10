@@ -65,6 +65,26 @@ fn test_gray_u16() {
 }
 
 #[test]
+fn test_gray_u32() {
+    let img_file =
+        File::open("./tests/images/gradient-1c-32b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(32));
+    let img_res = decoder.read_image().unwrap();
+    if let DecodingResult::U32(res) = img_res {
+        let mut res_sum: u64 = 0;
+        for x in res {
+            res_sum += x as u64;
+        }
+
+        assert_eq!(res_sum, 549892913787);
+    }
+    else {
+        panic!("Wrong bit depth")
+    }
+}
+
+#[test]
 fn test_rgb_u16() {
     let img_file = File::open("./tests/images/rgb-3c-16b.tiff").expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");

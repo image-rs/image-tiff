@@ -19,6 +19,8 @@ pub enum DecodingResult {
     U8(Vec<u8>),
     /// A vector of unsigned words
     U16(Vec<u16>),
+    /// A vector of 32 bit unsigned ints
+    U32(Vec<u32>),
 }
 
 impl DecodingResult {
@@ -38,10 +40,19 @@ impl DecodingResult {
         }
     }
 
+    fn new_u32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / 4 {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::U32(vec![0; size]))
+        }
+    }
+
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
+            DecodingResult::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[start..]),
         }
     }
 }
@@ -52,6 +63,8 @@ pub enum DecodingBuffer<'a> {
     U8(&'a mut [u8]),
     /// A slice of unsigned words
     U16(&'a mut [u16]),
+    /// A slice of 32 bit unsigned ints
+    U32(&'a mut [u32]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -59,6 +72,7 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref buf) => buf.len(),
             DecodingBuffer::U16(ref buf) => buf.len(),
+            DecodingBuffer::U32(ref buf) => buf.len(),
         }
     }
 
@@ -66,6 +80,7 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(_) => 1,
             DecodingBuffer::U16(_) => 2,
+            DecodingBuffer::U32(_) => 4,
         }
     }
 
@@ -76,6 +91,7 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
+            DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(buf),
         }
     }
 }
@@ -233,6 +249,12 @@ impl Wrapping for u16 {
     }
 }
 
+impl Wrapping for u32 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        u32::wrapping_add(*self, other)
+    }
+}
+
 fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize)
 where
     T: Copy + Wrapping,
@@ -250,7 +272,7 @@ where
 
 fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) -> TiffResult<()> {
     let samples = match color_type {
-        ColorType::Gray(8) | ColorType::Gray(16) => 1,
+        ColorType::Gray(8) | ColorType::Gray(16) | ColorType::Gray(32) => 1,
         ColorType::RGB(8) | ColorType::RGB(16) => 3,
         ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::CMYK(8) => 4,
         _ => {
@@ -264,6 +286,9 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
             rev_hpredict_nsamp(buf, size, samples);
         }
         DecodingBuffer::U16(buf) => {
+            rev_hpredict_nsamp(buf, size, samples);
+        }
+        DecodingBuffer::U32(buf) => {
             rev_hpredict_nsamp(buf, size, samples);
         }
     }
@@ -659,6 +684,15 @@ impl<R: Read + Seek> Decoder<R> {
                 reader.read_u16_into(&mut buffer[..bytes / 2])?;
                 bytes / 2
             }
+            (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
+                reader.read_u32_into(&mut buffer[..bytes / 4])?;
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes / 4].iter_mut() {
+                        *datum = 0xffff_ffff - *datum
+                    }
+                }
+                bytes / 4
+            }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
                 reader.read_u16_into(&mut buffer[..bytes / 2])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -806,6 +840,7 @@ impl<R: Read + Seek> Decoder<R> {
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
             n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
+            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits)?,
             n => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
@@ -834,6 +869,7 @@ impl<R: Read + Seek> Decoder<R> {
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
             n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
+            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits)?,
             n => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
