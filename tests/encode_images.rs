@@ -178,6 +178,67 @@ fn test_rgb_u16_roundtrip() {
 }
 
 #[test]
+fn test_gray_u32_roundtrip() {
+    let img_file =
+        File::open("./tests/images/gradient-1c-32b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(32));
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U32(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::Gray32>(width, height, &image_data)
+            .unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U32(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+#[test]
+fn test_rgb_u32_roundtrip() {
+    let img_file = File::open("./tests/images/gradient-3c-32b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(32));
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U32(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::RGB32>(width, height, &image_data)
+            .unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U32(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+#[test]
 fn test_multiple_byte() {
     let mut data = Cursor::new(Vec::new());
 
