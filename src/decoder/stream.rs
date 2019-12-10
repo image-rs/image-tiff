@@ -71,6 +71,27 @@ pub trait EndianReader: Read {
         }
     }
 
+    /// Reads an u64
+    #[inline(always)]
+    fn read_u64(&mut self) -> Result<u64, io::Error> {
+        match self.byte_order() {
+            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_u64::<LittleEndian>(self),
+            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_u64::<BigEndian>(self),
+        }
+    }
+
+    #[inline(always)]
+    fn read_u64_into(&mut self, buffer: &mut [u64]) -> Result<(), io::Error> {
+        match self.byte_order() {
+            ByteOrder::LittleEndian => {
+                <Self as ReadBytesExt>::read_u64_into::<LittleEndian>(self, buffer)
+            }
+            ByteOrder::BigEndian => {
+                <Self as ReadBytesExt>::read_u64_into::<BigEndian>(self, buffer)
+            }
+        }
+    }
+
     /// Reads an i32
     #[inline(always)]
     fn read_i32(&mut self) -> Result<i32, io::Error> {
