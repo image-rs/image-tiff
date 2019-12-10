@@ -143,6 +143,25 @@ fn test_rgb_u32() {
 }
 
 #[test]
+fn test_rgb_u64() {
+    let img_file = File::open("./tests/images/gradient-3c-64b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(64));
+    let img_res = decoder.read_image().unwrap();
+    if let DecodingResult::U64(res) = img_res {
+        let mut res_sum: u64 = 0;
+        for x in res {
+            res_sum += x as u64;
+        }
+
+        assert_eq!(res_sum, 2030834111716);
+    }
+    else {
+        panic!("Wrong bit depth")
+    }
+}
+
+#[test]
 fn test_string_tags() {
     // these files have null-terminated strings for their Software tag. One has extra bytes after
     // the null byte, so we check both to ensure that we're truncating properly

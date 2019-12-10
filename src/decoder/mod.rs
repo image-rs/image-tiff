@@ -295,8 +295,8 @@ where
 fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) -> TiffResult<()> {
     let samples = match color_type {
         ColorType::Gray(8) | ColorType::Gray(16) | ColorType::Gray(32) | ColorType::Gray(64) => 1,
-        ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) => 3,
-        ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::RGBA(32) | ColorType::CMYK(8) => 4,
+        ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) | ColorType::RGB(64) => 3,
+        ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::RGBA(32) | ColorType::RGBA(64) | ColorType::CMYK(8) => 4,
         _ => {
             return Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::HorizontalPredictor(color_type),
@@ -369,6 +369,12 @@ impl<R: Read + Seek> Decoder<R> {
             }
             PhotometricInterpretation::RGB if self.bits_per_sample == [32, 32, 32] => {
                 Ok(ColorType::RGB(32))
+            }
+            PhotometricInterpretation::RGB if self.bits_per_sample == [64, 64, 64, 64] => {
+                Ok(ColorType::RGBA(64))
+            }
+            PhotometricInterpretation::RGB if self.bits_per_sample == [64, 64, 64] => {
+                Ok(ColorType::RGB(64))
             }
             PhotometricInterpretation::CMYK if self.bits_per_sample == [8, 8, 8, 8] => {
                 Ok(ColorType::CMYK(8))
@@ -719,6 +725,11 @@ impl<R: Read + Seek> Decoder<R> {
             | (ColorType::RGB(32), DecodingBuffer::U32(ref mut buffer)) => {
                 reader.read_u32_into(&mut buffer[..bytes / 4])?;
                 bytes / 4
+            }
+            (ColorType::RGBA(64), DecodingBuffer::U64(ref mut buffer))
+            | (ColorType::RGB(64), DecodingBuffer::U64(ref mut buffer)) => {
+                reader.read_u64_into(&mut buffer[..bytes / 8])?;
+                bytes / 8
             }
             (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
                 reader.read_u64_into(&mut buffer[..bytes / 8])?;
