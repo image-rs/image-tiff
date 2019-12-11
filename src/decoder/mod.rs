@@ -353,15 +353,9 @@ impl<R: Read + Seek> Decoder<R> {
         match self.photometric_interpretation {
             // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
             PhotometricInterpretation::RGB  => {
-                match self.bits_per_sample.as_slice() {
-                    [8, 8, 8] => Ok(ColorType::RGB(8)),
-                    [8, 8, 8, 8] => Ok(ColorType::RGBA(8)),
-                    [16, 16, 16] => Ok(ColorType::RGB(16)),
-                    [16, 16, 16, 16] => Ok(ColorType::RGBA(16)),
-                    [32, 32, 32] => Ok(ColorType::RGB(32)),
-                    [32, 32, 32, 32] => Ok(ColorType::RGBA(32)),
-                    [64, 64, 64] => Ok(ColorType::RGB(64)),
-                    [64, 64, 64, 64] => Ok(ColorType::RGBA(64)),
+                match self.bits_per_sample[..] {
+                    [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
+                    [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
                     _ => Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::InterpretationWithBits(
                             self.photometric_interpretation,
