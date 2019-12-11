@@ -139,7 +139,7 @@ impl fmt::Display for TiffUnsupportedError {
                 write!(fmt, "Compression method {:?} is unsupported", method)
             }
             UnsupportedSampleDepth(samples) => {
-                write!(fmt, "{} samples per pixel is supported.", samples)
+                write!(fmt, "{} samples per pixel is unsupported.", samples)
             }
             UnsupportedColorType(color_type) => {
                 write!(fmt, "Color type {:?} is unsupported", color_type)
