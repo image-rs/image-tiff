@@ -352,30 +352,24 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
             // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => {
-                Ok(ColorType::RGBA(8))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8] => {
-                Ok(ColorType::RGB(8))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16, 16] => {
-                Ok(ColorType::RGBA(16))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16] => {
-                Ok(ColorType::RGB(16))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [32, 32, 32, 32] => {
-                Ok(ColorType::RGBA(32))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [32, 32, 32] => {
-                Ok(ColorType::RGB(32))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [64, 64, 64, 64] => {
-                Ok(ColorType::RGBA(64))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [64, 64, 64] => {
-                Ok(ColorType::RGB(64))
-            }
+            PhotometricInterpretation::RGB  => {
+                match self.bits_per_sample.as_slice() {
+                    [8, 8, 8] => Ok(ColorType::RGB(8)),
+                    [8, 8, 8, 8] => Ok(ColorType::RGBA(8)),
+                    [16, 16, 16] => Ok(ColorType::RGB(16)),
+                    [16, 16, 16, 16] => Ok(ColorType::RGBA(16)),
+                    [32, 32, 32] => Ok(ColorType::RGB(32)),
+                    [32, 32, 32, 32] => Ok(ColorType::RGBA(32)),
+                    [64, 64, 64] => Ok(ColorType::RGB(64)),
+                    [64, 64, 64, 64] => Ok(ColorType::RGBA(64)),
+                    _ => Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::InterpretationWithBits(
+                            self.photometric_interpretation,
+                            self.bits_per_sample.clone(),
+                        ),
+                    )),
+                }
+            },
             PhotometricInterpretation::CMYK if self.bits_per_sample == [8, 8, 8, 8] => {
                 Ok(ColorType::CMYK(8))
             }
