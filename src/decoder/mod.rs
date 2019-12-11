@@ -6,7 +6,7 @@ use std::cmp;
 use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
-use tags::{CompressionMethod, PhotometricInterpretation, Predictor, Tag, Type};
+use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type};
 
 use self::stream::{ByteOrder, EndianReader, LZWReader, DeflateReader, PackBitsReader, SmartReader};
 
@@ -24,6 +24,8 @@ pub enum DecodingResult {
     U32(Vec<u32>),
     /// A vector of 64 bit unsigned ints
     U64(Vec<u64>),
+    /// A vector of 32 bit IEEE floats
+    F32(Vec<f32>),
 }
 
 impl DecodingResult {
@@ -59,12 +61,21 @@ impl DecodingResult {
         }
     }
 
+    fn new_f32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / std::mem::size_of::<f32>() {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::F32(vec![0.0; size]))
+        }
+    }
+
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
             DecodingResult::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[start..]),
             DecodingResult::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[start..]),
+            DecodingResult::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[start..]),
         }
     }
 }
@@ -79,6 +90,8 @@ pub enum DecodingBuffer<'a> {
     U32(&'a mut [u32]),
     /// A slice of 64 bit unsigned ints
     U64(&'a mut [u64]),
+    /// A slice of 32 bit IEEE floats
+    F32(&'a mut [f32]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -88,6 +101,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U16(ref buf) => buf.len(),
             DecodingBuffer::U32(ref buf) => buf.len(),
             DecodingBuffer::U64(ref buf) => buf.len(),
+            DecodingBuffer::F32(ref buf) => buf.len(),
         }
     }
 
@@ -97,6 +111,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U16(_) => 2,
             DecodingBuffer::U32(_) => 4,
             DecodingBuffer::U64(_) => 8,
+            DecodingBuffer::F32(_) => 4,
         }
     }
 
@@ -109,6 +124,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
             DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(buf),
             DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(buf),
+            DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(buf),
         }
     }
 }
@@ -164,6 +180,7 @@ where
     height: u32,
     bits_per_sample: Vec<u8>,
     samples: u8,
+    sample_format: Vec<SampleFormat>,
     photometric_interpretation: PhotometricInterpretation,
     compression_method: CompressionMethod,
     strip_decoder: Option<StripDecodeState>,
@@ -194,6 +211,12 @@ impl Wrapping for u32 {
 impl Wrapping for u64 {
     fn wrapping_add(&self, other: Self) -> Self {
         u64::wrapping_add(*self, other)
+    }
+}
+
+impl Wrapping for f32 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        self + other
     }
 }
 
@@ -238,6 +261,9 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
         DecodingBuffer::U64(buf) => {
             rev_hpredict_nsamp(buf, size, samples)?;
         }
+        DecodingBuffer::F32(buf) => {
+            rev_hpredict_nsamp(buf, size, samples)?;
+        }
     }
     Ok(())
 }
@@ -255,6 +281,7 @@ impl<R: Read + Seek> Decoder<R> {
             height: 0,
             bits_per_sample: vec![1],
             samples: 1,
+            sample_format: vec![SampleFormat::UINT],
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
             strip_decoder: None,
@@ -369,6 +396,18 @@ impl<R: Read + Seek> Decoder<R> {
         }
         if let Some(val) = self.find_tag_unsigned(Tag::SamplesPerPixel)? {
             self.samples = val;
+        }
+        if let Some(vals) = self.find_tag_unsigned_vec(Tag::SampleFormat)? {
+            self.sample_format = vals.iter()
+                .map(|&v| SampleFormat::from_u16(v)
+                    .ok_or_else(|| TiffUnsupportedError::UnsupportedSampleFormat(vals.clone()))
+                )
+                .collect::<Result<_, _>>()?;
+
+            // FIXME: for now, only homogenous formats across samples are supported.
+            if !self.sample_format.windows(2).all(|s| s[0] == s[1]) {
+                return Err(TiffUnsupportedError::UnsupportedSampleFormat(vals).into())
+            }
         }
         match self.samples {
             1 | 3 | 4 => if let Some(val) = self.find_tag_unsigned_vec(Tag::BitsPerSample)? {
@@ -675,6 +714,16 @@ impl<R: Read + Seek> Decoder<R> {
                 }
                 bytes
             }
+            (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
+                reader.read_f32_into(&mut buffer[..bytes / 4])?;
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes / 4].iter_mut() {
+                        // FIXME: assumes [0, 1) range for floats
+                        *datum = 1.0 - *datum
+                    }
+                }
+                bytes / 4
+            }
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
@@ -787,16 +836,28 @@ impl<R: Read + Seek> Decoder<R> {
     fn result_buffer(&self, height: usize) -> TiffResult<DecodingResult> {
         let buffer_size = usize::try_from(self.width)? * height * self.bits_per_sample.len();
 
-        match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
-            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
-            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
-            n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
-            n => {
-                Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                ))
-            }
+        let max_sample_bits = self.bits_per_sample.iter().cloned().max().unwrap_or(8);
+        match self.sample_format.first().unwrap_or(&SampleFormat::UINT) {
+            SampleFormat::UINT => match max_sample_bits {
+                n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
+                n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
+                n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
+                n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
+                n => {
+                    Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                    ))
+                }
+            },
+            SampleFormat::IEEEFP => match max_sample_bits {
+                32 => DecodingResult::new_f32(buffer_size, &self.limits),
+                n => {
+                    Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                    ))
+                }
+            },
+            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format.to_u16()]).into()),
         }
     }
 

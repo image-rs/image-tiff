@@ -114,6 +114,7 @@ pub enum TiffUnsupportedError {
     UnknownCompressionMethod,
     UnsupportedCompressionMethod(CompressionMethod),
     UnsupportedSampleDepth(u8),
+    UnsupportedSampleFormat(Vec<u16>),
     UnsupportedColorType(ColorType),
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),
@@ -147,6 +148,9 @@ impl fmt::Display for TiffUnsupportedError {
             }
             UnsupportedSampleDepth(samples) => {
                 write!(fmt, "{} samples per pixel is unsupported.", samples)
+            }
+            UnsupportedSampleFormat(ref formats) => {
+                write!(fmt, "Sample format {:?} is unsupported.", formats)
             }
             UnsupportedColorType(color_type) => {
                 write!(fmt, "Color type {:?} is unsupported", color_type)
