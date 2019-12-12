@@ -181,7 +181,7 @@ impl Value {
             }
             Unsigned(val) => Ok(vec![val]),
             Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
-            Ascii(val) => Ok(val.chars().map(|x| x as u32).collect()),
+            Ascii(val) => Ok(val.chars().map(u32::from).collect()),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),
