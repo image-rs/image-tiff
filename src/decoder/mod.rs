@@ -864,6 +864,22 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    fn result_buffer(&self, height: usize) -> TiffResult<DecodingResult> {
+        let buffer_size = self.width as usize * height * self.bits_per_sample.iter().count();
+
+        match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
+            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
+            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
+            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
+            n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
+            n => {
+                Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                ))
+            }
+        }
+    }
+
     /// Read a single strip from the image and return it as a Vector
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
         self.initialize_strip_decoder()?;
@@ -878,19 +894,7 @@ impl<R: Read + Seek> Decoder<R> {
             self.height as usize - index * rows_per_strip,
         );
 
-        let buffer_size = self.width as usize * strip_height * self.bits_per_sample.iter().count();
-
-        let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
-            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
-            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits)?,
-            n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits)?,
-            n => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                ))
-            }
-        };
+        let mut result = self.result_buffer(strip_height)?;
 
         self.read_strip_to_buffer(result.as_buffer(0))?;
 
@@ -907,20 +911,7 @@ impl<R: Read + Seek> Decoder<R> {
         let samples_per_strip =
             self.width as usize * rows_per_strip * self.bits_per_sample.iter().count();
 
-        let buffer_size =
-            self.width as usize * self.height as usize * self.bits_per_sample.iter().count();
-
-        let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
-            n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
-            n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
-            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits)?,
-            n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits)?,
-            n => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                ))
-            }
-        };
+        let mut result = self.result_buffer(self.height as usize)?;
 
         for i in 0..self.strip_count()? as usize {
             self.read_strip_to_buffer(result.as_buffer(samples_per_strip * i))?;
