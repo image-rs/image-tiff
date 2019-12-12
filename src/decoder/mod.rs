@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
 use std::cmp;
@@ -427,47 +428,24 @@ impl<R: Read + Seek> Decoder<R> {
         self.width = self.get_tag_u32(ifd::Tag::ImageWidth)?;
         self.height = self.get_tag_u32(ifd::Tag::ImageLength)?;
         self.strip_decoder = None;
-        // TODO: error on non-SHORT value.
-        self.photometric_interpretation = match PhotometricInterpretation::from_u16(
-            self.get_tag_u32(ifd::Tag::PhotometricInterpretation)? as u16
-        ) {
-            Some(val) => val,
-            None => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnknownInterpretation,
-                ))
-            }
-        };
-        // TODO: error on non-SHORT value.
-        if let Some(val) = self.find_tag_u32(ifd::Tag::Compression)? {
-            match CompressionMethod::from_u16(val as u16) {
-                Some(method) => self.compression_method = method,
-                None => {
-                    return Err(TiffError::UnsupportedError(
-                        TiffUnsupportedError::UnknownCompressionMethod,
-                    ))
-                }
-            }
+
+        self.photometric_interpretation = self
+            .find_tag_unsigned(ifd::Tag::PhotometricInterpretation)?
+            .and_then(PhotometricInterpretation::from_u16)
+            .ok_or(TiffUnsupportedError::UnknownInterpretation)?;
+
+        if let Some(val) = self.find_tag_unsigned(ifd::Tag::Compression)? {
+            self.compression_method = CompressionMethod::from_u16(val)
+                .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?;
         }
-        if let Some(val) = self.find_tag_u32(ifd::Tag::SamplesPerPixel)? {
-            self.samples = val as u8
+        if let Some(val) = self.find_tag_unsigned(ifd::Tag::SamplesPerPixel)? {
+            self.samples = val;
         }
         match self.samples {
-            1 => {
-                if let Some(val) = self.find_tag_u32(ifd::Tag::BitsPerSample)? {
-                    self.bits_per_sample = vec![val as u8]
-                }
-            }
-            3 | 4 => {
-                if let Some(val) = self.find_tag_u32_vec(ifd::Tag::BitsPerSample)? {
-                    self.bits_per_sample = val.iter().map(|&v| v as u8).collect()
-                }
-            }
-            _ => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedSampleDepth(self.samples),
-                ))
-            }
+            1 | 3 | 4 => if let Some(val) = self.find_tag_unsigned_vec(ifd::Tag::BitsPerSample)? {
+                self.bits_per_sample = val;
+            },
+            _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
         }
         Ok(())
     }
@@ -606,20 +584,31 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(Some(entry.val(&limits, self)?))
     }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn find_tag_u32(&mut self, tag: ifd::Tag) -> TiffResult<Option<u32>> {
-        match self.find_tag(tag)? {
-            Some(val) => val.into_u32().map(Some),
-            None => Ok(None),
-        }
+    /// Tries to retrieve a tag and convert it to the desired unsigned type.
+    pub fn find_tag_unsigned<T: TryFrom<u32>>(&mut self, tag: ifd::Tag) -> TiffResult<Option<T>> {
+        self.find_tag(tag)?
+            .map(|v| v.into_u32()).transpose()?
+            .map(|value| T::try_from(value)
+                .map_err(|_| TiffFormatError::InvalidTagValueType(tag).into()))
+            .transpose()
     }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn find_tag_u32_vec(&mut self, tag: ifd::Tag) -> TiffResult<Option<Vec<u32>>> {
-        match self.find_tag(tag)? {
-            Some(val) => val.into_u32_vec().map(Some),
-            None => Ok(None),
-        }
+    /// Tries to retrieve a vector of all a tag's values and convert them to
+    /// the desired unsigned type.
+    pub fn find_tag_unsigned_vec<T: TryFrom<u32>>(&mut self, tag: ifd::Tag) -> TiffResult<Option<Vec<T>>> {
+        self.find_tag(tag)?
+            .map(|v| v.into_u32_vec()).transpose()?
+            .map(|v| v.into_iter()
+                .map(|u| T::try_from(u).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into()))
+                .collect())
+            .transpose()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired unsigned type.
+    /// Returns an error if the tag is not present.
+    pub fn get_tag_unsigned<T: TryFrom<u32>>(&mut self, tag: ifd::Tag) -> TiffResult<T> {
+        self.find_tag_unsigned(tag)?
+            .ok_or_else(|| TiffFormatError::RequiredTagNotFound(tag).into())
     }
 
     /// Tries to retrieve a tag.
@@ -842,9 +831,8 @@ impl<R: Read + Seek> Decoder<R> {
                 TiffFormatError::InconsistentSizesEncountered,
             ));
         }
-        if let Ok(predictor) = self.get_tag_u32(ifd::Tag::Predictor) {
-            // TODO: error on non-SHORT value.
-            match Predictor::from_u16(predictor as u16) {
+        if let Ok(predictor) = self.get_tag_unsigned(ifd::Tag::Predictor) {
+            match Predictor::from_u16(predictor) {
                 Some(Predictor::None) => (),
                 Some(Predictor::Horizontal) => {
                     rev_hpredict(
