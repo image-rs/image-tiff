@@ -865,7 +865,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn result_buffer(&self, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = self.width as usize * height * self.bits_per_sample.iter().count();
+        let buffer_size = self.width as usize * height * self.bits_per_sample.len();
 
         match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
@@ -909,7 +909,7 @@ impl<R: Read + Seek> Decoder<R> {
             .unwrap_or(self.height) as usize;
 
         let samples_per_strip =
-            self.width as usize * rows_per_strip * self.bits_per_sample.iter().count();
+            self.width as usize * rows_per_strip * self.bits_per_sample.len();
 
         let mut result = self.result_buffer(self.height as usize)?;
 
