@@ -9,6 +9,30 @@ use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational};
 
+pub(crate) mod seals {
+    pub trait TagConversion<T>: Sized {
+        fn __from_inner_type(T) -> Result<Self, T>;
+
+        fn __to_inner_type(&self) -> T;
+    }
+}
+
+pub trait U16Tag: Sized {
+    fn from_u16(val: u16) -> Option<Self>;
+
+    fn to_u16(&self) -> u16;
+}
+
+impl<T: seals::TagConversion<u16>> U16Tag for T {
+    fn from_u16(val: u16) -> Option<Self> {
+        Self::__from_inner_type(val).ok()
+    }
+
+    fn to_u16(&self) -> u16 {
+        Self::__to_inner_type(self)
+    }
+}
+
 macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
@@ -31,7 +55,7 @@ macro_rules! tags {
             )*
         }
 
-        impl $name {
+        impl ::decoder::ifd::seals::TagConversion<$ty> for $name {
             #[inline(always)]
             fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
                 match n {
@@ -101,12 +125,8 @@ pub enum Tag(u16) unknown("A private or extension tag") {
 }
 
 impl Tag {
-    pub fn from_u16(val: u16) -> Self {
-        Self::__from_inner_type(val).unwrap_or_else(Tag::Unknown)
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
+    pub fn from_u16_exhaustive(val: u16) -> Self {
+        Self::from_u16(val).unwrap_or_else(|| Tag::Unknown(val))
     }
 }
 
@@ -125,16 +145,6 @@ pub enum Type(u16) {
     /// BigTIFF 64-bit unsigned integer
     LONG8 = 16,
 }
-}
-
-impl Type {
-    pub fn from_u16(val: u16) -> Option<Self> {
-        Self::__from_inner_type(val).ok()
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
 }
 
 

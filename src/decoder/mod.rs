@@ -5,7 +5,7 @@ use std::cmp;
 
 use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
-use self::ifd::Directory;
+use self::ifd::{Directory, U16Tag};
 
 use self::stream::{ByteOrder, EndianReader, LZWReader, DeflateReader, PackBitsReader, SmartReader};
 
@@ -152,46 +152,6 @@ enum Predictor(u16) {
     None = 1,
     Horizontal = 2,
 }
-}
-
-impl PhotometricInterpretation {
-    pub fn from_u16(val: u16) -> Option<Self> {
-        Self::__from_inner_type(val).ok()
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
-}
-
-impl CompressionMethod {
-    pub fn from_u16(val: u16) -> Option<Self> {
-        Self::__from_inner_type(val).ok()
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
-}
-
-impl PlanarConfiguration {
-    pub fn from_u16(val: u16) -> Option<Self> {
-        Self::__from_inner_type(val).ok()
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
-}
-
-impl Predictor {
-    pub fn from_u16(val: u16) -> Option<Self> {
-        Self::__from_inner_type(val).ok()
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
 }
 
 #[derive(Debug)]
@@ -526,7 +486,7 @@ impl<R: Read + Seek> Decoder<R> {
     // Count 4 bytes
     // Value 4 bytes either a pointer the value itself
     fn read_entry(&mut self) -> TiffResult<Option<(ifd::Tag, ifd::Entry)>> {
-        let tag = ifd::Tag::from_u16(self.read_short()?);
+        let tag = ifd::Tag::from_u16_exhaustive(self.read_short()?);
         let type_ = match ifd::Type::from_u16(self.read_short()?) {
             Some(t) => t,
             None => {

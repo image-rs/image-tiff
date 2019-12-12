@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::io::{Seek, Write};
 use std::mem;
 
-use decoder::ifd::{self, Tag};
+use decoder::ifd::{self, Tag, U16Tag};
 use error::{TiffError, TiffFormatError, TiffResult};
 
 pub mod colortype;
