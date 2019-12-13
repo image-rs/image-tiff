@@ -587,7 +587,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
         encoder.write_tag(Tag::ImageWidth, width);
         encoder.write_tag(Tag::ImageLength, height);
-        encoder.write_tag(Tag::Compression, 1u16);
+        encoder.write_tag(Tag::Compression, tags::CompressionMethod::None.to_u16());
 
         encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE);
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16());
@@ -597,7 +597,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         encoder.write_tag(Tag::SamplesPerPixel, <T>::BITS_PER_SAMPLE.len() as u16);
         encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 });
         encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 });
-        encoder.write_tag(Tag::ResolutionUnit, 1u16);
+        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16());
 
         Ok(ImageEncoder {
             encoder,
@@ -651,14 +651,14 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     /// Set image resolution
     pub fn resolution(&mut self, unit: ResolutionUnit, value: Rational) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit as u16);
+        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16());
         self.encoder.write_tag(Tag::XResolution, value.clone());
         self.encoder.write_tag(Tag::YResolution, value);
     }
 
     /// Set image resolution unit
     pub fn resolution_unit(&mut self, unit: ResolutionUnit) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit as u16);
+        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16());
     }
 
     /// Set image x-resolution
