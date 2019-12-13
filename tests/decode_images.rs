@@ -106,7 +106,7 @@ fn test_string_tags() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
         let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-        let software = decoder.get_tag(ifd::Tag::Software).unwrap();
+        let software = decoder.get_tag(tiff::tags::Tag::Software).unwrap();
         match software {
             ifd::Value::Ascii(s) => assert_eq!(
                 &s,

@@ -1,4 +1,4 @@
-use decoder::PhotometricInterpretation;
+use tags::PhotometricInterpretation;
 
 /// Trait for different colortypes that can be encoded.
 pub trait ColorType {

@@ -1,9 +1,9 @@
 extern crate tiff;
 
 use tiff::decoder::{Decoder, DecodingResult};
-use tiff::decoder::ifd::Tag;
 use tiff::encoder::{colortype, TiffEncoder, SRational};
 use tiff::ColorType;
+use tiff::tags::Tag;
 
 use std::fs::File;
 use std::io::{Cursor, Seek, SeekFrom};

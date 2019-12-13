@@ -3,8 +3,8 @@ use std::fmt;
 use std::io;
 use std::string;
 
-use decoder::ifd::{Tag, Value};
-use decoder::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration};
+use decoder::ifd::{Value};
+use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Tag};
 use miniz_oxide::inflate::TINFLStatus;
 use ColorType;
 

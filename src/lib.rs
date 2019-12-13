@@ -13,6 +13,7 @@ extern crate miniz_oxide;
 pub mod decoder;
 pub mod encoder;
 mod error;
+pub mod tags;
 
 pub use self::error::{InflateError, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
