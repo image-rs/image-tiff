@@ -45,6 +45,18 @@ fn test_rgb_u8() {
 }
 
 #[test]
+fn test_gray_u12() {
+    let img_file =
+        File::open("./tests/images/12bit.cropped.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(12));
+    assert!(match decoder.read_image() {
+        Err(tiff::TiffError::UnsupportedError(tiff::TiffUnsupportedError::UnsupportedColorType(_))) => true,
+        _ => false,
+    });
+}
+
+#[test]
 fn test_gray_u16() {
     let img_file =
         File::open("./tests/images/minisblack-1c-16b.tiff").expect("Cannot find test image!");
@@ -102,6 +114,18 @@ fn test_gray_u64() {
     else {
         panic!("Wrong bit depth")
     }
+}
+
+#[test]
+fn test_rgb_u12() {
+    let img_file =
+        File::open("./tests/images/12bit.cropped.rgb.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(12));
+    assert!(match decoder.read_image() {
+        Err(tiff::TiffError::UnsupportedError(tiff::TiffUnsupportedError::UnsupportedColorType(_))) => true,
+        _ => false,
+    });
 }
 
 #[test]
