@@ -351,7 +351,6 @@ impl<R: Read + Seek> Decoder<R> {
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
-            // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
             PhotometricInterpretation::RGB  => {
                 match self.bits_per_sample[..] {
                     [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
