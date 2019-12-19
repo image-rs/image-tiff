@@ -178,6 +178,128 @@ fn test_rgb_u16_roundtrip() {
 }
 
 #[test]
+fn test_gray_u32_roundtrip() {
+    let img_file =
+        File::open("./tests/images/gradient-1c-32b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(32));
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U32(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::Gray32>(width, height, &image_data)
+            .unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U32(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+#[test]
+fn test_rgb_u32_roundtrip() {
+    let img_file = File::open("./tests/images/gradient-3c-32b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(32));
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U32(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::RGB32>(width, height, &image_data)
+            .unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U32(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+#[test]
+fn test_gray_u64_roundtrip() {
+    let img_file =
+        File::open("./tests/images/gradient-1c-64b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(64));
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U64(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::Gray64>(width, height, &image_data)
+            .unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U64(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+#[test]
+fn test_rgb_u64_roundtrip() {
+    let img_file = File::open("./tests/images/gradient-3c-64b.tiff").expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(64));
+
+    let image_data = match decoder.read_image().unwrap() {
+        DecodingResult::U64(res) => res,
+        _ => panic!("Wrong data type"),
+    };
+
+    let mut file = tempfile::tempfile().unwrap();
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+
+        let (width, height) = decoder.dimensions().unwrap();
+        tiff.write_image::<colortype::RGB64>(width, height, &image_data)
+            .unwrap();
+    }
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        if let DecodingResult::U64(img_res) = decoder.read_image().unwrap() {
+            assert_eq!(image_data, img_res);
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+#[test]
 fn test_multiple_byte() {
     let mut data = Cursor::new(Vec::new());
 
@@ -273,10 +395,10 @@ fn test_multipage_image() {
 
         // write first grayscale image (2x2 16-bit)
         let img1: Vec<u16> = [1, 2, 3, 4].to_vec();
-        img_encoder.write_image::<colortype::Gray16>(2, 2, &img1[..]);
+        img_encoder.write_image::<colortype::Gray16>(2, 2, &img1[..]).unwrap();
         // write second grayscale image (3x3 8-bit)
         let img2: Vec<u8> = [9, 8, 7, 6, 5, 4, 3, 2, 1].to_vec();
-        img_encoder.write_image::<colortype::Gray8>(3, 3, &img2[..]);
+        img_encoder.write_image::<colortype::Gray8>(3, 3, &img2[..]).unwrap();
     }
 
     // seek to the beginning of the file, so that it can be decoded

@@ -19,6 +19,10 @@ pub enum DecodingResult {
     U8(Vec<u8>),
     /// A vector of unsigned words
     U16(Vec<u16>),
+    /// A vector of 32 bit unsigned ints
+    U32(Vec<u32>),
+    /// A vector of 64 bit unsigned ints
+    U64(Vec<u64>),
 }
 
 impl DecodingResult {
@@ -38,10 +42,28 @@ impl DecodingResult {
         }
     }
 
+    fn new_u32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / 4 {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::U32(vec![0; size]))
+        }
+    }
+
+    fn new_u64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / 8 {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::U64(vec![0; size]))
+        }
+    }
+
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
+            DecodingResult::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[start..]),
+            DecodingResult::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[start..]),
         }
     }
 }
@@ -52,6 +74,10 @@ pub enum DecodingBuffer<'a> {
     U8(&'a mut [u8]),
     /// A slice of unsigned words
     U16(&'a mut [u16]),
+    /// A slice of 32 bit unsigned ints
+    U32(&'a mut [u32]),
+    /// A slice of 64 bit unsigned ints
+    U64(&'a mut [u64]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -59,6 +85,8 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref buf) => buf.len(),
             DecodingBuffer::U16(ref buf) => buf.len(),
+            DecodingBuffer::U32(ref buf) => buf.len(),
+            DecodingBuffer::U64(ref buf) => buf.len(),
         }
     }
 
@@ -66,6 +94,8 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(_) => 1,
             DecodingBuffer::U16(_) => 2,
+            DecodingBuffer::U32(_) => 4,
+            DecodingBuffer::U64(_) => 8,
         }
     }
 
@@ -76,6 +106,8 @@ impl<'a> DecodingBuffer<'a> {
         match *self {
             DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
+            DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(buf),
+            DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(buf),
         }
     }
 }
@@ -233,6 +265,18 @@ impl Wrapping for u16 {
     }
 }
 
+impl Wrapping for u32 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        u32::wrapping_add(*self, other)
+    }
+}
+
+impl Wrapping for u64 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        u64::wrapping_add(*self, other)
+    }
+}
+
 fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize)
 where
     T: Copy + Wrapping,
@@ -250,9 +294,9 @@ where
 
 fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) -> TiffResult<()> {
     let samples = match color_type {
-        ColorType::Gray(8) | ColorType::Gray(16) => 1,
-        ColorType::RGB(8) | ColorType::RGB(16) => 3,
-        ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::CMYK(8) => 4,
+        ColorType::Gray(8) | ColorType::Gray(16) | ColorType::Gray(32) | ColorType::Gray(64) => 1,
+        ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) | ColorType::RGB(64) => 3,
+        ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::RGBA(32) | ColorType::RGBA(64) | ColorType::CMYK(8) => 4,
         _ => {
             return Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::HorizontalPredictor(color_type),
@@ -264,6 +308,12 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
             rev_hpredict_nsamp(buf, size, samples);
         }
         DecodingBuffer::U16(buf) => {
+            rev_hpredict_nsamp(buf, size, samples);
+        }
+        DecodingBuffer::U32(buf) => {
+            rev_hpredict_nsamp(buf, size, samples);
+        }
+        DecodingBuffer::U64(buf) => {
             rev_hpredict_nsamp(buf, size, samples);
         }
     }
@@ -301,19 +351,18 @@ impl<R: Read + Seek> Decoder<R> {
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
-            // TODO: catch also [ 8, 8, 8, _] this does not work due to a bug in rust atm
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8, 8] => {
-                Ok(ColorType::RGBA(8))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [8, 8, 8] => {
-                Ok(ColorType::RGB(8))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16, 16] => {
-                Ok(ColorType::RGBA(16))
-            }
-            PhotometricInterpretation::RGB if self.bits_per_sample == [16, 16, 16] => {
-                Ok(ColorType::RGB(16))
-            }
+            PhotometricInterpretation::RGB  => {
+                match self.bits_per_sample[..] {
+                    [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
+                    [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
+                    _ => Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::InterpretationWithBits(
+                            self.photometric_interpretation,
+                            self.bits_per_sample.clone(),
+                        ),
+                    )),
+                }
+            },
             PhotometricInterpretation::CMYK if self.bits_per_sample == [8, 8, 8, 8] => {
                 Ok(ColorType::CMYK(8))
             }
@@ -659,6 +708,34 @@ impl<R: Read + Seek> Decoder<R> {
                 reader.read_u16_into(&mut buffer[..bytes / 2])?;
                 bytes / 2
             }
+            (ColorType::RGBA(32), DecodingBuffer::U32(ref mut buffer))
+            | (ColorType::RGB(32), DecodingBuffer::U32(ref mut buffer)) => {
+                reader.read_u32_into(&mut buffer[..bytes / 4])?;
+                bytes / 4
+            }
+            (ColorType::RGBA(64), DecodingBuffer::U64(ref mut buffer))
+            | (ColorType::RGB(64), DecodingBuffer::U64(ref mut buffer)) => {
+                reader.read_u64_into(&mut buffer[..bytes / 8])?;
+                bytes / 8
+            }
+            (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
+                reader.read_u64_into(&mut buffer[..bytes / 8])?;
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes / 8].iter_mut() {
+                        *datum = 0xffff_ffff_ffff_ffff - *datum
+                    }
+                }
+                bytes / 8
+            }
+            (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
+                reader.read_u32_into(&mut buffer[..bytes / 4])?;
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes / 4].iter_mut() {
+                        *datum = 0xffff_ffff - *datum
+                    }
+                }
+                bytes / 4
+            }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
                 reader.read_u16_into(&mut buffer[..bytes / 2])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -806,6 +883,8 @@ impl<R: Read + Seek> Decoder<R> {
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
             n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
+            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits)?,
+            n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits)?,
             n => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
@@ -834,6 +913,8 @@ impl<R: Read + Seek> Decoder<R> {
         let mut result = match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits)?,
             n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits)?,
+            n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits)?,
+            n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits)?,
             n => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
