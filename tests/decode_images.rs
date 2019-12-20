@@ -48,6 +48,11 @@ fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
 }
 
 #[test]
+fn test_cmyk_u8() {
+    test_image_sum_u8("cmyk-3c-8b.tiff", ColorType::CMYK(8), 8522658);
+}
+
+#[test]
 fn test_gray_u8() {
     test_image_sum_u8("minisblack-1c-8b.tiff", ColorType::Gray(8), 2840893);
 }
