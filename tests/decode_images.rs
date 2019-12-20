@@ -53,6 +53,11 @@ fn test_cmyk_u8() {
 }
 
 #[test]
+fn test_cmyk_u16() {
+    test_image_sum_u16("cmyk-3c-16b.tiff", ColorType::CMYK(16), 2181426827);
+}
+
+#[test]
 fn test_gray_u8() {
     test_image_sum_u8("minisblack-1c-8b.tiff", ColorType::Gray(8), 2840893);
 }
