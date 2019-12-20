@@ -144,11 +144,11 @@ fn test_multiple_byte() {
         let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
         let encoder = image_encoder.encoder();
 
-        encoder.write_tag(Tag::Unknown(65000), &[1_u8][..]);
-        encoder.write_tag(Tag::Unknown(65001), &[1_u8, 2][..]);
-        encoder.write_tag(Tag::Unknown(65002), &[1_u8, 2, 3][..]);
-        encoder.write_tag(Tag::Unknown(65003), &[1_u8, 2, 3, 4][..]);
-        encoder.write_tag(Tag::Unknown(65004), &[1_u8, 2, 3, 4, 5][..]);
+        encoder.write_tag(Tag::Unknown(65000), &[1_u8][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65001), &[1_u8, 2][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65002), &[1_u8, 2, 3][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65003), &[1_u8, 2, 3, 4][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65004), &[1_u8, 2, 3, 4, 5][..]).unwrap();
     }
 
     data.set_position(0);
@@ -174,24 +174,24 @@ fn test_signed() {
         let encoder = image_encoder.encoder();
 
         //Use the "reusable" tags section as per the TIFF6 spec
-        encoder.write_tag(Tag::Unknown(65000), -1_i8);
-        encoder.write_tag(Tag::Unknown(65001), &[-1_i8][..]);
-        encoder.write_tag(Tag::Unknown(65002), &[-1_i8, 2][..]);
-        encoder.write_tag(Tag::Unknown(65003), &[-1_i8, 2, -3][..]);
-        encoder.write_tag(Tag::Unknown(65004), &[-1_i8, 2, -3, 4][..]);
-        encoder.write_tag(Tag::Unknown(65005), &[-1_i8, 2, -3, 4, -5][..]);
+        encoder.write_tag(Tag::Unknown(65000), -1_i8).unwrap();
+        encoder.write_tag(Tag::Unknown(65001), &[-1_i8][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65002), &[-1_i8, 2][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65003), &[-1_i8, 2, -3][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65004), &[-1_i8, 2, -3, 4][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65005), &[-1_i8, 2, -3, 4, -5][..]).unwrap();
 
-        encoder.write_tag(Tag::Unknown(65010), -1_i16);
-        encoder.write_tag(Tag::Unknown(65011), -1_i16);
-        encoder.write_tag(Tag::Unknown(65012), &[-1_i16, 2][..]);
-        encoder.write_tag(Tag::Unknown(65013), &[-1_i16, 2, -3][..]);
+        encoder.write_tag(Tag::Unknown(65010), -1_i16).unwrap();
+        encoder.write_tag(Tag::Unknown(65011), -1_i16).unwrap();
+        encoder.write_tag(Tag::Unknown(65012), &[-1_i16, 2][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65013), &[-1_i16, 2, -3][..]).unwrap();
 
-        encoder.write_tag(Tag::Unknown(65020), -1_i32);
-        encoder.write_tag(Tag::Unknown(65021), &[-1_i32][..]);
-        encoder.write_tag(Tag::Unknown(65022), &[-1_i32, 2][..]);
+        encoder.write_tag(Tag::Unknown(65020), -1_i32).unwrap();
+        encoder.write_tag(Tag::Unknown(65021), &[-1_i32][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65022), &[-1_i32, 2][..]).unwrap();
 
-        encoder.write_tag(Tag::Unknown(65030), SRational { n: -1, d: 100 });
-        encoder.write_tag(Tag::Unknown(65031), &[SRational { n: -1, d: 100 }, SRational { n: 2, d: 100 }][..]);
+        encoder.write_tag(Tag::Unknown(65030), SRational { n: -1, d: 100 }).unwrap();
+        encoder.write_tag(Tag::Unknown(65031), &[SRational { n: -1, d: 100 }, SRational { n: 2, d: 100 }][..]).unwrap();
     }
 
     //Rewind the cursor for reading

@@ -1,6 +1,7 @@
 //! Function for reading TIFF tags
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 use std::mem;
 
@@ -193,11 +194,12 @@ impl Entry {
                 ))
             }),
             (Type::ASCII, n) => {
-                if n as usize > limits.decoding_buffer_size {
+                let n = usize::try_from(n)?;
+                if n > limits.decoding_buffer_size {
                     return Err(TiffError::LimitsExceeded);
                 }
                 decoder.goto_offset(self.r(bo).read_u32()?)?;
-                let string = decoder.read_string(n as usize)?;
+                let string = decoder.read_string(n)?;
                 Ok(Ascii(string))
             }
             _ => Err(TiffError::UnsupportedError(
@@ -212,11 +214,12 @@ impl Entry {
             R: Read + Seek,
             F: Fn(&mut super::Decoder<R>) -> TiffResult<Value>,
     {
-        if value_count as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
+        let value_count = usize::try_from(value_count)?;
+        if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
             return Err(TiffError::LimitsExceeded);
         }
 
-        let mut v = Vec::with_capacity(value_count as usize);
+        let mut v = Vec::with_capacity(value_count);
         decoder.goto_offset(self.r(bo).read_u32()?)?;
         for _ in 0..value_count {
             v.push(decode_fn(decoder)?)

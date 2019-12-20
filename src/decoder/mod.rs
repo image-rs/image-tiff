@@ -197,12 +197,12 @@ impl Wrapping for u64 {
     }
 }
 
-fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize)
+fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize) -> TiffResult<()>
 where
     T: Copy + Wrapping,
 {
-    let width = size.0 as usize;
-    let height = size.1 as usize;
+    let width = usize::try_from(size.0)?;
+    let height = usize::try_from(size.1)?;
     for row in 0..height {
         for col in samples..width * samples {
             let prev_pixel = image[(row * width * samples + col - samples)];
@@ -210,6 +210,7 @@ where
             *pixel = pixel.wrapping_add(prev_pixel);
         }
     }
+    Ok(())
 }
 
 fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) -> TiffResult<()> {
@@ -226,16 +227,16 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
     };
     match image {
         DecodingBuffer::U8(buf) => {
-            rev_hpredict_nsamp(buf, size, samples);
+            rev_hpredict_nsamp(buf, size, samples)?;
         }
         DecodingBuffer::U16(buf) => {
-            rev_hpredict_nsamp(buf, size, samples);
+            rev_hpredict_nsamp(buf, size, samples)?;
         }
         DecodingBuffer::U32(buf) => {
-            rev_hpredict_nsamp(buf, size, samples);
+            rev_hpredict_nsamp(buf, size, samples)?;
         }
         DecodingBuffer::U64(buf) => {
-            rev_hpredict_nsamp(buf, size, samples);
+            rev_hpredict_nsamp(buf, size, samples)?;
         }
     }
     Ok(())
@@ -575,14 +576,14 @@ impl<R: Read + Seek> Decoder<R> {
             CompressionMethod::None => {
                 let order = self.reader.byte_order;
                 (
-                    length as usize,
+                    usize::try_from(length)?,
                     Box::new(SmartReader::wrap(&mut self.reader, order)),
                 )
             }
             CompressionMethod::LZW => {
                 let (bytes, reader) = LZWReader::new(
                     &mut self.reader,
-                    length as usize,
+                    usize::try_from(length)?,
                     max_uncompressed_length
                 )?;
                 (bytes, Box::new(reader))
@@ -592,7 +593,7 @@ impl<R: Read + Seek> Decoder<R> {
                 let (bytes, reader) = PackBitsReader::new(
                     &mut self.reader,
                     order,
-                    length as usize
+                    usize::try_from(length)?,
                 )?;
                 (bytes, Box::new(reader))
             }
@@ -732,18 +733,18 @@ impl<R: Read + Seek> Decoder<R> {
                 TiffFormatError::InconsistentSizesEncountered,
             ))?;
 
-        let rows_per_strip = self
+        let rows_per_strip = usize::try_from(self
             .get_tag_u32(Tag::RowsPerStrip)
-            .unwrap_or(self.height) as usize;
+            .unwrap_or(self.height))?;
 
         let strip_height = cmp::min(
             rows_per_strip,
-            self.height as usize - index * rows_per_strip,
+            usize::try_from(self.height)? - index * rows_per_strip,
         );
 
-        let buffer_size = self.width as usize * strip_height * self.bits_per_sample.len();
+        let buffer_size = usize::try_from(self.width)? * strip_height * self.bits_per_sample.len();
 
-        if buffer.len() < buffer_size || byte_count as usize / buffer.byte_len() > buffer_size {
+        if buffer.len() < buffer_size || usize::try_from(byte_count)? / buffer.byte_len() > buffer_size {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
@@ -753,7 +754,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         self.strip_decoder.as_mut().unwrap().strip_index += 1;
 
-        if index as u32 == self.strip_count()? {
+        if u32::try_from(index)? == self.strip_count()? {
             self.strip_decoder = None;
         }
 
@@ -768,7 +769,7 @@ impl<R: Read + Seek> Decoder<R> {
                 Some(Predictor::Horizontal) => {
                     rev_hpredict(
                         buffer.copy(),
-                        (self.width, strip_height as u32),
+                        (self.width, u32::try_from(strip_height)?),
                         self.colortype()?,
                     )?;
                 }
@@ -784,7 +785,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn result_buffer(&self, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = self.width as usize * height * self.bits_per_sample.len();
+        let buffer_size = usize::try_from(self.width)? * height * self.bits_per_sample.len();
 
         match self.bits_per_sample.iter().cloned().max().unwrap_or(8) {
             n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
@@ -804,13 +805,13 @@ impl<R: Read + Seek> Decoder<R> {
         self.initialize_strip_decoder()?;
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
 
-        let rows_per_strip = self
+        let rows_per_strip = usize::try_from(self
             .get_tag_u32(Tag::RowsPerStrip)
-            .unwrap_or(self.height) as usize;
+            .unwrap_or(self.height))?;
 
         let strip_height = cmp::min(
             rows_per_strip,
-            self.height as usize - index * rows_per_strip,
+            usize::try_from(self.height)? - index * rows_per_strip,
         );
 
         let mut result = self.result_buffer(strip_height)?;
@@ -823,16 +824,16 @@ impl<R: Read + Seek> Decoder<R> {
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         self.initialize_strip_decoder()?;
-        let rows_per_strip = self
+        let rows_per_strip = usize::try_from(self
             .get_tag_u32(Tag::RowsPerStrip)
-            .unwrap_or(self.height) as usize;
+            .unwrap_or(self.height))?;
 
         let samples_per_strip =
-            self.width as usize * rows_per_strip * self.bits_per_sample.len();
+            usize::try_from(self.width)? * rows_per_strip * self.bits_per_sample.len();
 
-        let mut result = self.result_buffer(self.height as usize)?;
+        let mut result = self.result_buffer(usize::try_from(self.height)?)?;
 
-        for i in 0..self.strip_count()? as usize {
+        for i in 0..usize::try_from(self.strip_count()?)? {
             self.read_strip_to_buffer(result.as_buffer(samples_per_strip * i))?;
         }
 

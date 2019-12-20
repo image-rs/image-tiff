@@ -1,5 +1,6 @@
 use byteorder::NativeEndian;
 use std::collections::BTreeMap;
+use std::convert::TryFrom;
 use std::io::{Seek, Write};
 use std::mem;
 
@@ -406,7 +407,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
     where
         [C::Inner]: TiffValue,
     {
-        let num_pix = (width as usize).checked_mul(height as usize)
+        let num_pix = usize::try_from(width)?.checked_mul(usize::try_from(height)?)
             .ok_or_else(|| ::std::io::Error::new(
                 ::std::io::ErrorKind::InvalidInput,
                 "Image width * height exceeds usize"))?;
@@ -421,7 +422,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
 
         let mut idx = 0;
         while image.next_strip_sample_count() > 0 {
-            let sample_count = image.next_strip_sample_count() as usize;
+            let sample_count = usize::try_from(image.next_strip_sample_count())?;
             image.write_strip(&data[idx..idx + sample_count])?;
             idx += sample_count;
         }
@@ -444,7 +445,7 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek> {
 impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
     fn new(writer: &'a mut TiffWriter<W>) -> TiffResult<DirectoryEncoder<'a, W>> {
         // the previous word is the IFD offset position
-        let ifd_pointer_pos = writer.offset() - mem::size_of::<u32>() as u64;
+        let ifd_pointer_pos = writer.offset() - u64::try_from(mem::size_of::<u32>())?;
         writer.pad_word_boundary()?;
         Ok(DirectoryEncoder {
             writer,
@@ -455,16 +456,18 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
     }
 
     /// Write a single ifd tag.
-    pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) {
+    pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
         let len = <T>::BYTE_LEN * value.count();
-        let mut bytes = Vec::with_capacity(len as usize);
+        let mut bytes = Vec::with_capacity(usize::try_from(len)?);
         {
             let mut writer = TiffWriter::new(&mut bytes);
-            value.write(&mut writer).unwrap();
+            value.write(&mut writer)?;
         }
 
         self.ifd
             .insert(tag.to_u16(), (<T>::FIELD_TYPE.to_u16(), value.count(), bytes));
+
+        Ok(())
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
@@ -475,7 +478,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
                 self.writer.write_bytes(bytes)?;
                 *bytes = vec![0, 0, 0, 0];
                 let mut writer = TiffWriter::new(bytes as &mut [u8]);
-                writer.write_u32(offset as u32)?;
+                writer.write_u32(u32::try_from(offset)?)?;
             } else {
                 while bytes.len() < 4 {
                     bytes.push(0);
@@ -485,7 +488,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
         let offset = self.writer.offset();
 
-        self.writer.write_u16(self.ifd.len() as u16)?;
+        self.writer.write_u16(u16::try_from(self.ifd.len())?)?;
         for (tag, &(ref field_type, ref count, ref offset)) in self.ifd.iter() {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(*field_type)?;
@@ -510,7 +513,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
         let curr_pos = self.writer.offset();
 
         self.writer.goto_offset(self.ifd_pointer_pos)?;
-        self.writer.write_u32(ifd_pointer as u32)?;
+        self.writer.write_u32(u32::try_from(ifd_pointer)?)?;
         self.writer.goto_offset(curr_pos)?;
         self.writer.write_u32(0)?;
 
@@ -577,7 +580,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         width: u32,
         height: u32,
     ) -> TiffResult<ImageEncoder<'a, W, T>> {
-        let row_samples = u64::from(width) * <T>::BITS_PER_SAMPLE.len() as u64;
+        let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
         // As per tiff spec each strip should be about 8k long
@@ -585,19 +588,19 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
         let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
 
-        encoder.write_tag(Tag::ImageWidth, width);
-        encoder.write_tag(Tag::ImageLength, height);
-        encoder.write_tag(Tag::Compression, tags::CompressionMethod::None.to_u16());
+        encoder.write_tag(Tag::ImageWidth, width)?;
+        encoder.write_tag(Tag::ImageLength, height)?;
+        encoder.write_tag(Tag::Compression, tags::CompressionMethod::None.to_u16())?;
 
-        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE);
-        encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16());
+        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
+        encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
 
-        encoder.write_tag(Tag::RowsPerStrip, rows_per_strip as u32);
+        encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
 
-        encoder.write_tag(Tag::SamplesPerPixel, <T>::BITS_PER_SAMPLE.len() as u16);
-        encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 });
-        encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 });
-        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16());
+        encoder.write_tag(Tag::SamplesPerPixel, u16::try_from(<T>::BITS_PER_SAMPLE.len())?)?;
+        encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
+        encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
+        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
 
         Ok(ImageEncoder {
             encoder,
@@ -635,15 +638,15 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     {
         // TODO: Compression
         let samples = self.next_strip_sample_count();
-        if value.len() as u64 != samples {
+        if u64::try_from(value.len())? != samples {
             return Err(::std::io::Error::new(
                 ::std::io::ErrorKind::InvalidData,
                 "Slice is wrong size for strip").into());
         }
 
         let offset = self.encoder.write_data(value)?;
-        self.strip_offsets.push(offset as u32);
-        self.strip_byte_count.push(value.bytes() as u32);
+        self.strip_offsets.push(u32::try_from(offset)?);
+        self.strip_byte_count.push(value.bytes());
 
         self.strip_idx += 1;
         Ok(())
@@ -651,31 +654,31 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     /// Set image resolution
     pub fn resolution(&mut self, unit: ResolutionUnit, value: Rational) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16());
-        self.encoder.write_tag(Tag::XResolution, value.clone());
-        self.encoder.write_tag(Tag::YResolution, value);
+        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
+        self.encoder.write_tag(Tag::XResolution, value.clone()).unwrap();
+        self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
     /// Set image resolution unit
     pub fn resolution_unit(&mut self, unit: ResolutionUnit) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16());
+        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
     }
 
     /// Set image x-resolution
     pub fn x_resolution(&mut self, value: Rational) {
-        self.encoder.write_tag(Tag::XResolution, value);
+        self.encoder.write_tag(Tag::XResolution, value).unwrap();
     }
 
     /// Set image y-resolution
     pub fn y_resolution(&mut self, value: Rational) {
-        self.encoder.write_tag(Tag::YResolution, value);
+        self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
     fn finish_internal(&mut self) -> TiffResult<()> {
         self.encoder
-            .write_tag(Tag::StripOffsets, &*self.strip_offsets);
+            .write_tag(Tag::StripOffsets, &*self.strip_offsets)?;
         self.encoder
-            .write_tag(Tag::StripByteCounts, &*self.strip_byte_count);
+            .write_tag(Tag::StripByteCounts, &*self.strip_byte_count)?;
         self.dropped = true;
 
         self.encoder.finish_internal()

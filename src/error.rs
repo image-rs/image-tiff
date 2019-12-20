@@ -22,6 +22,10 @@ pub enum TiffError {
 
     /// The Limits of the Decoder is exceeded.
     LimitsExceeded,
+
+    /// An integer conversion to or from a platform size failed, either due to
+    /// limits of the platform size or limits of the format.
+    IntSizeError,
 }
 
 /// The image is not formatted properly.
@@ -171,6 +175,7 @@ impl fmt::Display for TiffError {
             ),
             TiffError::IoError(ref e) => e.fmt(fmt),
             TiffError::LimitsExceeded => write!(fmt, "The Decoder limits are exceeded"),
+            TiffError::IntSizeError => write!(fmt, "Platform or format size limits exceeded"),
         }
     }
 }
@@ -182,6 +187,7 @@ impl Error for TiffError {
             TiffError::UnsupportedError(..) => "Unsupported error",
             TiffError::IoError(..) => "IO error",
             TiffError::LimitsExceeded => "Decoder limits exceeded",
+            TiffError::IntSizeError => "Platform or format size limits exceeded",
         }
     }
 
@@ -214,6 +220,12 @@ impl From<TiffFormatError> for TiffError {
 impl From<TiffUnsupportedError> for TiffError {
     fn from(err: TiffUnsupportedError) -> TiffError {
         TiffError::UnsupportedError(err)
+    }
+}
+
+impl From<std::num::TryFromIntError> for TiffError {
+    fn from(_err: std::num::TryFromIntError) -> TiffError {
+        TiffError::IntSizeError
     }
 }
 
