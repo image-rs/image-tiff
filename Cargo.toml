@@ -20,6 +20,3 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 byteorder = "1.2"
 lzw = "0.10"
 miniz_oxide = "0.3"
-
-[dev-dependencies]
-tempfile = "3.0"

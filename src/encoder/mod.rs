@@ -360,10 +360,9 @@ impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
 ///
 /// # Examples
 /// ```
-/// # extern crate tempfile;
 /// # extern crate tiff;
 /// # fn main() {
-/// # let mut file = tempfile::tempfile().unwrap();
+/// # let mut file = std::io::Cursor::new(Vec::new());
 /// # let image_data = vec![0; 100*100*3];
 /// use tiff::encoder::*;
 ///
@@ -548,10 +547,9 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 ///
 /// # Examples
 /// ```
-/// # extern crate tempfile;
 /// # extern crate tiff;
 /// # fn main() {
-/// # let mut file = tempfile::tempfile().unwrap();
+/// # let mut file = std::io::Cursor::new(Vec::new());
 /// # let image_data = vec![0; 100*100*3];
 /// use tiff::encoder::*;
 ///
