@@ -100,3 +100,24 @@ impl ColorType for CMYK8 {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::CMYK;
     const BITS_PER_SAMPLE: &'static [u16] = &[8, 8, 8, 8];
 }
+
+pub struct CMYK16;
+impl ColorType for CMYK16 {
+    type Inner = u16;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::CMYK;
+    const BITS_PER_SAMPLE: &'static [u16] = &[16, 16, 16, 16];
+}
+
+pub struct CMYK32;
+impl ColorType for CMYK32 {
+    type Inner = u32;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::CMYK;
+    const BITS_PER_SAMPLE: &'static [u16] = &[32, 32, 32, 32];
+}
+
+pub struct CMYK64;
+impl ColorType for CMYK64 {
+    type Inner = u64;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::CMYK;
+    const BITS_PER_SAMPLE: &'static [u16] = &[64, 64, 64, 64];
+}

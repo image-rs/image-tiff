@@ -106,6 +106,11 @@ fn test_rgb_u8_roundtrip() {
 }
 
 #[test]
+fn test_cmyk_u8_roundtrip() {
+    test_u8_roundtrip::<colortype::CMYK8>("cmyk-3c-8b.tiff", ColorType::CMYK(8));
+}
+
+#[test]
 fn test_gray_u16_roundtrip() {
     test_u16_roundtrip::<colortype::Gray16>("minisblack-1c-16b.tiff", ColorType::Gray(16));
 }
@@ -113,6 +118,11 @@ fn test_gray_u16_roundtrip() {
 #[test]
 fn test_rgb_u16_roundtrip() {
     test_u16_roundtrip::<colortype::RGB16>("rgb-3c-16b.tiff", ColorType::RGB(16));
+}
+
+#[test]
+fn test_cmyk_u16_roundtrip() {
+    test_u16_roundtrip::<colortype::CMYK16>("cmyk-3c-16b.tiff", ColorType::CMYK(16));
 }
 
 #[test]
