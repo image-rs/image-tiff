@@ -445,7 +445,7 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek> {
 impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
     fn new(writer: &'a mut TiffWriter<W>) -> TiffResult<DirectoryEncoder<'a, W>> {
         // the previous word is the IFD offset position
-        let ifd_pointer_pos = writer.offset() - u64::try_from(mem::size_of::<u32>())?;
+        let ifd_pointer_pos = writer.offset() - mem::size_of::<u32>() as u64;
         writer.pad_word_boundary()?;
         Ok(DirectoryEncoder {
             writer,
