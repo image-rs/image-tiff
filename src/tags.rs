@@ -1,32 +1,8 @@
-mod seals {
-    pub trait TagConversion<T>: Sized {
-        fn __from_inner_type(T) -> Result<Self, T>;
-
-        fn __to_inner_type(&self) -> T;
-    }
-}
-
-pub trait U16Tag: Sized {
-    fn from_u16(val: u16) -> Option<Self>;
-
-    fn to_u16(&self) -> u16;
-}
-
-impl<T: seals::TagConversion<u16>> U16Tag for T {
-    fn from_u16(val: u16) -> Option<Self> {
-        Self::__from_inner_type(val).ok()
-    }
-
-    fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
-}
-
 macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
         $( #[$enum_attr:meta] )*
-        $vis:vis enum $name:ident($ty:ty) $(unknown($unknown_doc:literal))* {
+        $vis:vis enum $name:ident($ty:tt) $(unknown($unknown_doc:literal))* {
             // Each of the `Name = Val,` permitting documentation.
             $($(#[$ident_attr:meta])* $tag:ident = $val:expr,)*
         }
@@ -38,13 +14,13 @@ macro_rules! tags {
             // FIXME: switch to non_exhaustive once stabilized and compiler requirement new enough
             #[doc(hidden)]
             __NonExhaustive,
-            $( 
+            $(
                 #[doc = $unknown_doc]
                 Unknown($ty),
             )*
         }
 
-        impl ::tags::seals::TagConversion<$ty> for $name {
+        impl $name {
             #[inline(always)]
             fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
                 match n {
@@ -62,7 +38,26 @@ macro_rules! tags {
                 }
             }
         }
-    }
+
+        tags!($name, $ty);
+    };
+    // For u16 tags, provide direct inherent primitive conversion methods.
+    ($name:tt, u16) => {
+        impl $name {
+            #[inline(always)]
+            pub fn from_u16(val: u16) -> Option<Self> {
+                Self::__from_inner_type(val).ok()
+            }
+
+            #[inline(always)]
+            pub fn to_u16(&self) -> u16 {
+                Self::__to_inner_type(self)
+            }
+        }
+    };
+    // For other tag types, do nothing for now. With concat_idents one could
+    // provide inherent conversion methods for all types.
+    ($name:tt, $ty:tt) => {};
 }
 
 // Note: These tags appear in the order they are mentioned in the TIFF reference

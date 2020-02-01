@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 use std::io::{Seek, Write};
 use std::mem;
 
-use tags::{self, ResolutionUnit, Tag, Type, U16Tag};
+use tags::{self, ResolutionUnit, Tag, Type};
 use error::{TiffError, TiffFormatError, TiffResult};
 
 pub mod colortype;

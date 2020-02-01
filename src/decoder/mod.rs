@@ -6,7 +6,7 @@ use std::cmp;
 use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
-use tags::{CompressionMethod, PhotometricInterpretation, Predictor, Tag, Type, U16Tag};
+use tags::{CompressionMethod, PhotometricInterpretation, Predictor, Tag, Type};
 
 use self::stream::{ByteOrder, EndianReader, LZWReader, DeflateReader, PackBitsReader, SmartReader};
 
