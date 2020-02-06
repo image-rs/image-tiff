@@ -672,6 +672,12 @@ impl<R: Read + Seek> Decoder<R> {
                 reader.read_u32_into(&mut buffer[..bytes / 4])?;
                 bytes / 4
             }
+            (ColorType::RGBA(32), DecodingBuffer::F32(ref mut buffer))
+            | (ColorType::RGB(32), DecodingBuffer::F32(ref mut buffer))
+            | (ColorType::CMYK(32), DecodingBuffer::F32(ref mut buffer)) => {
+                reader.read_f32_into(&mut buffer[..bytes / 4])?;
+                bytes / 4
+            }
             (ColorType::RGBA(64), DecodingBuffer::U64(ref mut buffer))
             | (ColorType::RGB(64), DecodingBuffer::U64(ref mut buffer))
             | (ColorType::CMYK(64), DecodingBuffer::U64(ref mut buffer)) => {

@@ -59,6 +59,11 @@ fn test_cmyk_u16() {
 }
 
 #[test]
+fn test_cmyk_f32() {
+    test_image_sum_f32("cmyk-3c-32b-float.tiff", ColorType::CMYK(32), 496.0405);
+}
+
+#[test]
 fn test_gray_u8() {
     test_image_sum_u8("minisblack-1c-8b.tiff", ColorType::Gray(8), 2840893);
 }
@@ -111,6 +116,11 @@ fn test_rgb_u32() {
 #[test]
 fn test_rgb_u64() {
     test_image_sum_u64("gradient-3c-64b.tiff", ColorType::RGB(64), 2030834111716);
+}
+
+#[test]
+fn test_rgb_f32() {
+    test_image_sum_f32("gradient-3c-32b-float.tiff", ColorType::RGB(32), 472.8405);
 }
 
 #[test]

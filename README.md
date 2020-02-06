@@ -19,10 +19,10 @@ This table lists photometric interpretations and sample formats which are suppor
 |-|-|-|
 | `WhiteIsZero` | Gray(8\|16\|32\|64) | Gray(32) |
 | `BlackIsZero` | Gray(8\|16\|32\|64) | Gray(32) |
-| `RGB` | RGB(8\|16\|32\|64), RGBA(8\|16\|32\|64) | |
+| `RGB` | RGB(8\|16\|32\|64), RGBA(8\|16\|32\|64) | RGB(32), RGBA(32) |
 | `RGBPalette` | | |
 | `Mask` | | |
-| `CMYK` | CMYK(8\|16\|32\|64) | |
+| `CMYK` | CMYK(8\|16\|32\|64) | CMYK(32) |
 | `YCbCr` | | |
 | `CIELab` | | |
 
