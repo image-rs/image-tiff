@@ -82,14 +82,14 @@ impl ColorType for RGBA16 {
 
 pub struct RGBA32;
 impl ColorType for RGBA32 {
-    type Inner = u16;
+    type Inner = u32;
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[32, 32, 32, 32];
 }
 
 pub struct RGBA64;
 impl ColorType for RGBA64 {
-    type Inner = u16;
+    type Inner = u64;
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[64, 64, 64, 64];
 }
