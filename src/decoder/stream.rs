@@ -121,6 +121,27 @@ pub trait EndianReader: Read {
             }
         }
     }
+
+    /// Reads an f64
+    #[inline(always)]
+    fn read_f64(&mut self) -> Result<f64, io::Error> {
+        match self.byte_order() {
+            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_f64::<LittleEndian>(self),
+            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_f64::<BigEndian>(self),
+        }
+    }
+
+    #[inline(always)]
+    fn read_f64_into(&mut self, buffer: &mut [f64]) -> Result<(), io::Error> {
+        match self.byte_order() {
+            ByteOrder::LittleEndian => {
+                <Self as ReadBytesExt>::read_f64_into::<LittleEndian>(self, buffer)
+            }
+            ByteOrder::BigEndian => {
+                <Self as ReadBytesExt>::read_f64_into::<BigEndian>(self, buffer)
+            }
+        }
+    }
 }
 
 /// Reader that decompresses DEFLATE streams

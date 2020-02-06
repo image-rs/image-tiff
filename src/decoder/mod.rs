@@ -26,6 +26,8 @@ pub enum DecodingResult {
     U64(Vec<u64>),
     /// A vector of 32 bit IEEE floats
     F32(Vec<f32>),
+    /// A vector of 64 bit IEEE floats
+    F64(Vec<f64>),
 }
 
 impl DecodingResult {
@@ -69,6 +71,14 @@ impl DecodingResult {
         }
     }
 
+    fn new_f64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / std::mem::size_of::<f64>() {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::F64(vec![0.0; size]))
+        }
+    }
+
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
@@ -76,6 +86,7 @@ impl DecodingResult {
             DecodingResult::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[start..]),
             DecodingResult::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[start..]),
             DecodingResult::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[start..]),
+            DecodingResult::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[start..]),
         }
     }
 }
@@ -92,6 +103,8 @@ pub enum DecodingBuffer<'a> {
     U64(&'a mut [u64]),
     /// A slice of 32 bit IEEE floats
     F32(&'a mut [f32]),
+    /// A slice of 64 bit IEEE floats
+    F64(&'a mut [f64]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -102,6 +115,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U32(ref buf) => buf.len(),
             DecodingBuffer::U64(ref buf) => buf.len(),
             DecodingBuffer::F32(ref buf) => buf.len(),
+            DecodingBuffer::F64(ref buf) => buf.len(),
         }
     }
 
@@ -112,6 +126,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U32(_) => 4,
             DecodingBuffer::U64(_) => 8,
             DecodingBuffer::F32(_) => 4,
+            DecodingBuffer::F64(_) => 8,
         }
     }
 
@@ -125,6 +140,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(buf),
             DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(buf),
             DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(buf),
+            DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(buf),
         }
     }
 }
@@ -220,6 +236,12 @@ impl Wrapping for f32 {
     }
 }
 
+impl Wrapping for f64 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        self + other
+    }
+}
+
 fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize) -> TiffResult<()>
 where
     T: Copy + Wrapping,
@@ -262,6 +284,9 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
             rev_hpredict_nsamp(buf, size, samples)?;
         }
         DecodingBuffer::F32(buf) => {
+            rev_hpredict_nsamp(buf, size, samples)?;
+        }
+        DecodingBuffer::F64(buf) => {
             rev_hpredict_nsamp(buf, size, samples)?;
         }
     }
@@ -678,6 +703,12 @@ impl<R: Read + Seek> Decoder<R> {
                 reader.read_f32_into(&mut buffer[..bytes / 4])?;
                 bytes / 4
             }
+            (ColorType::RGBA(64), DecodingBuffer::F64(ref mut buffer))
+            | (ColorType::RGB(64), DecodingBuffer::F64(ref mut buffer))
+            | (ColorType::CMYK(64), DecodingBuffer::F64(ref mut buffer)) => {
+                reader.read_f64_into(&mut buffer[..bytes / 8])?;
+                bytes / 8
+            }
             (ColorType::RGBA(64), DecodingBuffer::U64(ref mut buffer))
             | (ColorType::RGB(64), DecodingBuffer::U64(ref mut buffer))
             | (ColorType::CMYK(64), DecodingBuffer::U64(ref mut buffer)) => {
@@ -729,6 +760,16 @@ impl<R: Read + Seek> Decoder<R> {
                     }
                 }
                 bytes / 4
+            }
+            (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
+                reader.read_f64_into(&mut buffer[..bytes / 8])?;
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes / 8].iter_mut() {
+                        // FIXME: assumes [0, 1) range for floats
+                        *datum = 1.0 - *datum
+                    }
+                }
+                bytes / 8
             }
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
@@ -857,6 +898,7 @@ impl<R: Read + Seek> Decoder<R> {
             },
             SampleFormat::IEEEFP => match max_sample_bits {
                 32 => DecodingResult::new_f32(buffer_size, &self.limits),
+                64 => DecodingResult::new_f64(buffer_size, &self.limits),
                 n => {
                     Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::UnsupportedBitsPerChannel(n),

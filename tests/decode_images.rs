@@ -33,6 +33,7 @@ test_image_sum!(test_image_sum_u16, U16, u64);
 test_image_sum!(test_image_sum_u32, U32, u64);
 test_image_sum!(test_image_sum_u64, U64, u64);
 test_image_sum!(test_image_sum_f32, F32, f32);
+test_image_sum!(test_image_sum_f64, F64, f64);
 
 /// Tests that a decoder can be constructed for an image and the color type
 /// read from the IFD and is of the appropriate type, but the type is
@@ -91,6 +92,11 @@ fn test_gray_u64() {
 #[test]
 fn test_gray_f32() {
     test_image_sum_f32("gradient-1c-32b-float.tiff", ColorType::Gray(32), 128.03194);
+}
+
+#[test]
+fn test_gray_f64() {
+    test_image_sum_f64("gradient-1c-64b-float.tiff", ColorType::Gray(64), 128.0319210877642);
 }
 
 #[test]
