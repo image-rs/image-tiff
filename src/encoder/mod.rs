@@ -1,9 +1,10 @@
 use byteorder::NativeEndian;
 use std::collections::BTreeMap;
+use std::convert::TryFrom;
 use std::io::{Seek, Write};
 use std::mem;
 
-use decoder::ifd::{self, Tag};
+use tags::{self, ResolutionUnit, Tag, Type};
 use error::{TiffError, TiffFormatError, TiffResult};
 
 pub mod colortype;
@@ -25,17 +26,10 @@ pub struct SRational {
     pub d: i32,
 }
 
-/// Type to represent resolution units
-pub enum ResolutionUnit {
-    None = 1,
-    Inch = 2,
-    Centimeter = 3,
-}
-
 /// Trait for types that can be encoded in a tiff file
 pub trait TiffValue {
     const BYTE_LEN: u32;
-    const FIELD_TYPE: ifd::Type;
+    const FIELD_TYPE: Type;
     fn count(&self) -> u32;
     fn bytes(&self) -> u32 {
         self.count() * Self::BYTE_LEN
@@ -45,7 +39,7 @@ pub trait TiffValue {
 
 impl TiffValue for [u8] {
     const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: ifd::Type = ifd::Type::BYTE;
+    const FIELD_TYPE: Type = Type::BYTE;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -59,7 +53,7 @@ impl TiffValue for [u8] {
 
 impl TiffValue for [i8] {
     const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SBYTE;
+    const FIELD_TYPE: Type = Type::SBYTE;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -76,7 +70,7 @@ impl TiffValue for [i8] {
 
 impl TiffValue for [u16] {
     const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SHORT;
+    const FIELD_TYPE: Type = Type::SHORT;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -93,7 +87,7 @@ impl TiffValue for [u16] {
 
 impl TiffValue for [i16] {
     const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SSHORT;
+    const FIELD_TYPE: Type = Type::SSHORT;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -110,7 +104,7 @@ impl TiffValue for [i16] {
 
 impl TiffValue for [u32] {
     const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: ifd::Type = ifd::Type::LONG;
+    const FIELD_TYPE: Type = Type::LONG;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -127,7 +121,7 @@ impl TiffValue for [u32] {
 
 impl TiffValue for [i32] {
     const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SLONG;
+    const FIELD_TYPE: Type = Type::SLONG;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -144,7 +138,7 @@ impl TiffValue for [i32] {
 
 impl TiffValue for [u64] {
     const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: ifd::Type = ifd::Type::LONG8;
+    const FIELD_TYPE: Type = Type::LONG8;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -161,7 +155,7 @@ impl TiffValue for [u64] {
 
 impl TiffValue for [Rational] {
     const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: ifd::Type = ifd::Type::RATIONAL;
+    const FIELD_TYPE: Type = Type::RATIONAL;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -177,7 +171,7 @@ impl TiffValue for [Rational] {
 
 impl TiffValue for [SRational] {
     const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SRATIONAL;
+    const FIELD_TYPE: Type = Type::SRATIONAL;
 
     fn count(&self) -> u32 {
         self.len() as u32
@@ -193,7 +187,7 @@ impl TiffValue for [SRational] {
 
 impl TiffValue for u8 {
     const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: ifd::Type = ifd::Type::BYTE;
+    const FIELD_TYPE: Type = Type::BYTE;
 
     fn count(&self) -> u32 {
         1
@@ -207,7 +201,7 @@ impl TiffValue for u8 {
 
 impl TiffValue for i8 {
     const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SBYTE;
+    const FIELD_TYPE: Type = Type::SBYTE;
 
     fn count(&self) -> u32 {
         1
@@ -221,7 +215,7 @@ impl TiffValue for i8 {
 
 impl TiffValue for u16 {
     const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SHORT;
+    const FIELD_TYPE: Type = Type::SHORT;
 
     fn count(&self) -> u32 {
         1
@@ -235,7 +229,7 @@ impl TiffValue for u16 {
 
 impl TiffValue for i16 {
     const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SSHORT;
+    const FIELD_TYPE: Type = Type::SSHORT;
 
     fn count(&self) -> u32 {
         1
@@ -249,7 +243,7 @@ impl TiffValue for i16 {
 
 impl TiffValue for u32 {
     const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: ifd::Type = ifd::Type::LONG;
+    const FIELD_TYPE: Type = Type::LONG;
 
     fn count(&self) -> u32 {
         1
@@ -263,7 +257,7 @@ impl TiffValue for u32 {
 
 impl TiffValue for i32 {
     const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SLONG;
+    const FIELD_TYPE: Type = Type::SLONG;
 
     fn count(&self) -> u32 {
         1
@@ -277,7 +271,7 @@ impl TiffValue for i32 {
 
 impl TiffValue for u64 {
     const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: ifd::Type = ifd::Type::LONG8;
+    const FIELD_TYPE: Type = Type::LONG8;
 
     fn count(&self) -> u32 {
         1
@@ -291,7 +285,7 @@ impl TiffValue for u64 {
 
 impl TiffValue for Rational {
     const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: ifd::Type = ifd::Type::RATIONAL;
+    const FIELD_TYPE: Type = Type::RATIONAL;
 
     fn count(&self) -> u32 {
         1
@@ -306,7 +300,7 @@ impl TiffValue for Rational {
 
 impl TiffValue for SRational {
     const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: ifd::Type = ifd::Type::SRATIONAL;
+    const FIELD_TYPE: Type = Type::SRATIONAL;
 
     fn count(&self) -> u32 {
         1
@@ -321,7 +315,7 @@ impl TiffValue for SRational {
 
 impl TiffValue for str {
     const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: ifd::Type = ifd::Type::ASCII;
+    const FIELD_TYPE: Type = Type::ASCII;
 
     fn count(&self) -> u32 {
         self.len() as u32 + 1
@@ -340,7 +334,7 @@ impl TiffValue for str {
 
 impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
     const BYTE_LEN: u32 = T::BYTE_LEN;
-    const FIELD_TYPE: ifd::Type = T::FIELD_TYPE;
+    const FIELD_TYPE: Type = T::FIELD_TYPE;
 
     fn count(&self) -> u32 {
         (*self).count()
@@ -413,7 +407,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
     where
         [C::Inner]: TiffValue,
     {
-        let num_pix = (width as usize).checked_mul(height as usize)
+        let num_pix = usize::try_from(width)?.checked_mul(usize::try_from(height)?)
             .ok_or_else(|| ::std::io::Error::new(
                 ::std::io::ErrorKind::InvalidInput,
                 "Image width * height exceeds usize"))?;
@@ -428,7 +422,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
 
         let mut idx = 0;
         while image.next_strip_sample_count() > 0 {
-            let sample_count = image.next_strip_sample_count() as usize;
+            let sample_count = usize::try_from(image.next_strip_sample_count())?;
             image.write_strip(&data[idx..idx + sample_count])?;
             idx += sample_count;
         }
@@ -462,16 +456,18 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
     }
 
     /// Write a single ifd tag.
-    pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) {
+    pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
         let len = <T>::BYTE_LEN * value.count();
-        let mut bytes = Vec::with_capacity(len as usize);
+        let mut bytes = Vec::with_capacity(usize::try_from(len)?);
         {
             let mut writer = TiffWriter::new(&mut bytes);
-            value.write(&mut writer).unwrap();
+            value.write(&mut writer)?;
         }
 
         self.ifd
             .insert(tag.to_u16(), (<T>::FIELD_TYPE.to_u16(), value.count(), bytes));
+
+        Ok(())
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
@@ -482,7 +478,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
                 self.writer.write_bytes(bytes)?;
                 *bytes = vec![0, 0, 0, 0];
                 let mut writer = TiffWriter::new(bytes as &mut [u8]);
-                writer.write_u32(offset as u32)?;
+                writer.write_u32(u32::try_from(offset)?)?;
             } else {
                 while bytes.len() < 4 {
                     bytes.push(0);
@@ -492,7 +488,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
         let offset = self.writer.offset();
 
-        self.writer.write_u16(self.ifd.len() as u16)?;
+        self.writer.write_u16(u16::try_from(self.ifd.len())?)?;
         for (tag, &(ref field_type, ref count, ref offset)) in self.ifd.iter() {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(*field_type)?;
@@ -517,7 +513,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
         let curr_pos = self.writer.offset();
 
         self.writer.goto_offset(self.ifd_pointer_pos)?;
-        self.writer.write_u32(ifd_pointer as u32)?;
+        self.writer.write_u32(u32::try_from(ifd_pointer)?)?;
         self.writer.goto_offset(curr_pos)?;
         self.writer.write_u32(0)?;
 
@@ -584,7 +580,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         width: u32,
         height: u32,
     ) -> TiffResult<ImageEncoder<'a, W, T>> {
-        let row_samples = u64::from(width) * <T>::BITS_PER_SAMPLE.len() as u64;
+        let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
         // As per tiff spec each strip should be about 8k long
@@ -592,19 +588,19 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
         let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
 
-        encoder.write_tag(Tag::ImageWidth, width);
-        encoder.write_tag(Tag::ImageLength, height);
-        encoder.write_tag(Tag::Compression, 1u16);
+        encoder.write_tag(Tag::ImageWidth, width)?;
+        encoder.write_tag(Tag::ImageLength, height)?;
+        encoder.write_tag(Tag::Compression, tags::CompressionMethod::None.to_u16())?;
 
-        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE);
-        encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16());
+        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
+        encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
 
-        encoder.write_tag(Tag::RowsPerStrip, rows_per_strip as u32);
+        encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
 
-        encoder.write_tag(Tag::SamplesPerPixel, <T>::BITS_PER_SAMPLE.len() as u16);
-        encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 });
-        encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 });
-        encoder.write_tag(Tag::ResolutionUnit, 1u16);
+        encoder.write_tag(Tag::SamplesPerPixel, u16::try_from(<T>::BITS_PER_SAMPLE.len())?)?;
+        encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
+        encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
+        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
 
         Ok(ImageEncoder {
             encoder,
@@ -642,15 +638,15 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     {
         // TODO: Compression
         let samples = self.next_strip_sample_count();
-        if value.len() as u64 != samples {
+        if u64::try_from(value.len())? != samples {
             return Err(::std::io::Error::new(
                 ::std::io::ErrorKind::InvalidData,
                 "Slice is wrong size for strip").into());
         }
 
         let offset = self.encoder.write_data(value)?;
-        self.strip_offsets.push(offset as u32);
-        self.strip_byte_count.push(value.bytes() as u32);
+        self.strip_offsets.push(u32::try_from(offset)?);
+        self.strip_byte_count.push(value.bytes());
 
         self.strip_idx += 1;
         Ok(())
@@ -658,31 +654,31 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     /// Set image resolution
     pub fn resolution(&mut self, unit: ResolutionUnit, value: Rational) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit as u16);
-        self.encoder.write_tag(Tag::XResolution, value.clone());
-        self.encoder.write_tag(Tag::YResolution, value);
+        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
+        self.encoder.write_tag(Tag::XResolution, value.clone()).unwrap();
+        self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
     /// Set image resolution unit
     pub fn resolution_unit(&mut self, unit: ResolutionUnit) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit as u16);
+        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
     }
 
     /// Set image x-resolution
     pub fn x_resolution(&mut self, value: Rational) {
-        self.encoder.write_tag(Tag::XResolution, value);
+        self.encoder.write_tag(Tag::XResolution, value).unwrap();
     }
 
     /// Set image y-resolution
     pub fn y_resolution(&mut self, value: Rational) {
-        self.encoder.write_tag(Tag::YResolution, value);
+        self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
     fn finish_internal(&mut self) -> TiffResult<()> {
         self.encoder
-            .write_tag(Tag::StripOffsets, &*self.strip_offsets);
+            .write_tag(Tag::StripOffsets, &*self.strip_offsets)?;
         self.encoder
-            .write_tag(Tag::StripByteCounts, &*self.strip_byte_count);
+            .write_tag(Tag::StripByteCounts, &*self.strip_byte_count)?;
         self.dropped = true;
 
         self.encoder.finish_internal()

@@ -48,6 +48,16 @@ fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
 }
 
 #[test]
+fn test_cmyk_u8() {
+    test_image_sum_u8("cmyk-3c-8b.tiff", ColorType::CMYK(8), 8522658);
+}
+
+#[test]
+fn test_cmyk_u16() {
+    test_image_sum_u16("cmyk-3c-16b.tiff", ColorType::CMYK(16), 2181426827);
+}
+
+#[test]
 fn test_gray_u8() {
     test_image_sum_u8("minisblack-1c-8b.tiff", ColorType::Gray(8), 2840893);
 }
@@ -106,7 +116,7 @@ fn test_string_tags() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
         let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-        let software = decoder.get_tag(ifd::Tag::Software).unwrap();
+        let software = decoder.get_tag(tiff::tags::Tag::Software).unwrap();
         match software {
             ifd::Value::Ascii(s) => assert_eq!(
                 &s,

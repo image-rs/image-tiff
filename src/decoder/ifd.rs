@@ -1,141 +1,15 @@
 //! Function for reading TIFF tags
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 use std::mem;
 
 use super::stream::{ByteOrder, EndianReader, SmartReader};
+use tags::{Tag, Type};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational};
-
-macro_rules! tags {
-    {
-        // Permit arbitrary meta items, which include documentation.
-        $( #[$enum_attr:meta] )*
-        $vis:vis enum $name:ident($ty:ty) $(unknown($unknown_doc:literal))* {
-            // Each of the `Name = Val,` permitting documentation.
-            $($(#[$ident_attr:meta])* $tag:ident = $val:expr,)*
-        }
-    } => {
-        $( #[$enum_attr] )*
-        #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-        pub enum $name {
-            $($(#[$ident_attr])* $tag,)*
-            // FIXME: switch to non_exhaustive once stabilized and compiler requirement new enough
-            #[doc(hidden)]
-            __NonExhaustive,
-            $( 
-                #[doc = $unknown_doc]
-                Unknown($ty),
-            )*
-        }
-
-        impl $name {
-            #[inline(always)]
-            fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
-                match n {
-                    $( $val => Ok($name::$tag), )*
-                    n => Err(n),
-                }
-            }
-
-            #[inline(always)]
-            fn __to_inner_type(&self) -> $ty {
-                match *self {
-                    $( $name::$tag => $val, )*
-                    $( $name::Unknown(n) => { $unknown_doc; n }, )*
-                    $name::__NonExhaustive => unreachable!(),
-                }
-            }
-        }
-    }
-}
-
-// Note: These tags appear in the order they are mentioned in the TIFF reference
-tags! {
-/// TIFF tags
-pub enum Tag(u16) unknown("A private or extension tag") {
-    // Baseline tags:
-    Artist = 315,
-    // grayscale images PhotometricInterpretation 1 or 3
-    BitsPerSample = 258,
-    CellLength = 265, // TODO add support
-    CellWidth = 264, // TODO add support
-    // palette-color images (PhotometricInterpretation 3)
-    ColorMap = 320, // TODO add support
-    Compression = 259, // TODO add support for 2 and 32773
-    Copyright = 33_432,
-    DateTime = 306,
-    ExtraSamples = 338, // TODO add support
-    FillOrder = 266, // TODO add support
-    FreeByteCounts = 289, // TODO add support
-    FreeOffsets = 288, // TODO add support
-    GrayResponseCurve = 291, // TODO add support
-    GrayResponseUnit = 290, // TODO add support
-    HostComputer = 316,
-    ImageDescription = 270,
-    ImageLength = 257,
-    ImageWidth = 256,
-    Make = 271,
-    MaxSampleValue = 281, // TODO add support
-    MinSampleValue = 280, // TODO add support
-    Model = 272,
-    NewSubfileType = 254, // TODO add support
-    Orientation = 274, // TODO add support
-    PhotometricInterpretation = 262,
-    PlanarConfiguration = 284,
-    ResolutionUnit = 296, // TODO add support
-    RowsPerStrip = 278,
-    SamplesPerPixel = 277,
-    Software = 305,
-    StripByteCounts = 279,
-    StripOffsets = 273,
-    SubfileType = 255, // TODO add support
-    Threshholding = 263, // TODO add support
-    XResolution = 282,
-    YResolution = 283,
-    // Advanced tags
-    Predictor = 317,
-}
-}
-
-impl Tag {
-    pub fn from_u16(val: u16) -> Self {
-        Self::__from_inner_type(val).unwrap_or_else(Tag::Unknown)
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
-}
-
-tags! {
-/// The type of an IFD entry (a 2 byte field).
-pub enum Type(u16) {
-    BYTE = 1,
-    ASCII = 2,
-    SHORT = 3,
-    LONG = 4,
-    RATIONAL = 5,
-    SBYTE = 6,
-    SSHORT = 8,
-    SLONG = 9,
-    SRATIONAL = 10,
-    /// BigTIFF 64-bit unsigned integer
-    LONG8 = 16,
-}
-}
-
-impl Type {
-    pub fn from_u16(val: u16) -> Option<Self> {
-        Self::__from_inner_type(val).ok()
-    }
-
-    pub fn to_u16(&self) -> u16 {
-        Self::__to_inner_type(self)
-    }
-}
 
 
 #[allow(unused_qualifications)]
@@ -181,7 +55,7 @@ impl Value {
             }
             Unsigned(val) => Ok(vec![val]),
             Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
-            Ascii(val) => Ok(val.chars().map(|x| x as u32).collect()),
+            Ascii(val) => Ok(val.chars().map(u32::from).collect()),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),
@@ -320,11 +194,12 @@ impl Entry {
                 ))
             }),
             (Type::ASCII, n) => {
-                if n as usize > limits.decoding_buffer_size {
+                let n = usize::try_from(n)?;
+                if n > limits.decoding_buffer_size {
                     return Err(TiffError::LimitsExceeded);
                 }
                 decoder.goto_offset(self.r(bo).read_u32()?)?;
-                let string = decoder.read_string(n as usize)?;
+                let string = decoder.read_string(n)?;
                 Ok(Ascii(string))
             }
             _ => Err(TiffError::UnsupportedError(
@@ -339,11 +214,12 @@ impl Entry {
             R: Read + Seek,
             F: Fn(&mut super::Decoder<R>) -> TiffResult<Value>,
     {
-        if value_count as usize > limits.decoding_buffer_size / mem::size_of::<Value>() {
+        let value_count = usize::try_from(value_count)?;
+        if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
             return Err(TiffError::LimitsExceeded);
         }
 
-        let mut v = Vec::with_capacity(value_count as usize);
+        let mut v = Vec::with_capacity(value_count);
         decoder.goto_offset(self.r(bo).read_u32()?)?;
         for _ in 0..value_count {
             v.push(decode_fn(decoder)?)

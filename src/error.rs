@@ -3,8 +3,8 @@ use std::fmt;
 use std::io;
 use std::string;
 
-use decoder::ifd::{Tag, Value};
-use decoder::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration};
+use decoder::ifd::{Value};
+use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Tag};
 use miniz_oxide::inflate::TINFLStatus;
 use ColorType;
 
@@ -22,6 +22,10 @@ pub enum TiffError {
 
     /// The Limits of the Decoder is exceeded.
     LimitsExceeded,
+
+    /// An integer conversion to or from a platform size failed, either due to
+    /// limits of the platform size or limits of the format.
+    IntSizeError,
 }
 
 /// The image is not formatted properly.
@@ -38,8 +42,9 @@ pub enum TiffFormatError {
     ImageFileDirectoryNotFound,
     InconsistentSizesEncountered,
     InvalidTag,
+    InvalidTagValueType(Tag),
     RequiredTagNotFound(Tag),
-    UnknownPredictor(u32),
+    UnknownPredictor(u16),
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
     InflateError(InflateError),
@@ -57,6 +62,8 @@ impl fmt::Display for TiffFormatError {
             ImageFileDirectoryNotFound => write!(fmt, "Image file directory not found."),
             InconsistentSizesEncountered => write!(fmt, "Inconsistent sizes encountered."),
             InvalidTag => write!(fmt, "Image contains invalid tag."),
+            InvalidTagValueType(ref tag) =>
+                write!(fmt, "Tag `{:?}` did not have the expected value type.", tag),
             RequiredTagNotFound(ref tag) => write!(fmt, "Required tag `{:?}` not found.", tag),
             UnknownPredictor(ref predictor) => {
                 write!(fmt, "Unknown predictor “{}” encountered", predictor)
@@ -139,7 +146,7 @@ impl fmt::Display for TiffUnsupportedError {
                 write!(fmt, "Compression method {:?} is unsupported", method)
             }
             UnsupportedSampleDepth(samples) => {
-                write!(fmt, "{} samples per pixel is supported.", samples)
+                write!(fmt, "{} samples per pixel is unsupported.", samples)
             }
             UnsupportedColorType(color_type) => {
                 write!(fmt, "Color type {:?} is unsupported", color_type)
@@ -168,6 +175,7 @@ impl fmt::Display for TiffError {
             ),
             TiffError::IoError(ref e) => e.fmt(fmt),
             TiffError::LimitsExceeded => write!(fmt, "The Decoder limits are exceeded"),
+            TiffError::IntSizeError => write!(fmt, "Platform or format size limits exceeded"),
         }
     }
 }
@@ -179,6 +187,7 @@ impl Error for TiffError {
             TiffError::UnsupportedError(..) => "Unsupported error",
             TiffError::IoError(..) => "IO error",
             TiffError::LimitsExceeded => "Decoder limits exceeded",
+            TiffError::IntSizeError => "Platform or format size limits exceeded",
         }
     }
 
@@ -199,6 +208,24 @@ impl From<io::Error> for TiffError {
 impl From<string::FromUtf8Error> for TiffError {
     fn from(_err: string::FromUtf8Error) -> TiffError {
         TiffError::FormatError(TiffFormatError::InvalidTag)
+    }
+}
+
+impl From<TiffFormatError> for TiffError {
+    fn from(err: TiffFormatError) -> TiffError {
+        TiffError::FormatError(err)
+    }
+}
+
+impl From<TiffUnsupportedError> for TiffError {
+    fn from(err: TiffUnsupportedError) -> TiffError {
+        TiffError::UnsupportedError(err)
+    }
+}
+
+impl From<std::num::TryFromIntError> for TiffError {
+    fn from(_err: std::num::TryFromIntError) -> TiffError {
+        TiffError::IntSizeError
     }
 }
 
