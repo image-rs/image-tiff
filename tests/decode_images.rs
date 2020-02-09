@@ -149,6 +149,12 @@ fn test_decode_data() {
     }
 }
 
+#[test]
+fn issue_69() {
+    test_image_sum_u16("issue_69_lzw.tiff", ColorType::Gray(16), 1015486);
+    test_image_sum_u16("issue_69_packbits.tiff", ColorType::Gray(16), 1015486);
+}
+
 // TODO: GrayA support
 //#[test]
 //fn test_gray_alpha_u8()
