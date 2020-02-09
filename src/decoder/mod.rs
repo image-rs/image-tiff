@@ -584,7 +584,7 @@ impl<R: Read + Seek> Decoder<R> {
                 let (bytes, reader) = LZWReader::new(
                     &mut self.reader,
                     usize::try_from(length)?,
-                    max_uncompressed_length
+                    max_uncompressed_length * buffer.byte_len()
                 )?;
                 (bytes, Box::new(reader))
             }
