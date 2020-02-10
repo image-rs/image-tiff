@@ -429,7 +429,7 @@ impl<R: Read + Seek> Decoder<R> {
                 )
                 .collect::<Result<_, _>>()?;
 
-            // FIXME: for now, only homogenous formats across samples are supported.
+            // TODO: for now, only homogenous formats across samples are supported.
             if !self.sample_format.windows(2).all(|s| s[0] == s[1]) {
                 return Err(TiffUnsupportedError::UnsupportedSampleFormat(vals).into())
             }
