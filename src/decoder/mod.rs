@@ -306,7 +306,7 @@ impl<R: Read + Seek> Decoder<R> {
             height: 0,
             bits_per_sample: vec![1],
             samples: 1,
-            sample_format: vec![SampleFormat::UINT],
+            sample_format: vec![SampleFormat::Uint],
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
             strip_decoder: None,
@@ -884,8 +884,8 @@ impl<R: Read + Seek> Decoder<R> {
         let buffer_size = usize::try_from(self.width)? * height * self.bits_per_sample.len();
 
         let max_sample_bits = self.bits_per_sample.iter().cloned().max().unwrap_or(8);
-        match self.sample_format.first().unwrap_or(&SampleFormat::UINT) {
-            SampleFormat::UINT => match max_sample_bits {
+        match self.sample_format.first().unwrap_or(&SampleFormat::Uint) {
+            SampleFormat::Uint => match max_sample_bits {
                 n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
                 n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
                 n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),

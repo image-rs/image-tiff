@@ -187,9 +187,9 @@ pub enum ResolutionUnit(u16) {
 
 tags! {
 pub enum SampleFormat(u16) {
-    UINT = 1,
-    INT = 2,
+    Uint = 1,
+    Int = 2,
     IEEEFP = 3,
-    VOID = 4,
+    Void = 4,
 }
 }
