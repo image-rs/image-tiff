@@ -188,7 +188,7 @@ pub enum ResolutionUnit(u16) {
 }
 
 tags! {
-pub enum SampleFormat(u16) {
+pub enum SampleFormat(u16) unknown("An unknown extension sample format") {
     Uint = 1,
     Int = 2,
     IEEEFP = 3,

@@ -4,7 +4,7 @@ use std::io;
 use std::string;
 
 use decoder::ifd::{Value};
-use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Tag};
+use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag};
 use miniz_oxide::inflate::TINFLStatus;
 use ColorType;
 
@@ -114,7 +114,7 @@ pub enum TiffUnsupportedError {
     UnknownCompressionMethod,
     UnsupportedCompressionMethod(CompressionMethod),
     UnsupportedSampleDepth(u8),
-    UnsupportedSampleFormat(Vec<u16>),
+    UnsupportedSampleFormat(Vec<SampleFormat>),
     UnsupportedColorType(ColorType),
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),

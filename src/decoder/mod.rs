@@ -423,15 +423,13 @@ impl<R: Read + Seek> Decoder<R> {
             self.samples = val;
         }
         if let Some(vals) = self.find_tag_unsigned_vec(Tag::SampleFormat)? {
-            self.sample_format = vals.iter()
-                .map(|&v| SampleFormat::from_u16(v)
-                    .ok_or_else(|| TiffUnsupportedError::UnsupportedSampleFormat(vals.clone()))
-                )
-                .collect::<Result<_, _>>()?;
+            self.sample_format = vals.into_iter()
+                .map(SampleFormat::from_u16_exhaustive)
+                .collect();
 
             // TODO: for now, only homogenous formats across samples are supported.
             if !self.sample_format.windows(2).all(|s| s[0] == s[1]) {
-                return Err(TiffUnsupportedError::UnsupportedSampleFormat(vals).into())
+                return Err(TiffUnsupportedError::UnsupportedSampleFormat(self.sample_format.clone()).into())
             }
         }
         match self.samples {
@@ -905,7 +903,7 @@ impl<R: Read + Seek> Decoder<R> {
                     ))
                 }
             },
-            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format.to_u16()]).into()),
+            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format.clone()]).into()),
         }
     }
 
