@@ -21,7 +21,7 @@ macro_rules! test_image_sum {
                 DecodingResult::$buffer(res) => {
                     let sum: $sum_ty = res.into_iter().map(<$sum_ty>::from).sum();
                     assert_eq!(sum, expected_sum);
-                },
+                }
                 _ => panic!("Wrong bit depth"),
             }
         }
@@ -42,7 +42,9 @@ fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), expected_type);
     assert!(match decoder.read_image() {
-        Err(tiff::TiffError::UnsupportedError(tiff::TiffUnsupportedError::UnsupportedColorType(_))) => true,
+        Err(tiff::TiffError::UnsupportedError(
+            tiff::TiffUnsupportedError::UnsupportedColorType(_),
+        )) => true,
         _ => false,
     });
 }

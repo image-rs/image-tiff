@@ -1,5 +1,5 @@
-use error::TiffResult;
 use byteorder::{BigEndian, ByteOrder, LittleEndian, NativeEndian, WriteBytesExt};
+use error::TiffResult;
 use std::io::{self, Seek, SeekFrom, Write};
 
 pub trait TiffByteOrder: ByteOrder {

@@ -4,8 +4,8 @@ use std::convert::TryFrom;
 use std::io::{Seek, Write};
 use std::mem;
 
-use tags::{self, ResolutionUnit, Tag, Type};
 use error::{TiffError, TiffFormatError, TiffResult};
+use tags::{self, ResolutionUnit, Tag, Type};
 
 pub mod colortype;
 mod writer;
@@ -61,8 +61,7 @@ impl TiffValue for [i8] {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         // We write using nativeedian so this should be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len()) };
+        let slice = unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len()) };
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -95,8 +94,12 @@ impl TiffValue for [i16] {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         // We write using nativeedian so this should be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * Self::BYTE_LEN as usize) };
+        let slice = unsafe {
+            ::std::slice::from_raw_parts(
+                self.as_ptr() as *const u8,
+                self.len() * Self::BYTE_LEN as usize,
+            )
+        };
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -129,8 +132,12 @@ impl TiffValue for [i32] {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         // We write using nativeedian so this should be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * Self::BYTE_LEN as usize) };
+        let slice = unsafe {
+            ::std::slice::from_raw_parts(
+                self.as_ptr() as *const u8,
+                self.len() * Self::BYTE_LEN as usize,
+            )
+        };
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -407,14 +414,20 @@ impl<W: Write + Seek> TiffEncoder<W> {
     where
         [C::Inner]: TiffValue,
     {
-        let num_pix = usize::try_from(width)?.checked_mul(usize::try_from(height)?)
-            .ok_or_else(|| ::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidInput,
-                "Image width * height exceeds usize"))?;
+        let num_pix = usize::try_from(width)?
+            .checked_mul(usize::try_from(height)?)
+            .ok_or_else(|| {
+                ::std::io::Error::new(
+                    ::std::io::ErrorKind::InvalidInput,
+                    "Image width * height exceeds usize",
+                )
+            })?;
         if data.len() < num_pix {
             return Err(::std::io::Error::new(
                 ::std::io::ErrorKind::InvalidData,
-                "Input data slice is undersized for provided dimensions").into());
+                "Input data slice is undersized for provided dimensions",
+            )
+            .into());
         }
 
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
@@ -464,8 +477,10 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
             value.write(&mut writer)?;
         }
 
-        self.ifd
-            .insert(tag.to_u16(), (<T>::FIELD_TYPE.to_u16(), value.count(), bytes));
+        self.ifd.insert(
+            tag.to_u16(),
+            (<T>::FIELD_TYPE.to_u16(), value.count(), bytes),
+        );
 
         Ok(())
     }
@@ -597,7 +612,10 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
         encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
 
-        encoder.write_tag(Tag::SamplesPerPixel, u16::try_from(<T>::BITS_PER_SAMPLE.len())?)?;
+        encoder.write_tag(
+            Tag::SamplesPerPixel,
+            u16::try_from(<T>::BITS_PER_SAMPLE.len())?,
+        )?;
         encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
@@ -622,7 +640,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
             return 0;
         }
 
-        let start_row = ::std::cmp::min(u64::from(self.height), self.strip_idx * self.rows_per_strip);
+        let start_row =
+            ::std::cmp::min(u64::from(self.height), self.strip_idx * self.rows_per_strip);
         let end_row = ::std::cmp::min(
             u64::from(self.height),
             (self.strip_idx + 1) * self.rows_per_strip,
@@ -641,7 +660,9 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         if u64::try_from(value.len())? != samples {
             return Err(::std::io::Error::new(
                 ::std::io::ErrorKind::InvalidData,
-                "Slice is wrong size for strip").into());
+                "Slice is wrong size for strip",
+            )
+            .into());
         }
 
         let offset = self.encoder.write_data(value)?;
@@ -654,14 +675,20 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     /// Set image resolution
     pub fn resolution(&mut self, unit: ResolutionUnit, value: Rational) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
-        self.encoder.write_tag(Tag::XResolution, value.clone()).unwrap();
+        self.encoder
+            .write_tag(Tag::ResolutionUnit, unit.to_u16())
+            .unwrap();
+        self.encoder
+            .write_tag(Tag::XResolution, value.clone())
+            .unwrap();
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
     /// Set image resolution unit
     pub fn resolution_unit(&mut self, unit: ResolutionUnit) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
+        self.encoder
+            .write_tag(Tag::ResolutionUnit, unit.to_u16())
+            .unwrap();
     }
 
     /// Set image x-resolution

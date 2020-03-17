@@ -3,9 +3,9 @@ use std::fmt;
 use std::io;
 use std::string;
 
-use decoder::ifd::{Value};
-use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Tag};
+use decoder::ifd::Value;
 use miniz_oxide::inflate::TINFLStatus;
+use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Tag};
 use ColorType;
 
 /// Tiff error kinds.
@@ -62,8 +62,9 @@ impl fmt::Display for TiffFormatError {
             ImageFileDirectoryNotFound => write!(fmt, "Image file directory not found."),
             InconsistentSizesEncountered => write!(fmt, "Inconsistent sizes encountered."),
             InvalidTag => write!(fmt, "Image contains invalid tag."),
-            InvalidTagValueType(ref tag) =>
-                write!(fmt, "Tag `{:?}` did not have the expected value type.", tag),
+            InvalidTagValueType(ref tag) => {
+                write!(fmt, "Tag `{:?}` did not have the expected value type.", tag)
+            }
             RequiredTagNotFound(ref tag) => write!(fmt, "Required tag `{:?}` not found.", tag),
             UnknownPredictor(ref predictor) => {
                 write!(fmt, "Unknown predictor “{}” encountered", predictor)

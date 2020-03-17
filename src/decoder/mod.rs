@@ -1,14 +1,16 @@
-use std::convert::TryFrom;
-use std::collections::HashMap;
-use std::io::{self, Read, Seek};
 use std::cmp;
+use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::io::{self, Read, Seek};
 
 use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
 use tags::{CompressionMethod, PhotometricInterpretation, Predictor, Tag, Type};
 
-use self::stream::{ByteOrder, EndianReader, LZWReader, DeflateReader, PackBitsReader, SmartReader};
+use self::stream::{
+    ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader,
+};
 
 pub mod ifd;
 mod stream;
@@ -217,8 +219,14 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
     let samples = match color_type {
         ColorType::Gray(8) | ColorType::Gray(16) | ColorType::Gray(32) | ColorType::Gray(64) => 1,
         ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) | ColorType::RGB(64) => 3,
-        ColorType::RGBA(8) | ColorType::RGBA(16) | ColorType::RGBA(32) | ColorType::RGBA(64)
-        | ColorType::CMYK(8) | ColorType::CMYK(16) | ColorType::CMYK(32) | ColorType::CMYK(64) => 4,
+        ColorType::RGBA(8)
+        | ColorType::RGBA(16)
+        | ColorType::RGBA(32)
+        | ColorType::RGBA(64)
+        | ColorType::CMYK(8)
+        | ColorType::CMYK(16)
+        | ColorType::CMYK(32)
+        | ColorType::CMYK(64) => 4,
         _ => {
             return Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::HorizontalPredictor(color_type),
@@ -273,28 +281,24 @@ impl<R: Read + Seek> Decoder<R> {
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
-            PhotometricInterpretation::RGB  => {
-                match self.bits_per_sample[..] {
-                    [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
-                    [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
-                    _ => Err(TiffError::UnsupportedError(
-                        TiffUnsupportedError::InterpretationWithBits(
-                            self.photometric_interpretation,
-                            self.bits_per_sample.clone(),
-                        ),
-                    )),
-                }
+            PhotometricInterpretation::RGB => match self.bits_per_sample[..] {
+                [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
+                [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        self.bits_per_sample.clone(),
+                    ),
+                )),
             },
-            PhotometricInterpretation::CMYK => {
-                match self.bits_per_sample[..] {
-                    [c, m, y, k] if [c, c, c] == [m, y, k] => Ok(ColorType::CMYK(c)),
-                    _ => Err(TiffError::UnsupportedError(
-                        TiffUnsupportedError::InterpretationWithBits(
-                            self.photometric_interpretation,
-                            self.bits_per_sample.clone(),
-                        ),
-                    )),
-                }
+            PhotometricInterpretation::CMYK => match self.bits_per_sample[..] {
+                [c, m, y, k] if [c, c, c] == [m, y, k] => Ok(ColorType::CMYK(c)),
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        self.bits_per_sample.clone(),
+                    ),
+                )),
             },
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
                 if self.bits_per_sample.len() == 1 =>
@@ -371,9 +375,11 @@ impl<R: Read + Seek> Decoder<R> {
             self.samples = val;
         }
         match self.samples {
-            1 | 3 | 4 => if let Some(val) = self.find_tag_unsigned_vec(Tag::BitsPerSample)? {
-                self.bits_per_sample = val;
-            },
+            1 | 3 | 4 => {
+                if let Some(val) = self.find_tag_unsigned_vec(Tag::BitsPerSample)? {
+                    self.bits_per_sample = val;
+                }
+            }
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
         }
         Ok(())
@@ -516,20 +522,30 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
     pub fn find_tag_unsigned<T: TryFrom<u32>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
         self.find_tag(tag)?
-            .map(|v| v.into_u32()).transpose()?
-            .map(|value| T::try_from(value)
-                .map_err(|_| TiffFormatError::InvalidTagValueType(tag).into()))
+            .map(|v| v.into_u32())
+            .transpose()?
+            .map(|value| {
+                T::try_from(value).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into())
+            })
             .transpose()
     }
 
     /// Tries to retrieve a vector of all a tag's values and convert them to
     /// the desired unsigned type.
-    pub fn find_tag_unsigned_vec<T: TryFrom<u32>>(&mut self, tag: Tag) -> TiffResult<Option<Vec<T>>> {
+    pub fn find_tag_unsigned_vec<T: TryFrom<u32>>(
+        &mut self,
+        tag: Tag,
+    ) -> TiffResult<Option<Vec<T>>> {
         self.find_tag(tag)?
-            .map(|v| v.into_u32_vec()).transpose()?
-            .map(|v| v.into_iter()
-                .map(|u| T::try_from(u).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into()))
-                .collect())
+            .map(|v| v.into_u32_vec())
+            .transpose()?
+            .map(|v| {
+                v.into_iter()
+                    .map(|u| {
+                        T::try_from(u).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into())
+                    })
+                    .collect()
+            })
             .transpose()
     }
 
@@ -584,21 +600,19 @@ impl<R: Read + Seek> Decoder<R> {
                 let (bytes, reader) = LZWReader::new(
                     &mut self.reader,
                     usize::try_from(length)?,
-                    max_uncompressed_length
+                    max_uncompressed_length,
                 )?;
                 (bytes, Box::new(reader))
             }
             CompressionMethod::PackBits => {
                 let order = self.reader.byte_order;
-                let (bytes, reader) = PackBitsReader::new(
-                    &mut self.reader,
-                    order,
-                    usize::try_from(length)?,
-                )?;
+                let (bytes, reader) =
+                    PackBitsReader::new(&mut self.reader, order, usize::try_from(length)?)?;
                 (bytes, Box::new(reader))
             }
             CompressionMethod::OldDeflate => {
-                let (bytes, reader) = DeflateReader::new(&mut self.reader, max_uncompressed_length)?;
+                let (bytes, reader) =
+                    DeflateReader::new(&mut self.reader, max_uncompressed_length)?;
                 (bytes, Box::new(reader))
             }
             method => {
@@ -685,9 +699,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
-        let rows_per_strip = self
-            .get_tag_u32(Tag::RowsPerStrip)
-            .unwrap_or(self.height);
+        let rows_per_strip = self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height);
 
         if rows_per_strip == 0 {
             return Ok(0);
@@ -733,9 +745,8 @@ impl<R: Read + Seek> Decoder<R> {
                 TiffFormatError::InconsistentSizesEncountered,
             ))?;
 
-        let rows_per_strip = usize::try_from(self
-            .get_tag_u32(Tag::RowsPerStrip)
-            .unwrap_or(self.height))?;
+        let rows_per_strip =
+            usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
 
         let strip_height = cmp::min(
             rows_per_strip,
@@ -744,7 +755,9 @@ impl<R: Read + Seek> Decoder<R> {
 
         let buffer_size = usize::try_from(self.width)? * strip_height * self.bits_per_sample.len();
 
-        if buffer.len() < buffer_size || usize::try_from(byte_count)? / buffer.byte_len() > buffer_size {
+        if buffer.len() < buffer_size
+            || usize::try_from(byte_count)? / buffer.byte_len() > buffer_size
+        {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
@@ -792,11 +805,9 @@ impl<R: Read + Seek> Decoder<R> {
             n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
             n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
             n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
-            n => {
-                Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                ))
-            }
+            n => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+            )),
         }
     }
 
@@ -805,9 +816,8 @@ impl<R: Read + Seek> Decoder<R> {
         self.initialize_strip_decoder()?;
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
 
-        let rows_per_strip = usize::try_from(self
-            .get_tag_u32(Tag::RowsPerStrip)
-            .unwrap_or(self.height))?;
+        let rows_per_strip =
+            usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
 
         let strip_height = cmp::min(
             rows_per_strip,
@@ -824,9 +834,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         self.initialize_strip_decoder()?;
-        let rows_per_strip = usize::try_from(self
-            .get_tag_u32(Tag::RowsPerStrip)
-            .unwrap_or(self.height))?;
+        let rows_per_strip =
+            usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
 
         let samples_per_strip =
             usize::try_from(self.width)? * rows_per_strip * self.bits_per_sample.len();

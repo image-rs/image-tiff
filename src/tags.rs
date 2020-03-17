@@ -131,7 +131,6 @@ pub enum Type(u16) {
 }
 }
 
-
 tags! {
 pub enum CompressionMethod(u16) {
     None = 1,
@@ -173,7 +172,7 @@ pub enum Predictor(u16) {
 }
 }
 
-tags!{
+tags! {
 /// Type to represent resolution units
 pub enum ResolutionUnit(u16) {
     None = 1,

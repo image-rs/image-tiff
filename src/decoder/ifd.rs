@@ -9,8 +9,7 @@ use super::stream::{ByteOrder, EndianReader, SmartReader};
 use tags::{Tag, Type};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
-use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational};
-
+use self::Value::{Ascii, List, Rational, SRational, Signed, Unsigned};
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -72,7 +71,7 @@ impl Value {
                             new_vec.push(numerator);
                             new_vec.push(denominator);
                         }
-                        _ => new_vec.push(v.into_i32()?)
+                        _ => new_vec.push(v.into_i32()?),
                     }
                 }
                 Ok(new_vec)
@@ -182,16 +181,10 @@ impl Entry {
                 Ok(SRational(numerator, denominator))
             }
             (Type::RATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                Ok(Rational(
-                    decoder.read_long()?,
-                    decoder.read_long()?,
-                ))
+                Ok(Rational(decoder.read_long()?, decoder.read_long()?))
             }),
             (Type::SRATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                Ok(SRational(
-                    decoder.read_slong()?,
-                    decoder.read_slong()?,
-                ))
+                Ok(SRational(decoder.read_slong()?, decoder.read_slong()?))
             }),
             (Type::ASCII, n) => {
                 let n = usize::try_from(n)?;
@@ -209,10 +202,17 @@ impl Entry {
     }
 
     #[inline]
-    fn decode_offset<R, F>(&self, value_count: u32, bo: ByteOrder, limits: &super::Limits, decoder: &mut super::Decoder<R>, decode_fn: F) -> TiffResult<Value>
-        where
-            R: Read + Seek,
-            F: Fn(&mut super::Decoder<R>) -> TiffResult<Value>,
+    fn decode_offset<R, F>(
+        &self,
+        value_count: u32,
+        bo: ByteOrder,
+        limits: &super::Limits,
+        decoder: &mut super::Decoder<R>,
+        decode_fn: F,
+    ) -> TiffResult<Value>
+    where
+        R: Read + Seek,
+        F: Fn(&mut super::Decoder<R>) -> TiffResult<Value>,
     {
         let value_count = usize::try_from(value_count)?;
         if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
@@ -235,7 +235,7 @@ fn offset_to_bytes(n: usize, entry: &Entry) -> TiffResult<Value> {
         entry.offset[0..n]
             .iter()
             .map(|&e| Unsigned(u32::from(e)))
-            .collect()
+            .collect(),
     ))
 }
 
@@ -246,7 +246,7 @@ fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
         entry.offset[0..n]
             .iter()
             .map(|&e| Signed(i32::from(e as i8)))
-            .collect()
+            .collect(),
     ))
 }
 
