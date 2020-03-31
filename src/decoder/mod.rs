@@ -584,7 +584,7 @@ impl<R: Read + Seek> Decoder<R> {
                 let (bytes, reader) = LZWReader::new(
                     &mut self.reader,
                     usize::try_from(length)?,
-                    max_uncompressed_length
+                    max_uncompressed_length * buffer.byte_len()
                 )?;
                 (bytes, Box::new(reader))
             }
@@ -744,7 +744,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let buffer_size = usize::try_from(self.width)? * strip_height * self.bits_per_sample.len();
 
-        if buffer.len() < buffer_size || usize::try_from(byte_count)? / buffer.byte_len() > buffer_size {
+        if buffer.len() < buffer_size {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
