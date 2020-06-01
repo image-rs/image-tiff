@@ -1,3 +1,12 @@
+# Version 0.5.0
+
+* Added support for 32-bit and 64-bit decoded values.
+* Added CMYK(16|32|64) color type support.
+* Check many internal integer conversions to increase stability. This should
+  only lead to images being reported as faulty that would previously silently
+  break platform limits. If there are any false positives, please report them.
+* Remove an erroneous check of decoded length in lzw compressed images.
+
 # Version 0.4.0
 
 * Several enumerations are now non_exhaustive for future extensions.
