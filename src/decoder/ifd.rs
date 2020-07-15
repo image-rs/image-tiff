@@ -200,8 +200,8 @@ impl Entry {
                 }
                 if n <= 4 {
                     let mut buf = vec![0; n];
-                    self.r(bo).read_exact(&mut buf ).unwrap();
-                    let v = String::from_utf8(buf).unwrap();
+                    self.r(bo).read_exact(&mut buf )?;
+                    let v = String::from_utf8(buf)?;
                     let v = v.trim_matches(char::from(0));
                     Ok(Ascii(v.into()))
                 } else {
