@@ -1,3 +1,4 @@
+#[macro_export]
 macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
