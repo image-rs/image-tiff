@@ -27,7 +27,7 @@ impl TiffByteOrder for BigEndian {
 }
 
 pub struct TiffWriter<W> {
-    writer: W,
+    pub writer: W,
     offset: u64,
 }
 

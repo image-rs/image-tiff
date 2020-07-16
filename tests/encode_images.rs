@@ -3,7 +3,7 @@ extern crate tiff;
 use tiff::decoder::{Decoder, DecodingResult};
 use tiff::encoder::{colortype, TiffEncoder, SRational};
 use tiff::ColorType;
-use tiff::tags::Tag;
+use tiff::tags::{Tag, CompressionMethod};
 
 use std::fs::File;
 use std::io::{Cursor, Seek, SeekFrom};
@@ -24,7 +24,7 @@ fn encode_decode() {
     {
         let mut tiff = TiffEncoder::new(&mut file).unwrap();
 
-        tiff.write_image::<colortype::RGB8>(100, 100, &image_data)
+        tiff.write_image::<colortype::RGB8>(100, 100, &image_data, CompressionMethod::None, vec![])
             .unwrap();
     }
     {
@@ -49,7 +49,7 @@ fn test_encode_undersized_buffer() {
     let output = Vec::new();
     let mut output_stream = Cursor::new(output);
     if let Ok(mut tiff) = TiffEncoder::new(&mut output_stream) {
-        let res = tiff.write_image::<colortype::RGB8>(50, 50, &input_data);
+        let res = tiff.write_image::<colortype::RGB8>(50, 50, &input_data, CompressionMethod::None, vec![]);
         assert!(res.is_err());
     }
 }
@@ -74,7 +74,7 @@ macro_rules! test_roundtrip {
                 let mut tiff = TiffEncoder::new(&mut file).unwrap();
 
                 let (width, height) = decoder.dimensions().unwrap();
-                tiff.write_image::<C>(width, height, &image_data)
+                tiff.write_image::<C>(width, height, &image_data, CompressionMethod::None, vec![])
                     .unwrap();
             }
             file.seek(SeekFrom::Start(0)).unwrap();
@@ -151,7 +151,7 @@ fn test_multiple_byte() {
 
     {
         let mut tiff = TiffEncoder::new(&mut data).unwrap();
-        let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
+        let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1, CompressionMethod::None, vec![]).unwrap();
         let encoder = image_encoder.encoder();
 
         encoder.write_tag(Tag::Unknown(65000), &[1_u8][..]).unwrap();
@@ -180,7 +180,7 @@ fn test_signed() {
 
     {
         let mut tiff = TiffEncoder::new(&mut data).unwrap();
-        let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
+        let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1, CompressionMethod::None, vec![]).unwrap();
         let encoder = image_encoder.encoder();
 
         //Use the "reusable" tags section as per the TIFF6 spec
@@ -241,10 +241,10 @@ fn test_multipage_image() {
 
         // write first grayscale image (2x2 16-bit)
         let img1: Vec<u16> = [1, 2, 3, 4].to_vec();
-        img_encoder.write_image::<colortype::Gray16>(2, 2, &img1[..]).unwrap();
+        img_encoder.write_image::<colortype::Gray16>(2, 2, &img1[..], CompressionMethod::None, vec![]).unwrap();
         // write second grayscale image (3x3 8-bit)
         let img2: Vec<u8> = [9, 8, 7, 6, 5, 4, 3, 2, 1].to_vec();
-        img_encoder.write_image::<colortype::Gray8>(3, 3, &img2[..]).unwrap();
+        img_encoder.write_image::<colortype::Gray8>(3, 3, &img2[..], CompressionMethod::None, vec![]).unwrap();
     }
 
     // seek to the beginning of the file, so that it can be decoded
