@@ -4,7 +4,7 @@
 //! lossless and lossy compression.
 //!
 //! # Related Links
-//! * <http://partners.adobe.com/public/developer/tiff/index.html> - The TIFF specification
+//! * <https://www.adobe.io/open/standards/TIFF.html> - The TIFF specification
 
 extern crate byteorder;
 extern crate lzw;
