@@ -105,6 +105,11 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     YResolution = 283,
     // Advanced tags
     Predictor = 317,
+    TileWidth = 322,
+    TileLength = 323,
+    TileOffsets = 324,
+    TileByteCounts = 325,
+    SampleFormat = 339,
 }
 }
 
