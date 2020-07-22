@@ -421,6 +421,18 @@ impl<R: Read + Seek> Decoder<R> {
         self.reader.read_i32()
     }
 
+    /// Reads a TIFF float valu
+    #[inline]
+    pub fn read_float(&mut self) -> Result<f32, io::Error> {
+        self.reader.read_f32()
+    }
+
+     /// Reads a TIFF double value
+    #[inline]
+    pub fn read_double(&mut self) -> Result<f64, io::Error> {
+        self.reader.read_f64()
+    }
+
     /// Reads a string
     #[inline]
     pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
@@ -572,7 +584,7 @@ impl<R: Read + Seek> Decoder<R> {
     ) -> TiffResult<usize> {
         let color_type = self.colortype()?;
         self.goto_offset(offset)?;
-        let (bytes, mut reader): (usize, Box<EndianReader>) = match self.compression_method {
+        let (bytes, mut reader): (usize, Box<dyn EndianReader>) = match self.compression_method {
             CompressionMethod::None => {
                 let order = self.reader.byte_order;
                 (

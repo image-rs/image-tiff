@@ -35,7 +35,7 @@ pub enum TiffError {
 ///
 /// The list of variants may grow to incorporate errors of future features. Matching against this
 /// exhaustively is not covered by interface stability guarantees.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TiffFormatError {
     TiffSignatureNotFound,
     TiffSignatureInvalid,
@@ -47,6 +47,8 @@ pub enum TiffFormatError {
     UnknownPredictor(u16),
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
+    FloatExpected(Value),
+    DoubleExpected(Value),
     InflateError(InflateError),
     #[doc(hidden)]
     /// Do not match against this variant. It may get removed.
@@ -73,6 +75,12 @@ impl fmt::Display for TiffFormatError {
             }
             SignedIntegerExpected(ref val) => {
                 write!(fmt, "Expected signed integer, {:?} found.", val)
+            }
+            FloatExpected(ref val) => {
+                write!(fmt, "Expected float, {:?} found.", val)
+            }
+            DoubleExpected(ref val) => {
+                write!(fmt, "Expected double, {:?} found.", val)
             }
             InflateError(_) => write!(fmt, "Failed to decode inflate data."),
             __NonExhaustive => unreachable!(),

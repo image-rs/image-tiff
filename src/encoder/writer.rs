@@ -86,12 +86,27 @@ impl<W: Write> TiffWriter<W> {
         Ok(())
     }
 
+    pub fn write_f32(&mut self, n: f32) -> Result<(), io::Error> {
+        self.writer.write_f32::<NativeEndian>(n)?;
+        self.offset += 4;
+
+        Ok(())
+    }
+    
     pub fn write_u64(&mut self, n: u64) -> Result<(), io::Error> {
         self.writer.write_u64::<NativeEndian>(n)?;
         self.offset += 8;
 
         Ok(())
     }
+    
+    pub fn write_f64(&mut self, n: f64) -> Result<(), io::Error> {
+        self.writer.write_f64::<NativeEndian>(n)?;
+        self.offset += 8;
+
+        Ok(())
+    }
+    
 
     pub fn pad_word_boundary(&mut self) -> Result<(), io::Error> {
         if self.offset % 4 != 0 {
