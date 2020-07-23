@@ -122,10 +122,16 @@ impl Entry {
         decoder: &mut super::Decoder<R>,
     ) -> TiffResult<Value> {
         let bo = decoder.byte_order();
-        let bigtiff_value = if decoder.bigtiff && 4 < self.count && self.count <= 8 {
+        let bigtiff_value = if decoder.bigtiff {
             match (self.type_, self.count) {
-                (Type::BYTE, n) => Some(offset_to_bytes(n as usize, self)?),
-                (Type::SBYTE, n) => Some(offset_to_sbytes(n as usize, self)?),
+                (Type::BYTE, 5) => Some(offset_to_bytes(5, self)?),
+                (Type::BYTE, 6) => Some(offset_to_bytes(6, self)?),
+                (Type::BYTE, 7) => Some(offset_to_bytes(7, self)?),
+                (Type::BYTE, 8) => Some(offset_to_bytes(8, self)?),
+                (Type::SBYTE, 5) => Some(offset_to_sbytes(5, self)?),
+                (Type::SBYTE, 6) => Some(offset_to_sbytes(6, self)?),
+                (Type::SBYTE, 7) => Some(offset_to_sbytes(7, self)?),
+                (Type::SBYTE, 8) => Some(offset_to_sbytes(8, self)?),
                 (Type::SHORT, 3) => {
                     let mut r = self.r(bo);
                     Some(List(vec![
@@ -249,7 +255,6 @@ impl Entry {
                     Ok(SRational(decoder.read_slong()?.into(), decoder.read_slong()?.into()))
                 }),
                 (Type::ASCII, n) => {
-                    println!("ASCIII COUNT {}", n);
                     let n = usize::try_from(n)?;
                     if n > limits.decoding_buffer_size {
                         return Err(TiffError::LimitsExceeded);

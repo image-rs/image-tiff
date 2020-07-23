@@ -528,7 +528,8 @@ impl<R: Read + Seek> Decoder<R> {
             }
             Some(offset) => self.goto_offset(offset)?,
         }
-        for _ in 0..self.read_short()? {
+        let num_tags = if self.bigtiff { self.read_long8()? } else { self.read_short()?.into() };
+        for _ in 0..num_tags {
             let (tag, entry) = match self.read_entry()? {
                 Some(val) => val,
                 None => continue, // Unknown data type in tag, skip
@@ -545,7 +546,6 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        println!("IFD {:?}", self.ifd.as_ref().unwrap().get(&tag));
         let entry = match self.ifd.as_ref().unwrap().get(&tag) {
             None => return Ok(None),
             Some(entry) => entry.clone(),
