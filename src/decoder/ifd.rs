@@ -1,7 +1,7 @@
 //! Function for reading TIFF tags
 
 use std::collections::HashMap;
-use std::convert::TryFrom;
+use std::convert::{TryInto, TryFrom};
 use std::io::{self, Read, Seek};
 use std::mem;
 
@@ -26,6 +26,24 @@ pub enum Value {
 }
 
 impl Value {
+    pub fn into_u32(self) -> TiffResult<u32> {
+        match self {
+            Unsigned(val) => Ok(u32::try_from(val)?),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_i32(self) -> TiffResult<i32> {
+        match self {
+            Signed(val) => Ok(i32::try_from(val)?),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
     pub fn into_u64(self) -> TiffResult<u64> {
         match self {
             Unsigned(val) => Ok(val),
@@ -38,6 +56,47 @@ impl Value {
     pub fn into_i64(self) -> TiffResult<i64> {
         match self {
             Signed(val) => Ok(val),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_u32_vec(self) -> TiffResult<Vec<u32>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    new_vec.push(v.into_u32()?)
+                }
+                Ok(new_vec)
+            }
+            Unsigned(val) => Ok(vec![u32::try_from(val)?]),
+            Rational(numerator, denominator) => Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?]),
+            Ascii(val) => Ok(val.chars().map(u32::from).collect()),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_i32_vec(self) -> TiffResult<Vec<i32>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    match v {
+                        SRational(numerator, denominator) => {
+                            new_vec.push(i32::try_from(numerator)?);
+                            new_vec.push(i32::try_from(denominator)?);
+                        }
+                        _ => new_vec.push(v.into_i32()?),
+                    }
+                }
+                Ok(new_vec)
+            }
+            Signed(val) => Ok(vec![i32::try_from(val)?]),
+            SRational(numerator, denominator) => Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?]),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -103,7 +162,13 @@ impl ::std::fmt::Debug for Entry {
 }
 
 impl Entry {
-    pub fn new(type_: Type, count: u64, offset: [u8; 8]) -> Entry {
+    pub fn new(type_: Type, count: u32, offset: [u8; 4]) -> Entry {
+        let mut offset = offset.to_vec();
+        offset.append(&mut vec![0; 4]);
+        Entry::new_u64(type_, count.into(), offset[..].try_into().unwrap())
+    }
+
+    pub fn new_u64(type_: Type, count: u64, offset: [u8; 8]) -> Entry {
         Entry {
             type_,
             count,
@@ -259,12 +324,11 @@ impl Entry {
                     if n > limits.decoding_buffer_size {
                         return Err(TiffError::LimitsExceeded);
                     }
-                    let offset = if decoder.bigtiff {
-                        self.r(bo).read_u64()?
+                    if decoder.bigtiff {
+                        decoder.goto_offset_u64(self.r(bo).read_u64()?)?
                     } else {
-                        self.r(bo).read_u32()?.into()
-                    };
-                    decoder.goto_offset(offset)?;
+                        decoder.goto_offset(self.r(bo).read_u32()?)?
+                    }
                     let string = decoder.read_string(n)?;
                     Ok(Ascii(string))
                 }
@@ -287,12 +351,11 @@ impl Entry {
         }
 
         let mut v = Vec::with_capacity(value_count);
-        let offset = if decoder.bigtiff {
-            self.r(bo).read_u64()?
+        if decoder.bigtiff {
+            decoder.goto_offset_u64(self.r(bo).read_u64()?)?
         } else {
-            self.r(bo).read_u32()?.into()
-        };
-        decoder.goto_offset(offset)?;
+            decoder.goto_offset(self.r(bo).read_u32()?)?
+        }
         for _ in 0..value_count {
             v.push(decode_fn(decoder)?)
         }

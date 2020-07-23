@@ -165,11 +165,11 @@ fn test_multiple_byte() {
     {
         let mut decoder = Decoder::new(&mut data).unwrap();
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_u64_vec().unwrap(), [1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_u64_vec().unwrap(), [1, 2]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_u64_vec().unwrap(), [1, 2, 3]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_u64_vec().unwrap(), [1, 2, 3, 4]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_u64_vec().unwrap(), [1, 2, 3, 4, 5]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_u32_vec().unwrap(), [1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_u32_vec().unwrap(), [1, 2]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_u32_vec().unwrap(), [1, 2, 3]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_u32_vec().unwrap(), [1, 2, 3, 4]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_u32_vec().unwrap(), [1, 2, 3, 4, 5]);
     }
 }
 
@@ -209,24 +209,24 @@ fn test_signed() {
     {
         let mut decoder = Decoder::new(&mut data).unwrap();
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_i64().unwrap(), -1, );
-        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_i64_vec().unwrap(), [-1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_i64_vec().unwrap(), [-1, 2]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_i64_vec().unwrap(), [-1, 2, -3]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_i64_vec().unwrap(), [-1, 2, -3, 4]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65005)).unwrap().into_i64_vec().unwrap(), [-1, 2, -3, 4, -5], );
+        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_i32().unwrap(), -1, );
+        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_i32_vec().unwrap(), [-1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3, 4]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65005)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3, 4, -5], );
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65010)).unwrap().into_i64().unwrap(), -1);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65011)).unwrap().into_i64_vec().unwrap(), [-1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65012)).unwrap().into_i64_vec().unwrap(), [-1, 2]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65013)).unwrap().into_i64_vec().unwrap(), [-1, 2, -3]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65010)).unwrap().into_i32().unwrap(), -1);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65011)).unwrap().into_i32_vec().unwrap(), [-1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65012)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65013)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3]);
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65020)).unwrap().into_i64().unwrap(), -1);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65021)).unwrap().into_i64_vec().unwrap(), [-1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65022)).unwrap().into_i64_vec().unwrap(), [-1, 2]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65020)).unwrap().into_i32().unwrap(), -1);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65021)).unwrap().into_i32_vec().unwrap(), [-1]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65022)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65030)).unwrap().into_i64_vec().unwrap(), [-1, 100]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65031)).unwrap().into_i64_vec().unwrap(), [-1_i64, 100, 2, 100]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65030)).unwrap().into_i32_vec().unwrap(), [-1, 100]);
+        assert_eq!(decoder.get_tag(Tag::Unknown(65031)).unwrap().into_i32_vec().unwrap(), [-1_i32, 100, 2, 100]);
     }
 }
 

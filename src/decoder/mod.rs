@@ -372,8 +372,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
         self.ifd = Some(self.read_ifd()?);
-        self.width = u32::try_from(self.get_tag_u64(Tag::ImageWidth)?)?;
-        self.height = u32::try_from(self.get_tag_u64(Tag::ImageLength)?)?;
+        self.width = self.get_tag_u32(Tag::ImageWidth)?;
+        self.height = self.get_tag_u32(Tag::ImageLength)?;
         self.strip_decoder = None;
 
         self.photometric_interpretation = self
@@ -466,19 +466,31 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Reads a TIFF IFA offset/value field
     #[inline]
-    pub fn read_offset(&mut self) -> Result<[u8; 8], io::Error> {
-        let bytes_to_read = if self.bigtiff { 8 } else { 4 };
-        let mut val = vec![0; bytes_to_read];
-        self.reader.read_exact(&mut val)?;
-        if ! self.bigtiff {
-            val.append(&mut vec![0; 4])
+    pub fn read_offset(&mut self) -> TiffResult<[u8; 4]> {
+        if self.bigtiff {
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))
         }
-        Ok(val[..].try_into().unwrap())
+        let mut val = [0; 4];
+        self.reader.read_exact(&mut val)?;
+        Ok(val)
+    }
+
+    /// Reads a TIFF IFA offset/value field
+    #[inline]
+    pub fn read_offset_u64(&mut self) -> Result<[u8; 8], io::Error> {
+        let mut val = [0; 8];
+        self.reader.read_exact(&mut val)?;
+        Ok(val)
     }
 
     /// Moves the cursor to the specified offset
     #[inline]
-    pub fn goto_offset(&mut self, offset: u64) -> io::Result<()> {
+    pub fn goto_offset(&mut self, offset: u32) -> io::Result<()> {
+        self.goto_offset_u64(offset.into())
+    }
+
+    #[inline]
+    pub fn goto_offset_u64(&mut self, offset: u64) -> io::Result<()> {
         self.reader
             .seek(io::SeekFrom::Start(offset))
             .map(|_| ())
@@ -502,18 +514,22 @@ impl<R: Read + Seek> Decoder<R> {
                 return Ok(None);
             }
         };
-        let count= if self.bigtiff {
-            self.read_long8()?
+        let entry = if self.bigtiff {
+            ifd::Entry::new_u64(
+                type_,
+                self.read_long8()?,
+                self.read_offset_u64()?
+            )
         } else {
-            self.read_long()?.into()
+            ifd::Entry::new(
+                type_,
+                self.read_long()?, 
+                self.read_offset()?
+            )
         };
         Ok(Some((
             tag,
-            ifd::Entry::new(
-                type_,
-                count, 
-                self.read_offset()?
-            ),
+            entry,
         )))
     }
 
@@ -526,7 +542,7 @@ impl<R: Read + Seek> Decoder<R> {
                     TiffFormatError::ImageFileDirectoryNotFound,
                 ))
             }
-            Some(offset) => self.goto_offset(offset)?,
+            Some(offset) => self.goto_offset_u64(offset)?,
         }
         let num_tags = if self.bigtiff { self.read_long8()? } else { self.read_short()?.into() };
         for _ in 0..num_tags {
@@ -595,11 +611,17 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
+        self.get_tag(tag)?.into_u32()
+    }
     pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
         self.get_tag(tag)?.into_u64()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
+        self.get_tag(tag)?.into_u32_vec()
+    }
     pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
         self.get_tag(tag)?.into_u64_vec()
     }
@@ -614,7 +636,7 @@ impl<R: Read + Seek> Decoder<R> {
         max_uncompressed_length: usize,
     ) -> TiffResult<usize> {
         let color_type = self.colortype()?;
-        self.goto_offset(offset)?;
+        self.goto_offset_u64(offset)?;
         let (bytes, mut reader): (usize, Box<dyn EndianReader>) = match self.compression_method {
             CompressionMethod::None => {
                 let order = self.reader.byte_order;
@@ -729,8 +751,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
         let rows_per_strip = self
-            .get_tag_u64(Tag::RowsPerStrip)
-            .map(u32::try_from)?
+            .get_tag_u32(Tag::RowsPerStrip)
             .unwrap_or(self.height);
 
         if rows_per_strip == 0 {
@@ -778,8 +799,7 @@ impl<R: Read + Seek> Decoder<R> {
             ))?;
 
         let rows_per_strip = usize::try_from(self
-            .get_tag_u64(Tag::RowsPerStrip)
-            .map(u32::try_from)?
+            .get_tag_u32(Tag::RowsPerStrip)
             .unwrap_or(self.height))?;
 
         let strip_height = cmp::min(
@@ -851,8 +871,7 @@ impl<R: Read + Seek> Decoder<R> {
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
 
         let rows_per_strip = usize::try_from(self
-            .get_tag_u64(Tag::RowsPerStrip)
-            .map(u32::try_from)?
+            .get_tag_u32(Tag::RowsPerStrip)
             .unwrap_or(self.height))?;
 
         let strip_height = cmp::min(
@@ -871,8 +890,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         self.initialize_strip_decoder()?;
         let rows_per_strip = usize::try_from(self
-            .get_tag_u64(Tag::RowsPerStrip)
-            .map(u32::try_from)?
+            .get_tag_u32(Tag::RowsPerStrip)
             .unwrap_or(self.height))?;
 
         let samples_per_strip =
