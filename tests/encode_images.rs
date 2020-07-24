@@ -1,8 +1,8 @@
 extern crate tiff;
 
-use tiff::decoder::{Decoder, DecodingResult};
-use tiff::encoder::{colortype, TiffEncoder, SRational};
-use tiff::ColorType;
+use tiff::decoder::{Decoder, DecodingResult, ifd};
+use tiff::encoder::{colortype, TiffEncoder, SRational, DirectoryEncoder};
+use tiff::{ColorType, TiffResult};
 use tiff::tags::Tag;
 
 use std::fs::File;
@@ -23,15 +23,20 @@ fn encode_decode() {
     let mut file = Cursor::new(Vec::new());
     {
         let mut tiff = TiffEncoder::new(&mut file).unwrap();
+        let additional_encoding: Box<dyn FnOnce(&mut DirectoryEncoder<&mut Cursor<Vec<u8>>>)-> TiffResult<()>> =  Box::new(|e| {
+            e.write_tag(Tag::Artist, "Image-tiff")?;
+            Ok(())
+        });
 
-        tiff.write_image::<colortype::RGB8>(100, 100, &image_data)
-            .unwrap();
+        tiff.write_image_extended::<colortype::RGB8>(100, 100, &image_data, additional_encoding).unwrap();
+
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();
         let mut decoder = Decoder::new(&mut file).unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
+        assert_eq!(decoder.get_tag(Tag::Artist).unwrap(), ifd::Value::Ascii("Image-tiff".into()));
         if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
             assert_eq!(image_data, img_res);
         } else {

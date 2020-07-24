@@ -393,8 +393,17 @@ impl<W: Write + Seek> TiffEncoder<W> {
         width: u32,
         height: u32,
     ) -> TiffResult<ImageEncoder<W, C>> {
+        self.new_image_extended(width, height, Box::new(|_| Ok(())))
+    }
+
+    pub fn new_image_extended<C: ColorType>(
+        &mut self,
+        width: u32,
+        height: u32,
+        additional_encoding: Box<dyn FnOnce(&mut DirectoryEncoder<W>) -> TiffResult<()>>
+    ) -> TiffResult<ImageEncoder<W, C>> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        ImageEncoder::new(encoder, width, height)
+        ImageEncoder::new(encoder, width, height, additional_encoding)
     }
 
     /// Convenience function to write an entire image from memory.
@@ -403,6 +412,18 @@ impl<W: Write + Seek> TiffEncoder<W> {
         width: u32,
         height: u32,
         data: &[C::Inner],
+    ) -> TiffResult<()> where
+        [C::Inner]: TiffValue,
+    {
+        self.write_image_extended::<C>(width, height, data, Box::new(|_| Ok(())))
+    }
+
+    pub fn write_image_extended<C: ColorType>(
+        &mut self,
+        width: u32,
+        height: u32,
+        data: &[C::Inner],
+        additional_encoding: Box<dyn FnOnce(&mut DirectoryEncoder<W>) -> TiffResult<()>>
     ) -> TiffResult<()>
     where
         [C::Inner]: TiffValue,
@@ -418,7 +439,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
         }
 
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height)?;
+        let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height, additional_encoding)?;
 
         let mut idx = 0;
         while image.next_strip_sample_count() > 0 {
@@ -579,6 +600,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         mut encoder: DirectoryEncoder<'a, W>,
         width: u32,
         height: u32,
+        additional_encoding: Box<dyn FnOnce(&mut DirectoryEncoder<'a, W>) -> TiffResult<()>>,
     ) -> TiffResult<ImageEncoder<'a, W, T>> {
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
@@ -601,6 +623,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
+
+        additional_encoding(&mut encoder)?;
 
         Ok(ImageEncoder {
             encoder,
