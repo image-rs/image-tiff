@@ -363,7 +363,6 @@ impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
 /// let mut tiff = TiffEncoder::new(&mut file).unwrap();
 ///
 /// tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
-/// # You can also add custom encoding (add other tags...) with the function write_image_extended
 /// # }
 /// ```
 pub struct TiffEncoder<W> {
