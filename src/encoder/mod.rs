@@ -349,7 +349,6 @@ impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
 ///
 /// With this type you can get a `DirectoryEncoder` or a `ImageEncoder`
 /// to encode tiff ifd directories with images.
-/// You can also add custom encoding (add other tags...) with the function write_image_extended
 ///
 /// See `DirectoryEncoder` and `ImageEncoder`.
 ///
@@ -364,6 +363,7 @@ impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
 /// let mut tiff = TiffEncoder::new(&mut file).unwrap();
 ///
 /// tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
+/// # You can also add custom encoding (add other tags...) with the function write_image_extended
 /// # }
 /// ```
 pub struct TiffEncoder<W> {
