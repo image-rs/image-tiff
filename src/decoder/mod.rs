@@ -457,11 +457,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Reads a string
     #[inline]
     pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
-        let mut out = String::with_capacity(length);
-        self.reader.read_to_string(&mut out)?;
+        let mut out = vec![0; length];
+        self.reader.read_exact(&mut out)?;
         // Strings may be null-terminated, so we trim anything downstream of the null byte
-        let trimmed = out.bytes().take_while(|&n| n != 0).collect::<Vec<u8>>();
-        Ok(String::from_utf8(trimmed)?)
+        if let Some(first) = out.iter().position(|&b| b == 0) {
+            out.truncate(first);
+        }
+        Ok(String::from_utf8(out)?)
     }
 
     /// Reads a TIFF IFA offset/value field

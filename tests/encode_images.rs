@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::{Decoder, DecodingResult};
+use tiff::decoder::{Decoder, DecodingResult, ifd};
 use tiff::encoder::{colortype, TiffEncoder, SRational};
 use tiff::ColorType;
 use tiff::tags::Tag;
@@ -24,14 +24,18 @@ fn encode_decode() {
     {
         let mut tiff = TiffEncoder::new(&mut file).unwrap();
 
-        tiff.write_image::<colortype::RGB8>(100, 100, &image_data)
+        let mut image = tiff.new_image::<colortype::RGB8>(100, 100)
             .unwrap();
+        image.encoder().write_tag(Tag::Artist, "Image-tiff").unwrap();
+        image.write_data(&image_data).unwrap();
+
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();
         let mut decoder = Decoder::new(&mut file).unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
+        assert_eq!(decoder.get_tag(Tag::Artist).unwrap(), ifd::Value::Ascii("Image-tiff".into()));
         if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
             assert_eq!(image_data, img_res);
         } else {

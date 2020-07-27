@@ -348,13 +348,22 @@ impl Entry {
                     if n > limits.decoding_buffer_size {
                         return Err(TiffError::LimitsExceeded);
                     }
-                    if decoder.bigtiff {
-                        decoder.goto_offset_u64(self.r(bo).read_u64()?)?
+                    
+                    if (n <= 4 && !decoder.bigtiff) || (n <= 8 && decoder.bigtiff) {
+                        let mut buf = vec![0; n];
+                        self.r(bo).read_exact(&mut buf )?;
+                        let v = String::from_utf8(buf)?;
+                        let v = v.trim_matches(char::from(0));
+                        Ok(Ascii(v.into()))
                     } else {
-                        decoder.goto_offset(self.r(bo).read_u32()?)?
+                        if decoder.bigtiff {
+                            decoder.goto_offset_u64(self.r(bo).read_u64()?)?
+                        } else {
+                            decoder.goto_offset(self.r(bo).read_u32()?)?
+                        }
+                        let string = decoder.read_string(n)?;
+                        Ok(Ascii(string))
                     }
-                    let string = decoder.read_string(n)?;
-                    Ok(Ascii(string))
                 }
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedDataType,
