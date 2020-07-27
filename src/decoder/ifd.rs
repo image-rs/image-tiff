@@ -9,17 +9,21 @@ use super::stream::{ByteOrder, EndianReader, SmartReader};
 use tags::{Tag, Type};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
-use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational};
+use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational, RationalBig, UnsignedBig, SignedBig, SRationalBig};
 
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Value {
-    Signed(i64),
-    Unsigned(u64),
+    Signed(i32),
+    SignedBig(i64),
+    Unsigned(u32),
+    UnsignedBig(u64),
     List(Vec<Value>),
-    Rational(u64, u64),
-    SRational(i64, i64),
+    Rational(u32, u32),
+    RationalBig(u64, u64),
+    SRational(i32, i32),
+    SRationalBig(i64, i64),
     Ascii(String),
     #[doc(hidden)] // Do not match against this.
     __NonExhaustive,
@@ -28,7 +32,8 @@ pub enum Value {
 impl Value {
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
-            Unsigned(val) => Ok(u32::try_from(val)?),
+            Unsigned(val) => Ok(val),
+            UnsignedBig(val) => Ok(u32::try_from(val)?),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),
@@ -37,7 +42,8 @@ impl Value {
 
     pub fn into_i32(self) -> TiffResult<i32> {
         match self {
-            Signed(val) => Ok(i32::try_from(val)?),
+            Signed(val) => Ok(val),
+            SignedBig(val) => Ok(i32::try_from(val)?),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -46,7 +52,8 @@ impl Value {
 
     pub fn into_u64(self) -> TiffResult<u64> {
         match self {
-            Unsigned(val) => Ok(val),
+            Unsigned(val) => Ok(val.into()),
+            UnsignedBig(val) => Ok(val),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),
@@ -55,7 +62,8 @@ impl Value {
 
     pub fn into_i64(self) -> TiffResult<i64> {
         match self {
-            Signed(val) => Ok(val),
+            Signed(val) => Ok(val.into()),
+            SignedBig(val) => Ok(val),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -71,8 +79,10 @@ impl Value {
                 }
                 Ok(new_vec)
             }
-            Unsigned(val) => Ok(vec![u32::try_from(val)?]),
-            Rational(numerator, denominator) => Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?]),
+            Unsigned(val) => Ok(vec![val]),
+            UnsignedBig(val) => Ok(vec![u32::try_from(val)?]),
+            Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
+            RationalBig(numerator, denominator) => Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?]),
             Ascii(val) => Ok(val.chars().map(u32::from).collect()),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
@@ -87,6 +97,10 @@ impl Value {
                 for v in vec {
                     match v {
                         SRational(numerator, denominator) => {
+                            new_vec.push(numerator);
+                            new_vec.push(denominator);
+                        }
+                        SRationalBig(numerator, denominator) => {
                             new_vec.push(i32::try_from(numerator)?);
                             new_vec.push(i32::try_from(denominator)?);
                         }
@@ -95,8 +109,10 @@ impl Value {
                 }
                 Ok(new_vec)
             }
-            Signed(val) => Ok(vec![i32::try_from(val)?]),
-            SRational(numerator, denominator) => Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?]),
+            Signed(val) => Ok(vec![val]),
+            SignedBig(val) => Ok(vec![i32::try_from(val)?]),
+            SRational(numerator, denominator) => Ok(vec![numerator, denominator]),
+            SRationalBig(numerator, denominator) => Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?]),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -112,8 +128,10 @@ impl Value {
                 }
                 Ok(new_vec)
             }
-            Unsigned(val) => Ok(vec![val]),
-            Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
+            Unsigned(val) => Ok(vec![val.into()]),
+            UnsignedBig(val) => Ok(vec![val]),
+            Rational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
+            RationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
             Ascii(val) => Ok(val.chars().map(u32::from).map(u64::from).collect()),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
@@ -128,6 +146,10 @@ impl Value {
                 for v in vec {
                     match v {
                         SRational(numerator, denominator) => {
+                            new_vec.push(numerator.into());
+                            new_vec.push(denominator.into());
+                        }
+                        SRationalBig(numerator, denominator) => {
                             new_vec.push(numerator);
                             new_vec.push(denominator);
                         }
@@ -136,8 +158,10 @@ impl Value {
                 }
                 Ok(new_vec)
             }
-            Signed(val) => Ok(vec![val]),
-            SRational(numerator, denominator) => Ok(vec![numerator, denominator]),
+            Signed(val) => Ok(vec![val.into()]),
+            SignedBig(val) => Ok(vec![val]),
+            SRational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
+            SRationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -200,61 +224,61 @@ impl Entry {
                 (Type::SHORT, 3) => {
                     let mut r = self.r(bo);
                     Some(List(vec![
-                        Unsigned(u64::from(r.read_u16()?)),
-                        Unsigned(u64::from(r.read_u16()?)),
-                        Unsigned(u64::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
                     ]))
                 }
                 (Type::SSHORT, 3) => {
                     let mut r = self.r(bo);
                     Some(List(vec![
-                        Signed(i64::from(r.read_i16()?)),
-                        Signed(i64::from(r.read_i16()?)),
-                        Signed(i64::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
                     ]))
                 }
                 (Type::SHORT, 4) => {
                     let mut r = self.r(bo);
                     Some(List(vec![
-                        Unsigned(u64::from(r.read_u16()?)),
-                        Unsigned(u64::from(r.read_u16()?)),
-                        Unsigned(u64::from(r.read_u16()?)),
-                        Unsigned(u64::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
                     ]))
                 }
                 (Type::SSHORT, 4) => {
                     let mut r = self.r(bo);
                     Some(List(vec![
-                        Signed(i64::from(r.read_i16()?)),
-                        Signed(i64::from(r.read_i16()?)),
-                        Signed(i64::from(r.read_i16()?)),
-                        Signed(i64::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
                     ]))
                 }
                 (Type::LONG, 2) => {
                     let mut r = self.r(bo);
                     Some(List(vec![
-                        Unsigned(r.read_u32()?.into()),
-                        Unsigned(r.read_u32()?.into()),
+                        Unsigned(r.read_u32()?),
+                        Unsigned(r.read_u32()?),
                     ]))
                 }
                 (Type::SLONG, 2) => {
                     let mut r = self.r(bo);
                     Some(List(vec![
-                        Signed(r.read_i32()?.into()),
-                        Signed(r.read_i32()?.into()),
+                        Signed(r.read_i32()?),
+                        Signed(r.read_i32()?),
                     ]))
                 }
                 (Type::RATIONAL, 1) => {
                     let mut r = self.r(bo);
-                    let numerator = r.read_u32()?.into();
-                    let denominator = r.read_u32()?.into();
+                    let numerator = r.read_u32()?;
+                    let denominator = r.read_u32()?;
                     Some(Rational(numerator, denominator))
                 }
                 (Type::SRATIONAL, 1) => {
                     let mut r = self.r(bo);
-                    let numerator = r.read_i32()?.into();
-                    let denominator = r.read_i32()?.into();
+                    let numerator = r.read_i32()?;
+                    let denominator = r.read_i32()?;
                     Some(SRational(numerator, denominator))
                 }
                 _ => None
@@ -269,55 +293,55 @@ impl Entry {
             match (self.type_, self.count) {
                 // TODO check if this could give wrong results
                 // at a different endianess of file/computer.
-                (Type::BYTE, 1) => Ok(Unsigned(u64::from(self.offset[0]))),
+                (Type::BYTE, 1) => Ok(Unsigned(u32::from(self.offset[0]))),
                 (Type::BYTE, 2) => offset_to_bytes(2, self),
                 (Type::BYTE, 3) => offset_to_bytes(3, self),
                 (Type::BYTE, 4) => offset_to_bytes(4, self),
                 (Type::BYTE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Unsigned(u64::from(decoder.read_byte()?)))
+                    Ok(UnsignedBig(u64::from(decoder.read_byte()?)))
                 }),
-                (Type::SBYTE, 1) => Ok(Signed(i64::from(self.offset[0] as i8))),
+                (Type::SBYTE, 1) => Ok(Signed(i32::from(self.offset[0] as i8))),
                 (Type::SBYTE, 2) => offset_to_sbytes(2, self),
                 (Type::SBYTE, 3) => offset_to_sbytes(3, self),
                 (Type::SBYTE, 4) => offset_to_sbytes(4, self),
                 (Type::SBYTE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Signed(i64::from(decoder.read_byte()? as i8)))
+                    Ok(SignedBig(i64::from(decoder.read_byte()? as i8)))
                 }),
-                (Type::SHORT, 1) => Ok(Unsigned(u64::from(self.r(bo).read_u16()?))),
-                (Type::SSHORT, 1) => Ok(Signed(i64::from(self.r(bo).read_i16()?))),
+                (Type::SHORT, 1) => Ok(Unsigned(u32::from(self.r(bo).read_u16()?))),
+                (Type::SSHORT, 1) => Ok(Signed(i32::from(self.r(bo).read_i16()?))),
                 (Type::SHORT, 2) => {
                     let mut r = self.r(bo);
                     Ok(List(vec![
-                        Unsigned(u64::from(r.read_u16()?)),
-                        Unsigned(u64::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
+                        Unsigned(u32::from(r.read_u16()?)),
                     ]))
                 }
                 (Type::SSHORT, 2) => {
                     let mut r = self.r(bo);
                     Ok(List(vec![
-                        Signed(i64::from(r.read_i16()?)),
-                        Signed(i64::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
+                        Signed(i32::from(r.read_i16()?)),
                     ]))
                 }
                 (Type::SHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Unsigned(u64::from(decoder.read_short()?)))
+                    Ok(UnsignedBig(u64::from(decoder.read_short()?)))
                 }),
                 (Type::SSHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Signed(i64::from(decoder.read_sshort()?)))
+                    Ok(SignedBig(i64::from(decoder.read_sshort()?)))
                 }),
-                (Type::LONG, 1) => Ok(Unsigned(self.r(bo).read_u32()?.into())),
-                (Type::SLONG, 1) => Ok(Signed(self.r(bo).read_i32()?.into())),
+                (Type::LONG, 1) => Ok(Unsigned(self.r(bo).read_u32()?)),
+                (Type::SLONG, 1) => Ok(Signed(self.r(bo).read_i32()?)),
                 (Type::LONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Unsigned(decoder.read_long()?.into()))
+                    Ok(Unsigned(decoder.read_long()?))
                 }),
                 (Type::SLONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Signed(decoder.read_slong()?.into()))
+                    Ok(Signed(decoder.read_slong()?))
                 }),
                 (Type::RATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Rational(decoder.read_long()?.into(), decoder.read_long()?.into()))
+                    Ok(Rational(decoder.read_long()?, decoder.read_long()?))
                 }),
                 (Type::SRATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(SRational(decoder.read_slong()?.into(), decoder.read_slong()?.into()))
+                    Ok(SRational(decoder.read_slong()?, decoder.read_slong()?))
                 }),
                 (Type::ASCII, n) => {
                     let n = usize::try_from(n)?;
@@ -369,7 +393,7 @@ fn offset_to_bytes(n: usize, entry: &Entry) -> TiffResult<Value> {
     Ok(List(
         entry.offset[0..n]
             .iter()
-            .map(|&e| Unsigned(u64::from(e)))
+            .map(|&e| Unsigned(u32::from(e)))
             .collect()
     ))
 }
@@ -380,7 +404,7 @@ fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
     Ok(List(
         entry.offset[0..n]
             .iter()
-            .map(|&e| Signed(i64::from(e as i8)))
+            .map(|&e| Signed(i32::from(e as i8)))
             .collect()
     ))
 }

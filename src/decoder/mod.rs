@@ -1,4 +1,4 @@
-use std::convert::{TryInto, TryFrom};
+use std::convert::TryFrom;
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
 use std::cmp;
