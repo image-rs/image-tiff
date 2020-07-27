@@ -537,10 +537,7 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 /// let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
 ///
 /// // You can encode tags here 
-/// { 
-///     let directory = image.encoder();
-///     directory.write_tag(Tag::Artist, "Image-tiff").unwrap();
-/// }
+/// image.encoder().write_tag(Tag::Artist, "Image-tiff").unwrap();
 ///
 /// let mut idx = 0;
 /// while image.next_strip_sample_count() > 0 {

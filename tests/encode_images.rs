@@ -26,10 +26,7 @@ fn encode_decode() {
 
         let mut image = tiff.new_image::<colortype::RGB8>(100, 100)
             .unwrap();
-        {
-            let directory = image.encoder();
-            directory.write_tag(Tag::Artist, "Image-tiff").unwrap();
-        }
+        image.encoder().write_tag(Tag::Artist, "Image-tiff").unwrap();
         image.write_data(&image_data).unwrap();
 
     }
