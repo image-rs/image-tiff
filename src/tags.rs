@@ -103,7 +103,6 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     PlanarConfiguration = 284,
     ResolutionUnit = 296, // TODO add support
     RowsPerStrip = 278,
-    SampleFormat = 339,
     SamplesPerPixel = 277,
     Software = 305,
     StripByteCounts = 279,
