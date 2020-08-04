@@ -469,26 +469,9 @@ impl<W: Write + Seek> TiffEncoder<W> {
     where
         [C::Inner]: TiffValue,
     {
-        let num_pix = usize::try_from(width)?.checked_mul(usize::try_from(height)?)
-            .ok_or_else(|| ::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidInput,
-                "Image width * height exceeds usize"))?;
-        if data.len() < num_pix {
-            return Err(::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidData,
-                "Input data slice is undersized for provided dimensions").into());
-        }
-
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let mut image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height)?;
-
-        let mut idx = 0;
-        while image.next_strip_sample_count() > 0 {
-            let sample_count = usize::try_from(image.next_strip_sample_count())?;
-            image.write_strip(&data[idx..idx + sample_count])?;
-            idx += sample_count;
-        }
-        image.finish()
+        let image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height)?;
+        image.write_data(data)
     }
 }
 
@@ -610,9 +593,13 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 /// # let mut file = std::io::Cursor::new(Vec::new());
 /// # let image_data = vec![0; 100*100*3];
 /// use tiff::encoder::*;
+/// use tiff::tags::Tag;
 ///
 /// let mut tiff = TiffEncoder::new(&mut file).unwrap();
 /// let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
+///
+/// // You can encode tags here 
+/// image.encoder().write_tag(Tag::Artist, "Image-tiff").unwrap();
 ///
 /// let mut idx = 0;
 /// while image.next_strip_sample_count() > 0 {
@@ -623,11 +610,13 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 /// image.finish().unwrap();
 /// # }
 /// ```
+/// You can also call write_data function wich will encode by strip and finish
 pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType> {
     encoder: DirectoryEncoder<'a, W>,
     strip_idx: u64,
     strip_count: u64,
     row_samples: u64,
+    width: u32,
     height: u32,
     rows_per_strip: u64,
     strip_offsets: Vec<u32>,
@@ -672,6 +661,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
             strip_idx: 0,
             row_samples,
             rows_per_strip,
+            width,
             height,
             strip_offsets: Vec::new(),
             strip_byte_count: Vec::new(),
@@ -713,6 +703,30 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         self.strip_byte_count.push(value.bytes());
 
         self.strip_idx += 1;
+        Ok(())
+    }
+
+    /// Write strips from data
+    pub fn write_data(mut self, data: &[T::Inner]) -> TiffResult<()>
+    where
+        [T::Inner]: TiffValue,
+    {
+        let num_pix = usize::try_from(self.width)?.checked_mul(usize::try_from(self.height)?)
+            .ok_or_else(|| ::std::io::Error::new(
+                ::std::io::ErrorKind::InvalidInput,
+                "Image width * height exceeds usize"))?;
+        if data.len() < num_pix {
+            return Err(::std::io::Error::new(
+                ::std::io::ErrorKind::InvalidData,
+                "Input data slice is undersized for provided dimensions").into());
+        }
+        let mut idx = 0;
+        while self.next_strip_sample_count() > 0 {
+            let sample_count = usize::try_from(self.next_strip_sample_count())?;
+            self.write_strip(&data[idx..idx + sample_count])?;
+            idx += sample_count;
+        }
+        self.finish()?;
         Ok(())
     }
 
