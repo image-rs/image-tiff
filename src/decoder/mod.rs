@@ -483,6 +483,18 @@ impl<R: Read + Seek> Decoder<R> {
         self.reader.read_i32()
     }
 
+    /// Reads a TIFF float value
+    #[inline]
+    pub fn read_float(&mut self) -> Result<f32, io::Error> {
+        self.reader.read_f32()
+    }
+
+    /// Reads a TIFF double value
+    #[inline]
+    pub fn read_double(&mut self) -> Result<f64, io::Error> {
+        self.reader.read_f64()
+    }
+
     /// Reads a string
     #[inline]
     pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
@@ -623,6 +635,16 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag and convert it to the desired type.
     pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
+        self.get_tag(tag)?.into_f32_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
+        self.get_tag(tag)?.into_f64_vec()
     }
 
     /// Decompresses the strip into the supplied buffer.

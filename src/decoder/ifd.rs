@@ -9,14 +9,16 @@ use super::stream::{ByteOrder, EndianReader, SmartReader};
 use tags::{Tag, Type};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
-use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational};
+use self::Value::{Ascii, List, Rational, Unsigned, Signed, SRational, Float, Double};
 
 
 #[allow(unused_qualifications)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Signed(i32),
     Unsigned(u32),
+    Float(f32),
+    Double(f64),
     List(Vec<Value>),
     Rational(u32, u32),
     SRational(i32, i32),
@@ -38,6 +40,24 @@ impl Value {
     pub fn into_i32(self) -> TiffResult<i32> {
         match self {
             Signed(val) => Ok(val),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_f32(self) -> TiffResult<f32> {
+        match self {
+            Float(val) => Ok(val),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_f64(self) -> TiffResult<f64> {
+        match self {
+            Double(val) => Ok(val),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -81,6 +101,38 @@ impl Value {
             SRational(numerator, denominator) => Ok(vec![numerator, denominator]),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_f32_vec(self) -> TiffResult<Vec<f32>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    new_vec.push(v.into_f32()?)
+                }
+                Ok(new_vec)
+            }
+            Float(val) => Ok(vec![val]),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_f64_vec(self) -> TiffResult<Vec<f64>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    new_vec.push(v.into_f64()?)
+                }
+                Ok(new_vec)
+            }
+            Double(val) => Ok(vec![val]),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
             )),
         }
     }
@@ -168,6 +220,12 @@ impl Entry {
             }),
             (Type::SLONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
                 Ok(Signed(decoder.read_slong()?))
+            }),
+            (Type::FLOAT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                    Ok(Float(decoder.read_float()?))
+            }),
+            (Type::DOUBLE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                    Ok(Double(decoder.read_double()?))
             }),
             (Type::RATIONAL, 1) => {
                 decoder.goto_offset(self.r(bo).read_u32()?)?;

@@ -35,7 +35,7 @@ pub enum TiffError {
 ///
 /// The list of variants may grow to incorporate errors of future features. Matching against this
 /// exhaustively is not covered by interface stability guarantees.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TiffFormatError {
     TiffSignatureNotFound,
     TiffSignatureInvalid,
