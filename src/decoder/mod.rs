@@ -633,6 +633,16 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
+        self.get_tag(tag)?.into_f32()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
+        self.get_tag(tag)?.into_f64()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
     pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
     }
