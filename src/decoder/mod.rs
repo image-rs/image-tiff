@@ -116,8 +116,8 @@ impl<'a> DecodingBuffer<'a> {
 #[derive(Debug)]
 struct StripDecodeState {
     strip_index: usize,
-    strip_offsets: Vec<u32>,
-    strip_bytes: Vec<u32>,
+    strip_offsets: Vec<u64>,
+    strip_bytes: Vec<u64>,
 }
 
 /// Decoding limits
@@ -157,8 +157,9 @@ where
 {
     reader: SmartReader<R>,
     byte_order: ByteOrder,
+    bigtiff: bool,
     limits: Limits,
-    next_ifd: Option<u32>,
+    next_ifd: Option<u64>,
     ifd: Option<Directory>,
     width: u32,
     height: u32,
@@ -248,6 +249,7 @@ impl<R: Read + Seek> Decoder<R> {
         Decoder {
             reader: SmartReader::wrap(r, ByteOrder::LittleEndian),
             byte_order: ByteOrder::LittleEndian,
+            bigtiff: false,
             limits: Default::default(),
             next_ifd: None,
             ifd: None,
@@ -330,12 +332,28 @@ impl<R: Read + Seek> Decoder<R> {
                 ))
             }
         }
-        if self.read_short()? != 42 {
-            return Err(TiffError::FormatError(
+        match self.read_short()? {
+            42 => self.bigtiff = false,
+            43 => {
+                self.bigtiff = true;
+                // Read bytesize of offsets (in bigtiff it's alway 8 but provide a way to move to 16 some day)
+                if self.read_short()? != 8 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::TiffSignatureNotFound,
+                    ))
+                }
+                // This constant should always be 0
+                if self.read_short()? != 0 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::TiffSignatureNotFound,
+                    ))
+                }
+            },
+            _ => return Err(TiffError::FormatError(
                 TiffFormatError::TiffSignatureInvalid,
-            ));
+            ))
         }
-        self.next_ifd = match self.read_long()? {
+        self.next_ifd = match self.read_ifd_offset()? {
             0 => None,
             n => Some(n),
         };
@@ -389,6 +407,15 @@ impl<R: Read + Seek> Decoder<R> {
         self.byte_order
     }
 
+    #[inline]
+    pub fn read_ifd_offset(&mut self) -> Result<u64, io::Error> {
+        if self.bigtiff {
+            self.read_long8()
+        } else {
+            self.read_long().map(u64::from)
+        }
+    }
+
     /// Reads a TIFF byte value
     #[inline]
     pub fn read_byte(&mut self) -> Result<u8, io::Error> {
@@ -421,6 +448,12 @@ impl<R: Read + Seek> Decoder<R> {
         self.reader.read_i32()
     }
 
+    #[inline]
+    pub fn read_long8(&mut self) -> Result<u64, io::Error> {
+        self.reader.read_u64()
+    }
+
+
     /// Reads a string
     #[inline]
     pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
@@ -435,8 +468,19 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Reads a TIFF IFA offset/value field
     #[inline]
-    pub fn read_offset(&mut self) -> Result<[u8; 4], io::Error> {
+    pub fn read_offset(&mut self) -> TiffResult<[u8; 4]> {
+        if self.bigtiff {
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered))
+        }
         let mut val = [0; 4];
+        self.reader.read_exact(&mut val)?;
+        Ok(val)
+    }
+
+    /// Reads a TIFF IFA offset/value field
+    #[inline]
+    pub fn read_offset_u64(&mut self) -> Result<[u8; 8], io::Error> {
+        let mut val = [0; 8];
         self.reader.read_exact(&mut val)?;
         Ok(val)
     }
@@ -444,8 +488,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Moves the cursor to the specified offset
     #[inline]
     pub fn goto_offset(&mut self, offset: u32) -> io::Result<()> {
+        self.goto_offset_u64(offset.into())
+    }
+
+    #[inline]
+    pub fn goto_offset_u64(&mut self, offset: u64) -> io::Result<()> {
         self.reader
-            .seek(io::SeekFrom::Start(u64::from(offset)))
+            .seek(io::SeekFrom::Start(offset))
             .map(|_| ())
     }
 
@@ -467,13 +516,22 @@ impl<R: Read + Seek> Decoder<R> {
                 return Ok(None);
             }
         };
-        Ok(Some((
-            tag,
+        let entry = if self.bigtiff {
+            ifd::Entry::new_u64(
+                type_,
+                self.read_long8()?,
+                self.read_offset_u64()?
+            )
+        } else {
             ifd::Entry::new(
                 type_,
-                self.read_long()?,   // count
-                self.read_offset()?, // offset
-            ),
+                self.read_long()?, 
+                self.read_offset()?
+            )
+        };
+        Ok(Some((
+            tag,
+            entry,
         )))
     }
 
@@ -486,16 +544,17 @@ impl<R: Read + Seek> Decoder<R> {
                     TiffFormatError::ImageFileDirectoryNotFound,
                 ))
             }
-            Some(offset) => self.goto_offset(offset)?,
+            Some(offset) => self.goto_offset_u64(offset)?,
         }
-        for _ in 0..self.read_short()? {
+        let num_tags = if self.bigtiff { self.read_long8()? } else { self.read_short()?.into() };
+        for _ in 0..num_tags {
             let (tag, entry) = match self.read_entry()? {
                 Some(val) => val,
                 None => continue, // Unknown data type in tag, skip
             };
             dir.insert(tag, entry);
         }
-        self.next_ifd = match self.read_long()? {
+        self.next_ifd = match self.read_ifd_offset()? {
             0 => None,
             n => Some(n),
         };
@@ -516,9 +575,9 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
-    pub fn find_tag_unsigned<T: TryFrom<u32>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
+    pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
         self.find_tag(tag)?
-            .map(|v| v.into_u32()).transpose()?
+            .map(|v| v.into_u64()).transpose()?
             .map(|value| T::try_from(value)
                 .map_err(|_| TiffFormatError::InvalidTagValueType(tag).into()))
             .transpose()
@@ -526,9 +585,9 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a vector of all a tag's values and convert them to
     /// the desired unsigned type.
-    pub fn find_tag_unsigned_vec<T: TryFrom<u32>>(&mut self, tag: Tag) -> TiffResult<Option<Vec<T>>> {
+    pub fn find_tag_unsigned_vec<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<Vec<T>>> {
         self.find_tag(tag)?
-            .map(|v| v.into_u32_vec()).transpose()?
+            .map(|v| v.into_u64_vec()).transpose()?
             .map(|v| v.into_iter()
                 .map(|u| T::try_from(u).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into()))
                 .collect())
@@ -537,7 +596,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
     /// Returns an error if the tag is not present.
-    pub fn get_tag_unsigned<T: TryFrom<u32>>(&mut self, tag: Tag) -> TiffResult<T> {
+    pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
         self.find_tag_unsigned(tag)?
             .ok_or_else(|| TiffFormatError::RequiredTagNotFound(tag).into())
     }
@@ -557,10 +616,16 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
     }
+    pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
+        self.get_tag(tag)?.into_u64()
+    }
 
     /// Tries to retrieve a tag and convert it to the desired type.
     pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
+    }
+    pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
+        self.get_tag(tag)?.into_u64_vec()
     }
 
     /// Decompresses the strip into the supplied buffer.
@@ -568,13 +633,13 @@ impl<R: Read + Seek> Decoder<R> {
     fn expand_strip<'a>(
         &mut self,
         buffer: DecodingBuffer<'a>,
-        offset: u32,
-        length: u32,
+        offset: u64,
+        length: u64,
         max_uncompressed_length: usize,
     ) -> TiffResult<usize> {
         let color_type = self.colortype()?;
-        self.goto_offset(offset)?;
-        let (bytes, mut reader): (usize, Box<EndianReader>) = match self.compression_method {
+        self.goto_offset_u64(offset)?;
+        let (bytes, mut reader): (usize, Box<dyn EndianReader>) = match self.compression_method {
             CompressionMethod::None => {
                 let order = self.reader.byte_order;
                 (
@@ -700,8 +765,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     fn initialize_strip_decoder(&mut self) -> TiffResult<()> {
         if self.strip_decoder.is_none() {
-            let strip_offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
-            let strip_bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
+            let strip_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
+            let strip_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
 
             self.strip_decoder = Some(StripDecodeState {
                 strip_index: 0,
