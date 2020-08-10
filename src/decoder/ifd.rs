@@ -343,6 +343,9 @@ impl Entry {
                 (Type::SRATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
                     Ok(SRational(decoder.read_slong()?, decoder.read_slong()?))
                 }),
+                (Type::LONG8, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                    Ok(UnsignedBig(decoder.read_long8()?))
+                }),
                 (Type::ASCII, n) => {
                     let n = usize::try_from(n)?;
                     if n > limits.decoding_buffer_size {
