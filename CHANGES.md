@@ -1,3 +1,12 @@
+# Version 0.6.0-alpha
+
+* Support for decoding BigTIFF with 64-bit offsets
+* Better support for adding auxiliary tags before encoding image data
+* Fixed decoding of inline ASCII in tags
+* Fixed handling after null terminator in ASCII data
+* Recognize tile and sample format tags
+* Note: these notes will be merged into 0.6.0 when it is released
+
 # Version 0.5.0
 
 * Added support for 32-bit and 64-bit decoded values.
