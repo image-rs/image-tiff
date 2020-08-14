@@ -1,10 +1,10 @@
 //! All IO functionality needed for TIFF decoding
 
 use crate::error::{TiffError, TiffResult};
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use lzw;
 use miniz_oxide::inflate;
 use std::io::{self, Read, Seek};
+use std::slice;
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -23,82 +23,104 @@ pub trait EndianReader: Read {
     /// Reads an u16
     #[inline(always)]
     fn read_u16(&mut self) -> Result<u16, io::Error> {
-        match self.byte_order() {
-            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_u16::<LittleEndian>(self),
-            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_u16::<BigEndian>(self),
-        }
+        let mut n = [0u8; 2];
+        self.read_exact(&mut n)?;
+        Ok(match self.byte_order() {
+            ByteOrder::LittleEndian => u16::from_le_bytes(n),
+            ByteOrder::BigEndian => u16::from_be_bytes(n),
+        })
     }
 
     #[inline(always)]
     fn read_u16_into(&mut self, buffer: &mut [u16]) -> Result<(), io::Error> {
+        self.read_exact(unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 2) })?;
         match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                <Self as ReadBytesExt>::read_u16_into::<LittleEndian>(self, buffer)
-            }
-            ByteOrder::BigEndian => {
-                <Self as ReadBytesExt>::read_u16_into::<BigEndian>(self, buffer)
-            }
+            ByteOrder::LittleEndian =>
+                for n in buffer {
+                    *n = u16::from_le(*n);
+                },
+            ByteOrder::BigEndian =>
+                for n in buffer {
+                    *n = u16::from_be(*n);
+                },
         }
+        Ok(())
     }
 
     /// Reads an i16
     #[inline(always)]
     fn read_i16(&mut self) -> Result<i16, io::Error> {
-        match self.byte_order() {
-            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_i16::<LittleEndian>(self),
-            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_i16::<BigEndian>(self),
-        }
+        let mut n = [0u8; 2];
+        self.read_exact(&mut n)?;
+        Ok(match self.byte_order() {
+            ByteOrder::LittleEndian => i16::from_le_bytes(n),
+            ByteOrder::BigEndian => i16::from_be_bytes(n),
+        })
     }
 
     /// Reads an u32
     #[inline(always)]
     fn read_u32(&mut self) -> Result<u32, io::Error> {
-        match self.byte_order() {
-            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_u32::<LittleEndian>(self),
-            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_u32::<BigEndian>(self),
-        }
+        let mut n = [0u8; 4];
+        self.read_exact(&mut n)?;
+        Ok(match self.byte_order() {
+            ByteOrder::LittleEndian => u32::from_le_bytes(n),
+            ByteOrder::BigEndian => u32::from_be_bytes(n),
+        })
     }
 
     #[inline(always)]
     fn read_u32_into(&mut self, buffer: &mut [u32]) -> Result<(), io::Error> {
+        self.read_exact(unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 4) })?;
         match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                <Self as ReadBytesExt>::read_u32_into::<LittleEndian>(self, buffer)
-            }
-            ByteOrder::BigEndian => {
-                <Self as ReadBytesExt>::read_u32_into::<BigEndian>(self, buffer)
-            }
+            ByteOrder::LittleEndian =>
+                for n in buffer {
+                    *n = u32::from_le(*n);
+                },
+            ByteOrder::BigEndian =>
+                for n in buffer {
+                    *n = u32::from_be(*n);
+                },
         }
-    }
-
-    /// Reads an u64
-    #[inline(always)]
-    fn read_u64(&mut self) -> Result<u64, io::Error> {
-        match self.byte_order() {
-            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_u64::<LittleEndian>(self),
-            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_u64::<BigEndian>(self),
-        }
-    }
-
-    #[inline(always)]
-    fn read_u64_into(&mut self, buffer: &mut [u64]) -> Result<(), io::Error> {
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                <Self as ReadBytesExt>::read_u64_into::<LittleEndian>(self, buffer)
-            }
-            ByteOrder::BigEndian => {
-                <Self as ReadBytesExt>::read_u64_into::<BigEndian>(self, buffer)
-            }
-        }
+        Ok(())
     }
 
     /// Reads an i32
     #[inline(always)]
     fn read_i32(&mut self) -> Result<i32, io::Error> {
+        let mut n = [0u8; 4];
+        self.read_exact(&mut n)?;
+        Ok(match self.byte_order() {
+            ByteOrder::LittleEndian => i32::from_le_bytes(n),
+            ByteOrder::BigEndian => i32::from_be_bytes(n),
+        })
+    }
+
+    /// Reads an u64
+    #[inline(always)]
+    fn read_u64(&mut self) -> Result<u64, io::Error> {
+        let mut n = [0u8; 8];
+        self.read_exact(&mut n)?;
+        Ok(match self.byte_order() {
+            ByteOrder::LittleEndian => u64::from_le_bytes(n),
+            ByteOrder::BigEndian => u64::from_be_bytes(n),
+        })
+    }
+
+    #[inline(always)]
+    fn read_u64_into(&mut self, buffer: &mut [u64]) -> Result<(), io::Error> {
+        self.read_exact(unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 8) })?;
         match self.byte_order() {
-            ByteOrder::LittleEndian => <Self as ReadBytesExt>::read_i32::<LittleEndian>(self),
-            ByteOrder::BigEndian => <Self as ReadBytesExt>::read_i32::<BigEndian>(self),
+            ByteOrder::LittleEndian =>
+                for n in buffer {
+                    *n = u64::from_le(*n);
+                },
+            ByteOrder::BigEndian =>
+                for n in buffer {
+                    *n = u64::from_be(*n);
+                },
         }
+        Ok(())
     }
 }
 
