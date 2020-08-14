@@ -1,10 +1,10 @@
 //! All IO functionality needed for TIFF decoding
 
+use crate::bytecast;
 use crate::error::{TiffError, TiffResult};
 use lzw;
 use miniz_oxide::inflate;
 use std::io::{self, Read, Seek};
-use std::slice;
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -33,7 +33,7 @@ pub trait EndianReader: Read {
 
     #[inline(always)]
     fn read_u16_into(&mut self, buffer: &mut [u16]) -> Result<(), io::Error> {
-        self.read_exact(unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 2) })?;
+        self.read_exact(bytecast::u16_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
             ByteOrder::LittleEndian =>
                 for n in buffer {
@@ -71,7 +71,7 @@ pub trait EndianReader: Read {
 
     #[inline(always)]
     fn read_u32_into(&mut self, buffer: &mut [u32]) -> Result<(), io::Error> {
-        self.read_exact(unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 4) })?;
+        self.read_exact(bytecast::u32_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
             ByteOrder::LittleEndian =>
                 for n in buffer {
@@ -109,7 +109,7 @@ pub trait EndianReader: Read {
 
     #[inline(always)]
     fn read_u64_into(&mut self, buffer: &mut [u64]) -> Result<(), io::Error> {
-        self.read_exact(unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 8) })?;
+        self.read_exact(bytecast::u64_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
             ByteOrder::LittleEndian =>
                 for n in buffer {

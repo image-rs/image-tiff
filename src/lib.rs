@@ -9,6 +9,7 @@
 extern crate lzw;
 extern crate miniz_oxide;
 
+mod bytecast;
 pub mod decoder;
 pub mod encoder;
 mod error;
