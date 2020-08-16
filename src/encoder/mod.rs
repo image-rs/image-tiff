@@ -3,6 +3,7 @@ use std::convert::TryFrom;
 use std::io::{Seek, Write};
 use std::mem;
 
+use bytecast;
 use tags::{self, ResolutionUnit, Tag, Type};
 use error::{TiffError, TiffFormatError, TiffResult};
 
@@ -59,9 +60,7 @@ impl TiffValue for [i8] {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this should be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len()) };
+        let slice = bytecast::i8_as_ne_bytes(self);
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -76,9 +75,7 @@ impl TiffValue for [u16] {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this sould be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 2) };
+        let slice = bytecast::u16_as_ne_bytes(self);
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -93,9 +90,7 @@ impl TiffValue for [i16] {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this should be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * Self::BYTE_LEN as usize) };
+        let slice = bytecast::i16_as_ne_bytes(self);
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -110,9 +105,7 @@ impl TiffValue for [u32] {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this sould be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 4) };
+        let slice = bytecast::u32_as_ne_bytes(self);
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -127,9 +120,7 @@ impl TiffValue for [i32] {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this should be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * Self::BYTE_LEN as usize) };
+        let slice = bytecast::i32_as_ne_bytes(self);
         writer.write_bytes(slice)?;
         Ok(())
     }
@@ -144,9 +135,7 @@ impl TiffValue for [u64] {
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this sould be safe
-        let slice =
-            unsafe { ::std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 8) };
+        let slice = bytecast::u64_as_ne_bytes(self);
         writer.write_bytes(slice)?;
         Ok(())
     }
