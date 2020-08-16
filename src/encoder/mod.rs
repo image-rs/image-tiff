@@ -1,4 +1,3 @@
-use byteorder::NativeEndian;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::io::{Seek, Write};
@@ -375,7 +374,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
             writer: TiffWriter::new(writer),
         };
 
-        NativeEndian::write_header(&mut encoder.writer)?;
+        write_tiff_header(&mut encoder.writer)?;
         // blank the IFD offset location
         encoder.writer.write_u32(0)?;
 
@@ -536,7 +535,7 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 /// let mut tiff = TiffEncoder::new(&mut file).unwrap();
 /// let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
 ///
-/// // You can encode tags here 
+/// // You can encode tags here
 /// image.encoder().write_tag(Tag::Artist, "Image-tiff").unwrap();
 ///
 /// let mut idx = 0;

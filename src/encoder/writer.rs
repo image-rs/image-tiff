@@ -1,29 +1,17 @@
 use error::TiffResult;
-use byteorder::{BigEndian, ByteOrder, LittleEndian, NativeEndian, WriteBytesExt};
 use std::io::{self, Seek, SeekFrom, Write};
 
-pub trait TiffByteOrder: ByteOrder {
-    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()>;
-}
+pub fn write_tiff_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
+    #[cfg(target_endian = "little")]
+    let boi: u8 = 0x49;
+    #[cfg(not(target_endian = "little"))]
+    let boi: u8 = 0x4d;
 
-impl TiffByteOrder for LittleEndian {
-    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.writer.write_u16::<LittleEndian>(0x4949)?;
-        writer.writer.write_u16::<LittleEndian>(42)?;
-        writer.offset += 4;
+    writer.writer.write_all(&[boi, boi])?;
+    writer.writer.write_all(&42u16.to_ne_bytes())?;
+    writer.offset += 4;
 
-        Ok(())
-    }
-}
-
-impl TiffByteOrder for BigEndian {
-    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.writer.write_u16::<BigEndian>(0x4d4d)?;
-        writer.writer.write_u16::<BigEndian>(42)?;
-        writer.offset += 4;
-
-        Ok(())
-    }
+    Ok(())
 }
 
 pub struct TiffWriter<W> {
@@ -47,47 +35,47 @@ impl<W: Write> TiffWriter<W> {
     }
 
     pub fn write_u8(&mut self, n: u8) -> Result<(), io::Error> {
-        self.writer.write_u8(n)?;
+        self.writer.write_all(&n.to_ne_bytes())?;
         self.offset += 1;
         Ok(())
     }
 
     pub fn write_i8(&mut self, n: i8) -> Result<(), io::Error> {
-        self.writer.write_i8(n)?;
+        self.writer.write_all(&n.to_ne_bytes())?;
         self.offset += 1;
         Ok(())
     }
 
     pub fn write_u16(&mut self, n: u16) -> Result<(), io::Error> {
-        self.writer.write_u16::<NativeEndian>(n)?;
+        self.writer.write_all(&n.to_ne_bytes())?;
         self.offset += 2;
 
         Ok(())
     }
 
     pub fn write_i16(&mut self, n: i16) -> Result<(), io::Error> {
-        self.writer.write_i16::<NativeEndian>(n)?;
+        self.writer.write_all(&n.to_ne_bytes())?;
         self.offset += 2;
 
         Ok(())
     }
 
     pub fn write_u32(&mut self, n: u32) -> Result<(), io::Error> {
-        self.writer.write_u32::<NativeEndian>(n)?;
+        self.writer.write_all(&n.to_ne_bytes())?;
         self.offset += 4;
 
         Ok(())
     }
 
     pub fn write_i32(&mut self, n: i32) -> Result<(), io::Error> {
-        self.writer.write_i32::<NativeEndian>(n)?;
+        self.writer.write_all(&n.to_ne_bytes())?;
         self.offset += 4;
 
         Ok(())
     }
 
     pub fn write_u64(&mut self, n: u64) -> Result<(), io::Error> {
-        self.writer.write_u64::<NativeEndian>(n)?;
+        self.writer.write_all(&n.to_ne_bytes())?;
         self.offset += 8;
 
         Ok(())
