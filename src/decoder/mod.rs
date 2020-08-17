@@ -283,11 +283,13 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
         DecodingBuffer::U64(buf) => {
             rev_hpredict_nsamp(buf, size, samples)?;
         }
-        DecodingBuffer::F32(buf) => {
-            rev_hpredict_nsamp(buf, size, samples)?;
+        DecodingBuffer::F32(_buf) => {
+            unimplemented!()
+            // rev_hpredict_nsamp(buf, size, samples)?;
         }
-        DecodingBuffer::F64(buf) => {
-            rev_hpredict_nsamp(buf, size, samples)?;
+        DecodingBuffer::F64(_buf) => {
+            unimplemented!()
+            // rev_hpredict_nsamp(buf, size, samples)?;
         }
     }
     Ok(())
