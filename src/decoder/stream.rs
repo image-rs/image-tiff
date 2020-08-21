@@ -2,7 +2,6 @@
 
 use crate::bytecast;
 use crate::error::{TiffError, TiffResult};
-use lzw;
 use miniz_oxide::inflate;
 use std::io::{self, Read, Seek};
 
@@ -244,12 +243,27 @@ impl LZWReader {
         let mut compressed = vec![0; compressed_length as usize];
         reader.read_exact(&mut compressed[..])?;
         let mut uncompressed = Vec::with_capacity(max_uncompressed_length);
-        let mut decoder = lzw::DecoderEarlyChange::new(lzw::MsbReader::new(), 8);
+        let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
         let mut bytes_read = 0;
         while bytes_read < compressed_length && uncompressed.len() < max_uncompressed_length {
-            let (len, bytes) = decoder.decode_bytes(&compressed[bytes_read..])?;
-            bytes_read += len;
-            uncompressed.extend_from_slice(bytes);
+            let bytes_written = uncompressed.len();
+            uncompressed.reserve(1 << 12);
+            let buffer_space = uncompressed.capacity();
+            uncompressed.resize(buffer_space, 0u8);
+
+            let result = decoder.decode_bytes(&compressed[bytes_read..], &mut uncompressed[bytes_written..]);
+            bytes_read += result.consumed_in;
+            uncompressed.truncate(bytes_written + result.consumed_out);
+
+            match result.status {
+                Ok(weezl::LzwStatus::Ok) => {},
+                Ok(weezl::LzwStatus::Done) => break,
+                Ok(weezl::LzwStatus::NoProgress) => return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "no lzw end code found",
+                )),
+                Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
+            }
         }
 
         let bytes = uncompressed.len();
