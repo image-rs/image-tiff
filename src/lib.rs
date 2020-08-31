@@ -6,10 +6,10 @@
 //! # Related Links
 //! * <https://www.adobe.io/open/standards/TIFF.html> - The TIFF specification
 
-extern crate byteorder;
 extern crate lzw;
 extern crate miniz_oxide;
 
+mod bytecast;
 pub mod decoder;
 pub mod encoder;
 mod error;
