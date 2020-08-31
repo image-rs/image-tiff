@@ -284,12 +284,20 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
             rev_hpredict_nsamp(buf, size, samples)?;
         }
         DecodingBuffer::F32(_buf) => {
-            unimplemented!()
+            // FIXME: check how this is defined.
+            // See issue #89.
             // rev_hpredict_nsamp(buf, size, samples)?;
+            return Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::HorizontalPredictor(color_type)
+            ));
         }
         DecodingBuffer::F64(_buf) => {
-            unimplemented!()
+            //FIXME: check how this is defined.
+            // See issue #89.
             // rev_hpredict_nsamp(buf, size, samples)?;
+            return Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::HorizontalPredictor(color_type)
+            ));
         }
     }
     Ok(())
