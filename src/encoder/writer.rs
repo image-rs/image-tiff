@@ -81,6 +81,20 @@ impl<W: Write> TiffWriter<W> {
         Ok(())
     }
 
+    pub fn write_f32(&mut self, n: f32) -> Result<(), io::Error> {
+        self.writer.write_all(&u32::to_ne_bytes(n.to_bits()))?;
+        self.offset += 4;
+
+        Ok(())
+    }
+
+    pub fn write_f64(&mut self, n: f64) -> Result<(), io::Error> {
+        self.writer.write_all(&u64::to_ne_bytes(n.to_bits()))?;
+        self.offset += 8;
+
+        Ok(())
+    }
+
     pub fn pad_word_boundary(&mut self) -> Result<(), io::Error> {
         if self.offset % 4 != 0 {
             let padding = [0, 0, 0];

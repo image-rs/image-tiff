@@ -122,6 +122,60 @@ pub trait EndianReader: Read {
         }
         Ok(())
     }
+
+    /// Reads an f32
+    #[inline(always)]
+    fn read_f32(&mut self) -> Result<f32, io::Error> {
+        let mut n = [0u8; 4];
+        self.read_exact(&mut n)?;
+        Ok(f32::from_bits(match self.byte_order() {
+            ByteOrder::LittleEndian => u32::from_le_bytes(n),
+            ByteOrder::BigEndian => u32::from_be_bytes(n),
+        }))
+    }
+
+    #[inline(always)]
+    fn read_f32_into(&mut self, buffer: &mut [f32]) -> Result<(), io::Error> {
+        self.read_exact(bytecast::f32_as_ne_mut_bytes(buffer))?;
+        match self.byte_order() {
+            ByteOrder::LittleEndian =>
+                for n in buffer {
+                    *n = f32::from_bits(u32::from_le(n.to_bits()));
+                },
+            ByteOrder::BigEndian =>
+                for n in buffer {
+                    *n = f32::from_bits(u32::from_be(n.to_bits()));
+                },
+        }
+        Ok(())
+    }
+
+    /// Reads an f64
+    #[inline(always)]
+    fn read_f64(&mut self) -> Result<f64, io::Error> {
+        let mut n = [0u8; 8];
+        self.read_exact(&mut n)?;
+        Ok(f64::from_bits(match self.byte_order() {
+            ByteOrder::LittleEndian => u64::from_le_bytes(n),
+            ByteOrder::BigEndian => u64::from_be_bytes(n),
+        }))
+    }
+
+    #[inline(always)]
+    fn read_f64_into(&mut self, buffer: &mut [f64]) -> Result<(), io::Error> {
+        self.read_exact(bytecast::f64_as_ne_mut_bytes(buffer))?;
+        match self.byte_order() {
+            ByteOrder::LittleEndian =>
+                for n in buffer {
+                    *n = f64::from_bits(u64::from_le(n.to_bits()));
+                },
+            ByteOrder::BigEndian =>
+                for n in buffer {
+                    *n = f64::from_bits(u64::from_be(n.to_bits()));
+                },
+        }
+        Ok(())
+    }
 }
 
 /// Reader that decompresses DEFLATE streams

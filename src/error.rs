@@ -4,7 +4,7 @@ use std::io;
 use std::string;
 
 use decoder::ifd::{Value};
-use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Tag};
+use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag};
 use miniz_oxide::inflate::TINFLStatus;
 use ColorType;
 
@@ -35,7 +35,7 @@ pub enum TiffError {
 ///
 /// The list of variants may grow to incorporate errors of future features. Matching against this
 /// exhaustively is not covered by interface stability guarantees.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TiffFormatError {
     TiffSignatureNotFound,
     TiffSignatureInvalid,
@@ -114,6 +114,7 @@ pub enum TiffUnsupportedError {
     UnknownCompressionMethod,
     UnsupportedCompressionMethod(CompressionMethod),
     UnsupportedSampleDepth(u8),
+    UnsupportedSampleFormat(Vec<SampleFormat>),
     UnsupportedColorType(ColorType),
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),
@@ -147,6 +148,9 @@ impl fmt::Display for TiffUnsupportedError {
             }
             UnsupportedSampleDepth(samples) => {
                 write!(fmt, "{} samples per pixel is unsupported.", samples)
+            }
+            UnsupportedSampleFormat(ref formats) => {
+                write!(fmt, "Sample format {:?} is unsupported.", formats)
             }
             UnsupportedColorType(color_type) => {
                 write!(fmt, "Color type {:?} is unsupported", color_type)

@@ -39,15 +39,23 @@ macro_rules! tags {
             }
         }
 
-        tags!($name, $ty);
+        tags!($name, $ty, $($unknown_doc)*);
     };
     // For u16 tags, provide direct inherent primitive conversion methods.
-    ($name:tt, u16) => {
+    ($name:tt, u16, $($unknown_doc:literal)*) => {
         impl $name {
             #[inline(always)]
             pub fn from_u16(val: u16) -> Option<Self> {
                 Self::__from_inner_type(val).ok()
             }
+
+            $(
+            #[inline(always)]
+            pub fn from_u16_exhaustive(val: u16) -> Self {
+                $unknown_doc;
+                Self::__from_inner_type(val).unwrap_or_else(|_| $name::Unknown(val))
+            }
+            )*
 
             #[inline(always)]
             pub fn to_u16(&self) -> u16 {
@@ -57,7 +65,7 @@ macro_rules! tags {
     };
     // For other tag types, do nothing for now. With concat_idents one could
     // provide inherent conversion methods for all types.
-    ($name:tt, $ty:tt) => {};
+    ($name:tt, $ty:tt, $($unknown_doc:literal)*) => {};
 }
 
 // Note: These tags appear in the order they are mentioned in the TIFF reference
@@ -113,12 +121,6 @@ pub enum Tag(u16) unknown("A private or extension tag") {
 }
 }
 
-impl Tag {
-    pub fn from_u16_exhaustive(val: u16) -> Self {
-        Self::from_u16(val).unwrap_or_else(|| Tag::Unknown(val))
-    }
-}
-
 tags! {
 /// The type of an IFD entry (a 2 byte field).
 pub enum Type(u16) {
@@ -131,6 +133,8 @@ pub enum Type(u16) {
     SSHORT = 8,
     SLONG = 9,
     SRATIONAL = 10,
+    FLOAT = 11,
+    DOUBLE = 12,
     /// BigTIFF 64-bit unsigned integer
     LONG8 = 16,
 }
@@ -184,5 +188,14 @@ pub enum ResolutionUnit(u16) {
     None = 1,
     Inch = 2,
     Centimeter = 3,
+}
+}
+
+tags! {
+pub enum SampleFormat(u16) unknown("An unknown extension sample format") {
+    Uint = 1,
+    Int = 2,
+    IEEEFP = 3,
+    Void = 4,
 }
 }

@@ -141,6 +141,38 @@ impl TiffValue for [u64] {
     }
 }
 
+impl TiffValue for [f32] {
+    const BYTE_LEN: u32 = 4;
+    const FIELD_TYPE: Type = Type::FLOAT;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        // We write using nativeedian so this sould be safe
+        let slice = bytecast::f32_as_ne_bytes(self);
+        writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for [f64] {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: Type = Type::DOUBLE;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        // We write using nativeedian so this sould be safe
+        let slice = bytecast::f64_as_ne_bytes(self);
+        writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for [Rational] {
     const BYTE_LEN: u32 = 8;
     const FIELD_TYPE: Type = Type::RATIONAL;
@@ -267,6 +299,34 @@ impl TiffValue for u64 {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         writer.write_u64(*self)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for f32 {
+    const BYTE_LEN: u32 = 4;
+    const FIELD_TYPE: Type = Type::FLOAT;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_f32(*self)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for f64 {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: Type = Type::DOUBLE;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_f64(*self)?;
         Ok(())
     }
 }
@@ -570,6 +630,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         encoder.write_tag(Tag::Compression, tags::CompressionMethod::None.to_u16())?;
 
         encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
+        let sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
+        encoder.write_tag(Tag::SampleFormat, &sample_format[..])?;
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
 
         encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;

@@ -17,12 +17,12 @@ This table lists photometric interpretations and sample formats which are suppor
 
 | `PhotometricInterpretation` | UINT Format | IEEEFP Format |
 |-|-|-|
-| `WhiteIsZero` | Gray(8\|16\|32\|64) | |
-| `BlackIsZero` | Gray(8\|16\|32\|64) | |
-| `RGB` | RGB(8\|16\|32\|64), RGBA(8\|16\|32\|64) | |
+| `WhiteIsZero` | Gray(8\|16\|32\|64) | Gray(32\|64) |
+| `BlackIsZero` | Gray(8\|16\|32\|64) | Gray(32\|64) |
+| `RGB` | RGB(8\|16\|32\|64), RGBA(8\|16\|32\|64) | RGB(32\|64), RGBA(32\|64) |
 | `RGBPalette` | | |
 | `Mask` | | |
-| `CMYK` | CMYK(8\|16\|32\|64) | |
+| `CMYK` | CMYK(8\|16\|32\|64) | CMYK(32\|64) |
 | `YCbCr` | | |
 | `CIELab` | | |
 

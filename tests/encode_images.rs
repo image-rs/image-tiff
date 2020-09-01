@@ -98,6 +98,8 @@ test_roundtrip!(test_u8_roundtrip, U8, u8);
 test_roundtrip!(test_u16_roundtrip, U16, u16);
 test_roundtrip!(test_u32_roundtrip, U32, u32);
 test_roundtrip!(test_u64_roundtrip, U64, u64);
+test_roundtrip!(test_f32_roundtrip, F32, f32);
+test_roundtrip!(test_f64_roundtrip, F64, f64);
 
 #[test]
 fn test_gray_u8_roundtrip() {
@@ -147,6 +149,26 @@ fn test_gray_u64_roundtrip() {
 #[test]
 fn test_rgb_u64_roundtrip() {
     test_u64_roundtrip::<colortype::RGB64>("gradient-3c-64b.tiff", ColorType::RGB(64));
+}
+
+#[test]
+fn test_gray_f32_roundtrip() {
+    test_f32_roundtrip::<colortype::Gray32Float>("gradient-1c-32b-float.tiff", ColorType::Gray(32));
+}
+
+#[test]
+fn test_rgb_f32_roundtrip() {
+    test_f32_roundtrip::<colortype::RGB32Float>("gradient-3c-32b-float.tiff", ColorType::RGB(32));
+}
+
+#[test]
+fn test_cmyk_f32_roundtrip() {
+    test_f32_roundtrip::<colortype::CMYK32Float>("cmyk-3c-32b-float.tiff", ColorType::CMYK(32));
+}
+
+#[test]
+fn test_gray_f64_roundtrip() {
+    test_f64_roundtrip::<colortype::Gray64Float>("gradient-1c-64b-float.tiff", ColorType::Gray(64));
 }
 
 #[test]
