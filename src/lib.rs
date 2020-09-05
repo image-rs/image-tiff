@@ -6,7 +6,7 @@
 //! # Related Links
 //! * <https://www.adobe.io/open/standards/TIFF.html> - The TIFF specification
 
-extern crate lzw;
+extern crate weezl;
 extern crate miniz_oxide;
 
 mod bytecast;
