@@ -425,7 +425,10 @@ impl Entry {
                         let string = decoder.read_string(n)?;
                         Ok(Ascii(string))
                     }
-                }
+                },
+                (Type::UNDEFINED, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
+                    Ok(Unsigned(u32::from(decoder.read_byte()?)))
+                }),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedDataType,
                 )),

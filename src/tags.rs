@@ -130,6 +130,7 @@ pub enum Type(u16) {
     LONG = 4,
     RATIONAL = 5,
     SBYTE = 6,
+    UNDEFINED = 7,
     SSHORT = 8,
     SLONG = 9,
     SRATIONAL = 10,
