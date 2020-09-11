@@ -171,6 +171,28 @@ fn test_gray_f64_roundtrip() {
     test_f64_roundtrip::<colortype::Gray64Float>("gradient-1c-64b-float.tiff", ColorType::Gray(64));
 }
 
+trait AssertDecode {
+    fn assert_tag_u32(&mut self, tag: u16) -> u32;
+    fn assert_tag_u32_vec(&mut self, tag: u16) -> Vec<u32>;
+    fn assert_tag_i32(&mut self, tag: u16) -> i32;
+    fn assert_tag_i32_vec(&mut self, tag: u16) -> Vec<i32>;
+}
+
+impl<R: std::io::Read + std::io::Seek> AssertDecode for Decoder<R> {
+    fn assert_tag_u32(&mut self, tag: u16) -> u32 {
+        self.get_tag(Tag::Unknown(tag)).unwrap().into_u32().unwrap()
+    }
+    fn assert_tag_u32_vec(&mut self, tag: u16) -> Vec<u32> {
+        self.get_tag(Tag::Unknown(tag)).unwrap().into_u32_vec().unwrap()
+    }
+    fn assert_tag_i32(&mut self, tag: u16) -> i32 {
+        self.get_tag(Tag::Unknown(tag)).unwrap().into_i32().unwrap()
+    }
+    fn assert_tag_i32_vec(&mut self, tag: u16) -> Vec<i32> {
+        self.get_tag(Tag::Unknown(tag)).unwrap().into_i32_vec().unwrap()
+    }
+}
+
 #[test]
 fn test_multiple_byte() {
     let mut data = Cursor::new(Vec::new());
@@ -191,11 +213,11 @@ fn test_multiple_byte() {
     {
         let mut decoder = Decoder::new(&mut data).unwrap();
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_u32_vec().unwrap(), [1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_u32_vec().unwrap(), [1, 2]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_u32_vec().unwrap(), [1, 2, 3]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_u32_vec().unwrap(), [1, 2, 3, 4]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_u32_vec().unwrap(), [1, 2, 3, 4, 5]);
+        assert_eq!(decoder.assert_tag_u32_vec(65000), [1]);
+        assert_eq!(decoder.assert_tag_u32_vec(65001), [1, 2]);
+        assert_eq!(decoder.assert_tag_u32_vec(65002), [1, 2, 3]);
+        assert_eq!(decoder.assert_tag_u32_vec(65003), [1, 2, 3, 4]);
+        assert_eq!(decoder.assert_tag_u32_vec(65004), [1, 2, 3, 4, 5]);
     }
 }
 
@@ -203,6 +225,9 @@ fn test_multiple_byte() {
 /// Test writing signed tags from TIFF 6.0
 fn test_signed() {
     let mut data = Cursor::new(Vec::new());
+    fn make_srational(i: i32) -> SRational {
+        SRational { n: i, d: 100 }
+    }
 
     {
         let mut tiff = TiffEncoder::new(&mut data).unwrap();
@@ -226,8 +251,8 @@ fn test_signed() {
         encoder.write_tag(Tag::Unknown(65021), &[-1_i32][..]).unwrap();
         encoder.write_tag(Tag::Unknown(65022), &[-1_i32, 2][..]).unwrap();
 
-        encoder.write_tag(Tag::Unknown(65030), SRational { n: -1, d: 100 }).unwrap();
-        encoder.write_tag(Tag::Unknown(65031), &[SRational { n: -1, d: 100 }, SRational { n: 2, d: 100 }][..]).unwrap();
+        encoder.write_tag(Tag::Unknown(65030), make_srational(-1)).unwrap();
+        encoder.write_tag(Tag::Unknown(65031), &[make_srational(-1), make_srational(2)][..]).unwrap();
     }
 
     //Rewind the cursor for reading
@@ -235,24 +260,24 @@ fn test_signed() {
     {
         let mut decoder = Decoder::new(&mut data).unwrap();
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65000)).unwrap().into_i32().unwrap(), -1, );
-        assert_eq!(decoder.get_tag(Tag::Unknown(65001)).unwrap().into_i32_vec().unwrap(), [-1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65002)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65003)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65004)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3, 4]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65005)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3, 4, -5], );
+        assert_eq!(decoder.assert_tag_i32(65000), -1);
+        assert_eq!(decoder.assert_tag_i32_vec(65001), [-1]);
+        assert_eq!(decoder.assert_tag_i32_vec(65002), [-1, 2]);
+        assert_eq!(decoder.assert_tag_i32_vec(65003), [-1, 2, -3]);
+        assert_eq!(decoder.assert_tag_i32_vec(65004), [-1, 2, -3, 4]);
+        assert_eq!(decoder.assert_tag_i32_vec(65005), [-1, 2, -3, 4, -5], );
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65010)).unwrap().into_i32().unwrap(), -1);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65011)).unwrap().into_i32_vec().unwrap(), [-1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65012)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65013)).unwrap().into_i32_vec().unwrap(), [-1, 2, -3]);
+        assert_eq!(decoder.assert_tag_i32(65010), -1);
+        assert_eq!(decoder.assert_tag_i32_vec(65011), [-1]);
+        assert_eq!(decoder.assert_tag_i32_vec(65012), [-1, 2]);
+        assert_eq!(decoder.assert_tag_i32_vec(65013), [-1, 2, -3]);
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65020)).unwrap().into_i32().unwrap(), -1);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65021)).unwrap().into_i32_vec().unwrap(), [-1]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65022)).unwrap().into_i32_vec().unwrap(), [-1, 2]);
+        assert_eq!(decoder.assert_tag_i32(65020), -1);
+        assert_eq!(decoder.assert_tag_i32_vec(65021), [-1]);
+        assert_eq!(decoder.assert_tag_i32_vec(65022), [-1, 2]);
 
-        assert_eq!(decoder.get_tag(Tag::Unknown(65030)).unwrap().into_i32_vec().unwrap(), [-1, 100]);
-        assert_eq!(decoder.get_tag(Tag::Unknown(65031)).unwrap().into_i32_vec().unwrap(), [-1_i32, 100, 2, 100]);
+        assert_eq!(decoder.assert_tag_i32_vec(65030), [-1, 100]);
+        assert_eq!(decoder.assert_tag_i32_vec(65031), [-1_i32, 100, 2, 100]);
     }
 }
 
