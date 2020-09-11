@@ -1,7 +1,9 @@
 extern crate criterion;
 extern crate tiff;
 
-use criterion::{black_box, BenchmarkId, BenchmarkGroup, Criterion, Throughput, measurement::Measurement};
+use criterion::{
+    black_box, measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
+};
 use tiff::decoder::Decoder;
 
 fn read_image(image: &[u8]) {
@@ -29,9 +31,7 @@ fn main() {
             .bench_with_input(
                 BenchmarkId::new(def.id, def.data.len()),
                 def.data,
-                |b, input| {
-                    b.iter(|| read_image(input))
-                }
+                |b, input| b.iter(|| read_image(input)),
             );
     };
 
@@ -46,27 +46,51 @@ fn main() {
     });
     */
 
-    run_bench_def(&mut group, BenchDef {
-        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/issue_69_lzw.tiff")),
-        id: "issue-69-lzw.tif",
-        sample_size: 500,
-    });
+    run_bench_def(
+        &mut group,
+        BenchDef {
+            data: include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/images/issue_69_lzw.tiff"
+            )),
+            id: "issue-69-lzw.tif",
+            sample_size: 500,
+        },
+    );
 
-    run_bench_def(&mut group, BenchDef {
-        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/benches/kodim02-lzw.tif")),
-        id: "kodim02-lzw.tif",
-        sample_size: 20,
-    });
+    run_bench_def(
+        &mut group,
+        BenchDef {
+            data: include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/benches/kodim02-lzw.tif"
+            )),
+            id: "kodim02-lzw.tif",
+            sample_size: 20,
+        },
+    );
 
-    run_bench_def(&mut group, BenchDef {
-        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/benches/kodim07-lzw.tif")),
-        id: "kodim07-lzw.tif",
-        sample_size: 20,
-    });
+    run_bench_def(
+        &mut group,
+        BenchDef {
+            data: include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/benches/kodim07-lzw.tif"
+            )),
+            id: "kodim07-lzw.tif",
+            sample_size: 20,
+        },
+    );
 
-    run_bench_def(&mut group, BenchDef {
-        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/benches/Transparency-lzw.tif")),
-        id: "Transparency-lzw.tif",
-        sample_size: 20,
-    });
+    run_bench_def(
+        &mut group,
+        BenchDef {
+            data: include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/benches/Transparency-lzw.tif"
+            )),
+            id: "Transparency-lzw.tif",
+            sample_size: 20,
+        },
+    );
 }

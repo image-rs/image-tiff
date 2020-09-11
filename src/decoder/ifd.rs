@@ -1,7 +1,7 @@
 //! Function for reading TIFF tags
 
 use std::collections::HashMap;
-use std::convert::{TryInto, TryFrom};
+use std::convert::{TryFrom, TryInto};
 use std::io::{self, Read, Seek};
 use std::mem;
 
@@ -9,8 +9,10 @@ use super::stream::{ByteOrder, EndianReader, SmartReader};
 use tags::{Tag, Type};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
-use self::Value::{Ascii, List, Float, Double, Rational, Unsigned, Signed, SRational, RationalBig, UnsignedBig, SignedBig, SRationalBig};
-
+use self::Value::{
+    Ascii, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed, SignedBig,
+    Unsigned, UnsignedBig,
+};
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq)]
@@ -102,7 +104,9 @@ impl Value {
             Unsigned(val) => Ok(vec![val]),
             UnsignedBig(val) => Ok(vec![u32::try_from(val)?]),
             Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
-            RationalBig(numerator, denominator) => Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?]),
+            RationalBig(numerator, denominator) => {
+                Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?])
+            }
             Ascii(val) => Ok(val.chars().map(u32::from).collect()),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
@@ -132,7 +136,9 @@ impl Value {
             Signed(val) => Ok(vec![val]),
             SignedBig(val) => Ok(vec![i32::try_from(val)?]),
             SRational(numerator, denominator) => Ok(vec![numerator, denominator]),
-            SRationalBig(numerator, denominator) => Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?]),
+            SRationalBig(numerator, denominator) => {
+                Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?])
+            }
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -220,7 +226,7 @@ impl Value {
         }
     }
 }
-    
+
 #[derive(Clone)]
 pub struct Entry {
     type_: Type,
@@ -309,17 +315,11 @@ impl Entry {
                 }
                 (Type::LONG, 2) => {
                     let mut r = self.r(bo);
-                    Some(List(vec![
-                        Unsigned(r.read_u32()?),
-                        Unsigned(r.read_u32()?),
-                    ]))
+                    Some(List(vec![Unsigned(r.read_u32()?), Unsigned(r.read_u32()?)]))
                 }
                 (Type::SLONG, 2) => {
                     let mut r = self.r(bo);
-                    Some(List(vec![
-                        Signed(r.read_i32()?),
-                        Signed(r.read_i32()?),
-                    ]))
+                    Some(List(vec![Signed(r.read_i32()?), Signed(r.read_i32()?)]))
                 }
                 (Type::RATIONAL, 1) => {
                     let mut r = self.r(bo);
@@ -333,7 +333,7 @@ impl Entry {
                     let denominator = r.read_i32()?;
                     Some(SRational(numerator, denominator))
                 }
-                _ => None
+                _ => None,
             }
         } else {
             None
@@ -409,10 +409,10 @@ impl Entry {
                     if n > limits.decoding_buffer_size {
                         return Err(TiffError::LimitsExceeded);
                     }
-                    
+
                     if (n <= 4 && !decoder.bigtiff) || (n <= 8 && decoder.bigtiff) {
                         let mut buf = vec![0; n];
-                        self.r(bo).read_exact(&mut buf )?;
+                        self.r(bo).read_exact(&mut buf)?;
                         let v = String::from_utf8(buf)?;
                         let v = v.trim_matches(char::from(0));
                         Ok(Ascii(v.into()))
@@ -434,10 +434,17 @@ impl Entry {
     }
 
     #[inline]
-    fn decode_offset<R, F>(&self, value_count: u64, bo: ByteOrder, limits: &super::Limits, decoder: &mut super::Decoder<R>, decode_fn: F) -> TiffResult<Value>
-        where
-            R: Read + Seek,
-            F: Fn(&mut super::Decoder<R>) -> TiffResult<Value>,
+    fn decode_offset<R, F>(
+        &self,
+        value_count: u64,
+        bo: ByteOrder,
+        limits: &super::Limits,
+        decoder: &mut super::Decoder<R>,
+        decode_fn: F,
+    ) -> TiffResult<Value>
+    where
+        R: Read + Seek,
+        F: Fn(&mut super::Decoder<R>) -> TiffResult<Value>,
     {
         let value_count = usize::try_from(value_count)?;
         if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
@@ -464,7 +471,7 @@ fn offset_to_bytes(n: usize, entry: &Entry) -> TiffResult<Value> {
         entry.offset[0..n]
             .iter()
             .map(|&e| Unsigned(u32::from(e)))
-            .collect()
+            .collect(),
     ))
 }
 
@@ -475,7 +482,7 @@ fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
         entry.offset[0..n]
             .iter()
             .map(|&e| Signed(i32::from(e as i8)))
-            .collect()
+            .collect(),
     ))
 }
 
