@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::io::{Seek, Write};
-use std::mem;
+use std::{cmp, io, mem};
 
 use bytecast;
 use error::{TiffError, TiffFormatError, TiffResult};
@@ -667,12 +667,9 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
             return 0;
         }
 
-        let start_row =
-            ::std::cmp::min(u64::from(self.height), self.strip_idx * self.rows_per_strip);
-        let end_row = ::std::cmp::min(
-            u64::from(self.height),
-            (self.strip_idx + 1) * self.rows_per_strip,
-        );
+        let raw_start_row = self.strip_idx * self.rows_per_strip;
+        let start_row = cmp::min(u64::from(self.height), raw_start_row);
+        let end_row = cmp::min(u64::from(self.height), raw_start_row + self.rows_per_strip);
 
         (end_row - start_row) * self.row_samples
     }
@@ -685,8 +682,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         // TODO: Compression
         let samples = self.next_strip_sample_count();
         if u64::try_from(value.len())? != samples {
-            return Err(::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidData,
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
                 "Slice is wrong size for strip",
             )
             .into());
@@ -708,14 +705,14 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         let num_pix = usize::try_from(self.width)?
             .checked_mul(usize::try_from(self.height)?)
             .ok_or_else(|| {
-                ::std::io::Error::new(
-                    ::std::io::ErrorKind::InvalidInput,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
                     "Image width * height exceeds usize",
                 )
             })?;
         if data.len() < num_pix {
-            return Err(::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidData,
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
                 "Input data slice is undersized for provided dimensions",
             )
             .into());

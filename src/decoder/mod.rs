@@ -946,15 +946,15 @@ impl<R: Read + Seek> Decoder<R> {
                 TiffFormatError::InconsistentSizesEncountered,
             ))?;
 
-        let rows_per_strip =
-            usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
+        let tag_rows = self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height);
+        let rows_per_strip = usize::try_from(tag_rows)?;
 
-        let strip_height = cmp::min(
-            rows_per_strip,
-            usize::try_from(self.height)? - index * rows_per_strip,
-        );
+        let sized_width = usize::try_from(self.width)?;
+        let sized_height = usize::try_from(self.height)?;
 
-        let buffer_size = usize::try_from(self.width)? * strip_height * self.bits_per_sample.len();
+        let strip_height = cmp::min(rows_per_strip, sized_height - index * rows_per_strip);
+
+        let buffer_size = sized_width * strip_height * self.bits_per_sample.len();
 
         if buffer.len() < buffer_size {
             return Err(TiffError::FormatError(

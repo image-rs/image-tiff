@@ -38,21 +38,16 @@ fn main() {
     let mut c = Criterion::default().configure_from_args();
     let mut group = c.benchmark_group("tiff-lzw");
 
-    /*
-    run_bench_def(&mut group, BenchDef {
-        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/quad-lzw-compat.tiff")),
-        id: "quad-lzw.tif",
-        sample_size: 500,
-    });
-    */
+    macro_rules! data_file {
+        ($name:literal) => {
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), $name))
+        };
+    }
 
     run_bench_def(
         &mut group,
         BenchDef {
-            data: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/images/issue_69_lzw.tiff"
-            )),
+            data: data_file!("/tests/images/issue_69_lzw.tiff"),
             id: "issue-69-lzw.tif",
             sample_size: 500,
         },
@@ -61,10 +56,7 @@ fn main() {
     run_bench_def(
         &mut group,
         BenchDef {
-            data: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/benches/kodim02-lzw.tif"
-            )),
+            data: data_file!("/tests/benches/kodim02-lzw.tif"),
             id: "kodim02-lzw.tif",
             sample_size: 20,
         },
@@ -73,10 +65,7 @@ fn main() {
     run_bench_def(
         &mut group,
         BenchDef {
-            data: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/benches/kodim07-lzw.tif"
-            )),
+            data: data_file!("/tests/benches/kodim07-lzw.tif"),
             id: "kodim07-lzw.tif",
             sample_size: 20,
         },
@@ -85,10 +74,7 @@ fn main() {
     run_bench_def(
         &mut group,
         BenchDef {
-            data: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/benches/Transparency-lzw.tif"
-            )),
+            data: data_file!("/tests/benches/Transparency-lzw.tif"),
             id: "Transparency-lzw.tif",
             sample_size: 20,
         },
