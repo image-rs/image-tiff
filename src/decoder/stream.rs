@@ -34,14 +34,16 @@ pub trait EndianReader: Read {
     fn read_u16_into(&mut self, buffer: &mut [u16]) -> Result<(), io::Error> {
         self.read_exact(bytecast::u16_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
-            ByteOrder::LittleEndian =>
+            ByteOrder::LittleEndian => {
                 for n in buffer {
                     *n = u16::from_le(*n);
-                },
-            ByteOrder::BigEndian =>
+                }
+            }
+            ByteOrder::BigEndian => {
                 for n in buffer {
                     *n = u16::from_be(*n);
-                },
+                }
+            }
         }
         Ok(())
     }
@@ -72,14 +74,16 @@ pub trait EndianReader: Read {
     fn read_u32_into(&mut self, buffer: &mut [u32]) -> Result<(), io::Error> {
         self.read_exact(bytecast::u32_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
-            ByteOrder::LittleEndian =>
+            ByteOrder::LittleEndian => {
                 for n in buffer {
                     *n = u32::from_le(*n);
-                },
-            ByteOrder::BigEndian =>
+                }
+            }
+            ByteOrder::BigEndian => {
                 for n in buffer {
                     *n = u32::from_be(*n);
-                },
+                }
+            }
         }
         Ok(())
     }
@@ -110,14 +114,16 @@ pub trait EndianReader: Read {
     fn read_u64_into(&mut self, buffer: &mut [u64]) -> Result<(), io::Error> {
         self.read_exact(bytecast::u64_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
-            ByteOrder::LittleEndian =>
+            ByteOrder::LittleEndian => {
                 for n in buffer {
                     *n = u64::from_le(*n);
-                },
-            ByteOrder::BigEndian =>
+                }
+            }
+            ByteOrder::BigEndian => {
                 for n in buffer {
                     *n = u64::from_be(*n);
-                },
+                }
+            }
         }
         Ok(())
     }
@@ -137,14 +143,16 @@ pub trait EndianReader: Read {
     fn read_f32_into(&mut self, buffer: &mut [f32]) -> Result<(), io::Error> {
         self.read_exact(bytecast::f32_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
-            ByteOrder::LittleEndian =>
+            ByteOrder::LittleEndian => {
                 for n in buffer {
                     *n = f32::from_bits(u32::from_le(n.to_bits()));
-                },
-            ByteOrder::BigEndian =>
+                }
+            }
+            ByteOrder::BigEndian => {
                 for n in buffer {
                     *n = f32::from_bits(u32::from_be(n.to_bits()));
-                },
+                }
+            }
         }
         Ok(())
     }
@@ -164,14 +172,16 @@ pub trait EndianReader: Read {
     fn read_f64_into(&mut self, buffer: &mut [f64]) -> Result<(), io::Error> {
         self.read_exact(bytecast::f64_as_ne_mut_bytes(buffer))?;
         match self.byte_order() {
-            ByteOrder::LittleEndian =>
+            ByteOrder::LittleEndian => {
                 for n in buffer {
                     *n = f64::from_bits(u64::from_le(n.to_bits()));
-                },
-            ByteOrder::BigEndian =>
+                }
+            }
+            ByteOrder::BigEndian => {
                 for n in buffer {
                     *n = f64::from_bits(u64::from_be(n.to_bits()));
-                },
+                }
+            }
         }
         Ok(())
     }
@@ -251,17 +261,22 @@ impl LZWReader {
             let buffer_space = uncompressed.capacity();
             uncompressed.resize(buffer_space, 0u8);
 
-            let result = decoder.decode_bytes(&compressed[bytes_read..], &mut uncompressed[bytes_written..]);
+            let result = decoder.decode_bytes(
+                &compressed[bytes_read..],
+                &mut uncompressed[bytes_written..],
+            );
             bytes_read += result.consumed_in;
             uncompressed.truncate(bytes_written + result.consumed_out);
 
             match result.status {
-                Ok(weezl::LzwStatus::Ok) => {},
+                Ok(weezl::LzwStatus::Ok) => {}
                 Ok(weezl::LzwStatus::Done) => break,
-                Ok(weezl::LzwStatus::NoProgress) => return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "no lzw end code found",
-                )),
+                Ok(weezl::LzwStatus::NoProgress) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "no lzw end code found",
+                    ))
+                }
                 Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
             }
         }

@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::io::{Seek, Write};
-use std::mem;
+use std::{cmp, io, mem};
 
 use bytecast;
-use tags::{self, ResolutionUnit, Tag, Type};
 use error::{TiffError, TiffFormatError, TiffResult};
+use tags::{self, ResolutionUnit, Tag, Type};
 
 pub mod colortype;
 mod writer;
@@ -495,8 +495,10 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
             value.write(&mut writer)?;
         }
 
-        self.ifd
-            .insert(tag.to_u16(), (<T>::FIELD_TYPE.to_u16(), value.count(), bytes));
+        self.ifd.insert(
+            tag.to_u16(),
+            (<T>::FIELD_TYPE.to_u16(), value.count(), bytes),
+        );
 
         Ok(())
     }
@@ -636,7 +638,10 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
         encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
 
-        encoder.write_tag(Tag::SamplesPerPixel, u16::try_from(<T>::BITS_PER_SAMPLE.len())?)?;
+        encoder.write_tag(
+            Tag::SamplesPerPixel,
+            u16::try_from(<T>::BITS_PER_SAMPLE.len())?,
+        )?;
         encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
@@ -662,11 +667,9 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
             return 0;
         }
 
-        let start_row = ::std::cmp::min(u64::from(self.height), self.strip_idx * self.rows_per_strip);
-        let end_row = ::std::cmp::min(
-            u64::from(self.height),
-            (self.strip_idx + 1) * self.rows_per_strip,
-        );
+        let raw_start_row = self.strip_idx * self.rows_per_strip;
+        let start_row = cmp::min(u64::from(self.height), raw_start_row);
+        let end_row = cmp::min(u64::from(self.height), raw_start_row + self.rows_per_strip);
 
         (end_row - start_row) * self.row_samples
     }
@@ -679,9 +682,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         // TODO: Compression
         let samples = self.next_strip_sample_count();
         if u64::try_from(value.len())? != samples {
-            return Err(::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidData,
-                "Slice is wrong size for strip").into());
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Slice is wrong size for strip",
+            )
+            .into());
         }
 
         let offset = self.encoder.write_data(value)?;
@@ -697,14 +702,20 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     where
         [T::Inner]: TiffValue,
     {
-        let num_pix = usize::try_from(self.width)?.checked_mul(usize::try_from(self.height)?)
-            .ok_or_else(|| ::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidInput,
-                "Image width * height exceeds usize"))?;
+        let num_pix = usize::try_from(self.width)?
+            .checked_mul(usize::try_from(self.height)?)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Image width * height exceeds usize",
+                )
+            })?;
         if data.len() < num_pix {
-            return Err(::std::io::Error::new(
-                ::std::io::ErrorKind::InvalidData,
-                "Input data slice is undersized for provided dimensions").into());
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Input data slice is undersized for provided dimensions",
+            )
+            .into());
         }
         let mut idx = 0;
         while self.next_strip_sample_count() > 0 {
@@ -718,14 +729,20 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     /// Set image resolution
     pub fn resolution(&mut self, unit: ResolutionUnit, value: Rational) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
-        self.encoder.write_tag(Tag::XResolution, value.clone()).unwrap();
+        self.encoder
+            .write_tag(Tag::ResolutionUnit, unit.to_u16())
+            .unwrap();
+        self.encoder
+            .write_tag(Tag::XResolution, value.clone())
+            .unwrap();
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
     /// Set image resolution unit
     pub fn resolution_unit(&mut self, unit: ResolutionUnit) {
-        self.encoder.write_tag(Tag::ResolutionUnit, unit.to_u16()).unwrap();
+        self.encoder
+            .write_tag(Tag::ResolutionUnit, unit.to_u16())
+            .unwrap();
     }
 
     /// Set image x-resolution
