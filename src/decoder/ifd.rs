@@ -35,7 +35,6 @@ pub enum Value {
 }
 
 impl Value {
-
     pub fn into_u8(self) -> TiffResult<u8> {
         match self {
             Byte(val) => Ok(val),

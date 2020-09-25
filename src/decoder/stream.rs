@@ -343,7 +343,7 @@ impl JpegReader {
     pub fn new<R>(
         reader: &mut SmartReader<R>,
         length: u32,
-        jpeg_tables: &Vec<u8>
+        jpeg_tables: &Vec<u8>,
     ) -> io::Result<JpegReader>
     where
         R: Read + Seek,
@@ -359,12 +359,10 @@ impl JpegReader {
 
         jpeg_data.extend_from_slice(&mut segment[2..]);
 
-        Ok(
-            JpegReader {
-                buffer: io::Cursor::new(jpeg_data),
-                byte_order: order,
-            },
-        )
+        Ok(JpegReader {
+            buffer: io::Cursor::new(jpeg_data),
+            byte_order: order,
+        })
     }
 }
 
@@ -381,8 +379,6 @@ impl EndianReader for JpegReader {
         self.byte_order
     }
 }
-
-
 
 ///
 /// ## PackBits Reader

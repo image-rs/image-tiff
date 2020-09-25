@@ -9,8 +9,9 @@ use self::ifd::Directory;
 use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type};
 
 use self::stream::{
-ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader, JpegReader
+    ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader, JpegReader
 };
+use tags::{CompressionMethod, PhotometricInterpretation, Predictor, Tag, Type};
 
 pub mod ifd;
 mod stream;
@@ -638,7 +639,9 @@ impl<R: Read + Seek> Decoder<R> {
         for _ in 0..num_tags {
             let (tag, entry) = match self.read_entry()? {
                 Some(val) => val,
-                None => continue, // Unknown data type in tag, skip
+                None => {
+                    continue;
+                } // Unknown data type in tag, skip
             };
             dir.insert(tag, entry);
         }
@@ -962,7 +965,6 @@ impl<R: Read + Seek> Decoder<R> {
         let mut res_img = Vec::with_capacity(tile_offsets[0] as usize);
 
         for (idx, offset) in tile_offsets.iter().enumerate() {
-
             self.goto_offset(*offset)?;
             let jpeg_reader = JpegReader::new(&mut self.reader, tile_bytes[idx], &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
@@ -970,13 +972,12 @@ impl<R: Read + Seek> Decoder<R> {
             match decoder.decode() {
                 Err(e) => {
                     panic!("The ERror was: {}", e);
-                },
+                }
                 Ok(mut val) => res_img.append(&mut val),
             }
         }
 
         Ok(DecodingResult::U8(res_img))
-
     }
 
     pub fn read_jpeg_strips(&mut self) -> TiffResult<DecodingResult> {
@@ -986,8 +987,8 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut res_img = Vec::with_capacity(strip_offsets[0] as usize);
 
-        for (idx, offset) in strip_offsets.iter().enumerate() {
 
+        for (idx, offset) in strip_offsets.iter().enumerate() {
             self.goto_offset(*offset)?;
             let jpeg_reader = JpegReader::new(&mut self.reader, strip_bytes[idx], &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
@@ -995,14 +996,13 @@ impl<R: Read + Seek> Decoder<R> {
             match decoder.decode() {
                 Err(e) => {
                     panic!("Error when reading jpeg tiles: {}", e);
-                },
+                }
                 Ok(mut val) => res_img.append(&mut val),
             }
         }
 
         Ok(DecodingResult::U8(res_img))
     }
-
 
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.initialize_strip_decoder()?;
@@ -1126,7 +1126,6 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-
         if self.compression_method == CompressionMethod::ModernJPEG {
             match self.find_tag(Tag::TileOffsets) {
                 Ok(None) | Err(_) => return self.read_jpeg_strips(),
@@ -1146,7 +1145,6 @@ impl<R: Read + Seek> Decoder<R> {
         for i in 0..usize::try_from(self.strip_count()?)? {
             self.read_strip_to_buffer(result.as_buffer(samples_per_strip * i))?;
         }
-
         Ok(result)
     }
 }
