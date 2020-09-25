@@ -10,13 +10,14 @@ use tags::{Tag, Type};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::Value::{
-    Ascii, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed, SignedBig,
+    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed, SignedBig,
     Unsigned, UnsignedBig,
 };
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    Byte(u8),
     Signed(i32),
     SignedBig(i64),
     Unsigned(u32),
@@ -34,6 +35,16 @@ pub enum Value {
 }
 
 impl Value {
+
+    pub fn into_u8(self) -> TiffResult<u8> {
+        match self {
+            Byte(val) => Ok(val),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
             Unsigned(val) => Ok(val),
@@ -108,6 +119,23 @@ impl Value {
                 Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?])
             }
             Ascii(val) => Ok(val.chars().map(u32::from).collect()),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_u8_vec(self) -> TiffResult<Vec<u8>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    new_vec.push(v.into_u8()?)
+                }
+                Ok(new_vec)
+            }
+            Byte(val) => Ok(vec![val]),
+
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),

@@ -746,6 +746,11 @@ impl<R: Read + Seek> Decoder<R> {
         self.get_tag(tag)?.into_f64_vec()
     }
 
+    /// Tries to retrieve a tag and convert it to a 8bit vector.
+    pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
+        self.get_tag(tag)?.into_u8_vec()
+    }
+
     /// Decompresses the strip into the supplied buffer.
     /// Returns the number of bytes read.
     fn expand_strip<'a>(
