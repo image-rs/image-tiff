@@ -9,7 +9,7 @@ use self::ifd::Directory;
 use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type};
 
 use self::stream::{
-    ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader,
+ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader, JpegReader
 };
 
 pub mod ifd;
@@ -710,6 +710,32 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
+    pub fn get_all_tags(&mut self) -> Vec<(Tag, ifd::Value)> {
+        let mut all_tags = Vec::new();
+
+        let dir = match &self.ifd {
+            Some(d) => d,
+            None => {
+                println!("No tags found");
+                return all_tags;
+            }
+        };
+        let keys = dir.keys().cloned().collect::<Vec<Tag>>();
+        // go through all tags
+        for key in keys {
+            let tag_value = match self.get_tag(key) {
+                Ok(val) => val,
+                _ => {
+                    println!("Could not unwrap {:?}", key);
+                    continue;
+                }
+            };
+            all_tags.push((key, tag_value));
+        }
+
+        all_tags
+    }
+
     /// Tries to retrieve a tag and convert it to the desired type.
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
@@ -928,6 +954,56 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    pub fn read_jpeg_tiles(&mut self) -> TiffResult<DecodingResult> {
+        let tile_offsets = self.get_tag_u32_vec(Tag::TileOffsets)?;
+        let tile_bytes = self.get_tag_u32_vec(Tag::TileByteCounts)?;
+        let jpeg_tables: Vec<u8> = self.get_tag_u8_vec(Tag::JPEGTables)?;
+
+        let mut res_img = Vec::with_capacity(tile_offsets[0] as usize);
+
+        for (idx, offset) in tile_offsets.iter().enumerate() {
+
+            self.goto_offset(*offset)?;
+            let jpeg_reader = JpegReader::new(&mut self.reader, tile_bytes[idx], &jpeg_tables)?;
+            let mut decoder = jpeg::Decoder::new(jpeg_reader);
+
+            match decoder.decode() {
+                Err(e) => {
+                    panic!("The ERror was: {}", e);
+                },
+                Ok(mut val) => res_img.append(&mut val),
+            }
+        }
+
+        Ok(DecodingResult::U8(res_img))
+
+    }
+
+    pub fn read_jpeg_strips(&mut self) -> TiffResult<DecodingResult> {
+        let strip_offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
+        let strip_bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
+        let jpeg_tables: Vec<u8> = self.get_tag_u8_vec(Tag::JPEGTables)?;
+
+        let mut res_img = Vec::with_capacity(strip_offsets[0] as usize);
+
+        for (idx, offset) in strip_offsets.iter().enumerate() {
+
+            self.goto_offset(*offset)?;
+            let jpeg_reader = JpegReader::new(&mut self.reader, strip_bytes[idx], &jpeg_tables)?;
+            let mut decoder = jpeg::Decoder::new(jpeg_reader);
+
+            match decoder.decode() {
+                Err(e) => {
+                    panic!("Error when reading jpeg tiles: {}", e);
+                },
+                Ok(mut val) => res_img.append(&mut val),
+            }
+        }
+
+        Ok(DecodingResult::U8(res_img))
+    }
+
+
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.initialize_strip_decoder()?;
 
@@ -1050,6 +1126,14 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
+
+        if self.compression_method == CompressionMethod::ModernJPEG {
+            match self.find_tag(Tag::TileOffsets) {
+                Ok(None) | Err(_) => return self.read_jpeg_strips(),
+                Ok(_) => return self.read_jpeg_tiles(),
+            }
+        }
+
         self.initialize_strip_decoder()?;
         let rows_per_strip =
             usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
