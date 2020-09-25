@@ -111,11 +111,6 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     Threshholding = 263, // TODO add support
     XResolution = 282,
     YResolution = 283,
-    TileWidth = 322,
-    TileLength = 323,
-    TileOffsets = 324,
-    TileByteCounts = 325,
-    SampleFormat = 339,
     // JPEG
     JPEGTables = 347,
     // Advanced tags

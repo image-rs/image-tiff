@@ -45,6 +45,7 @@ pub enum TiffFormatError {
     InvalidTagValueType(Tag),
     RequiredTagNotFound(Tag),
     UnknownPredictor(u16),
+    ByteExpected(Value),
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
     InflateError(InflateError),
@@ -68,6 +69,9 @@ impl fmt::Display for TiffFormatError {
             RequiredTagNotFound(ref tag) => write!(fmt, "Required tag `{:?}` not found.", tag),
             UnknownPredictor(ref predictor) => {
                 write!(fmt, "Unknown predictor “{}” encountered", predictor)
+            }
+            ByteExpected(ref val) => {
+                write!(fmt, "Expected byte, {:?} found.", val)
             }
             UnsignedIntegerExpected(ref val) => {
                 write!(fmt, "Expected unsigned integer, {:?} found.", val)

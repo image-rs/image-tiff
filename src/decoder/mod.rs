@@ -11,7 +11,6 @@ use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat
 use self::stream::{
     ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader, JpegReader
 };
-use tags::{CompressionMethod, PhotometricInterpretation, Predictor, Tag, Type};
 
 pub mod ifd;
 mod stream;

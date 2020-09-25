@@ -39,7 +39,7 @@ impl Value {
         match self {
             Byte(val) => Ok(val),
             val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
+                TiffFormatError::ByteExpected(val),
             )),
         }
     }
@@ -454,7 +454,7 @@ impl Entry {
                     }
                 },
                 (Type::UNDEFINED, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Unsigned(u32::from(decoder.read_byte()?)))
+                    Ok(Byte(u8::from(decoder.read_byte()?)))
                 }),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedDataType,
