@@ -72,9 +72,7 @@ impl fmt::Display for TiffFormatError {
             UnknownPredictor(ref predictor) => {
                 write!(fmt, "Unknown predictor “{}” encountered", predictor)
             }
-            ByteExpected(ref val) => {
-                write!(fmt, "Expected byte, {:?} found.", val)
-            }
+            ByteExpected(ref val) => write!(fmt, "Expected byte, {:?} found.", val),
             UnsignedIntegerExpected(ref val) => {
                 write!(fmt, "Expected unsigned integer, {:?} found.", val)
             }
@@ -82,12 +80,8 @@ impl fmt::Display for TiffFormatError {
                 write!(fmt, "Expected signed integer, {:?} found.", val)
             }
             InflateError(_) => write!(fmt, "Failed to decode inflate data."),
-            Format(ref val) => {
-                write!(fmt, "Invalid format: {:?}.", val)
-            }
-            RequiredTagEmpty(ref val) => {
-                write!(fmt, "Required tag {:?} was empty.", val)
-            }
+            Format(ref val) => write!(fmt, "Invalid format: {:?}.", val),
+            RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
             __NonExhaustive => unreachable!(),
         }
     }

@@ -10,8 +10,8 @@ use tags::{Tag, Type};
 use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::Value::{
-    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed, SignedBig,
-    Unsigned, UnsignedBig,
+    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed,
+    SignedBig, Unsigned, UnsignedBig,
 };
 
 #[allow(unused_qualifications)]
@@ -38,9 +38,7 @@ impl Value {
     pub fn into_u8(self) -> TiffResult<u8> {
         match self {
             Byte(val) => Ok(val),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::ByteExpected(val),
-            )),
+            val => Err(TiffError::FormatError(TiffFormatError::ByteExpected(val))),
         }
     }
 
@@ -452,7 +450,7 @@ impl Entry {
                         let string = decoder.read_string(n)?;
                         Ok(Ascii(string))
                     }
-                },
+                }
                 (Type::UNDEFINED, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
                     Ok(Byte(u8::from(decoder.read_byte()?)))
                 }),

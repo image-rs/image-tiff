@@ -329,7 +329,7 @@ pub(crate) struct JpegReader {
 impl JpegReader {
     /// Constructs new JpegReader wrapping a SmartReader.
     /// Because JPEG compression in TIFF allows to save quantization and/or huffman tables in one
-    /// central loacation, the constructor accepts this data as `jpeg_tables` here containing either
+    /// central location, the constructor accepts this data as `jpeg_tables` here containing either
     /// or both.
     /// These `jpeg_tables` are simply prepended to the remaining jpeg image data.
     /// Because these `jpeg_tables` start with a `SOI` (HEX: `0xFFD8`) or __start of image__ marker
@@ -342,7 +342,7 @@ impl JpegReader {
     pub fn new<R>(
         reader: &mut SmartReader<R>,
         length: u32,
-        jpeg_tables: &Vec<u8>,
+        jpeg_tables: &Option<Vec<u8>>,
     ) -> io::Result<JpegReader>
     where
         R: Read + Seek,
@@ -353,15 +353,25 @@ impl JpegReader {
         let mut segment = vec![0; length as usize];
         reader.read_exact(&mut segment[..])?;
 
-        let mut jpeg_data = jpeg_tables.clone();
-        jpeg_data.truncate(jpeg_data.len() - 2);
+        match jpeg_tables {
+            Some(tables) => {
+                let mut jpeg_data = tables.clone();
+                jpeg_data.truncate(jpeg_data.len() - 2);
+                jpeg_data.extend_from_slice(&mut segment[2..]);
 
-        jpeg_data.extend_from_slice(&mut segment[2..]);
+                Ok(JpegReader {
+                    buffer: io::Cursor::new(jpeg_data),
+                    byte_order: order,
+                })
+            },
+            None => {
+                Ok(JpegReader {
+                    buffer: io::Cursor::new(segment),
+                    byte_order: order,
+                })
+            }
+        }
 
-        Ok(JpegReader {
-            buffer: io::Cursor::new(jpeg_data),
-            byte_order: order,
-        })
     }
 }
 

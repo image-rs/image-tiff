@@ -933,7 +933,12 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
         let offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
         let bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
-        let jpeg_tables: Vec<u8> = self.get_tag_u8_vec(Tag::JPEGTables)?;
+
+        let jpeg_tables: Option<Vec<u8>> = match self.find_tag(Tag::JPEGTables) {
+            Ok(None) => None,
+            Ok(_) => Some(self.get_tag_u8_vec(Tag::JPEGTables)?),
+            Err(e) => return Err(e),
+        };
 
         if offsets.len() == 0 {
             return Err(TiffError::FormatError(TiffFormatError::RequiredTagEmpty(
