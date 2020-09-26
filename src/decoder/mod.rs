@@ -9,7 +9,7 @@ use self::ifd::Directory;
 use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type};
 
 use self::stream::{
-    ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader, JpegReader
+    ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,
 };
 
 pub mod ifd;
@@ -956,18 +956,21 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    pub fn read_jpeg(&mut self, read_strip_wise: bool) -> TiffResult<DecodingResult> {
-
+    pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
         let offsets: Vec<u32>;
         let bytes: Vec<u32>;
         let jpeg_tables: Vec<u8> = self.get_tag_u8_vec(Tag::JPEGTables)?;
 
-        if read_strip_wise {
-            offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
-            bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
-        } else {
-            offsets = self.get_tag_u32_vec(Tag::TileOffsets)?;
-            bytes = self.get_tag_u32_vec(Tag::TileByteCounts)?;
+        match self.find_tag(Tag::TileOffsets) {
+            Ok(None) => {
+                offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
+                bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
+            }
+            Ok(_) => {
+                offsets = self.get_tag_u32_vec(Tag::TileOffsets)?;
+                bytes = self.get_tag_u32_vec(Tag::TileByteCounts)?;
+            }
+            Err(e) => return Err(e),
         }
 
         let mut res_img = Vec::with_capacity(offsets[0] as usize);
@@ -978,10 +981,21 @@ impl<R: Read + Seek> Decoder<R> {
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
-                Err(e) => {
-                    panic!("Error when reading jpeg tiles: {}", e);
-                }
                 Ok(mut val) => res_img.append(&mut val),
+                Err(e) => {
+                    return match e {
+                        jpeg::Error::Io(io_err) => Err(TiffError::IoError(io_err)),
+                        jpeg::Error::Format(fmt_err) => {
+                            Err(TiffError::FormatError(TiffFormatError::Format(fmt_err)))
+                        }
+                        jpeg::Error::Unsupported(_) => Err(TiffError::UnsupportedError(
+                            TiffUnsupportedError::UnknownInterpretation,
+                        )),
+                        jpeg::Error::Internal(_) => Err(TiffError::UnsupportedError(
+                            TiffUnsupportedError::UnknownInterpretation,
+                        )),
+                    }
+                }
             }
         }
 
@@ -1110,12 +1124,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-
         if self.compression_method == CompressionMethod::ModernJPEG {
-            match self.find_tag(Tag::TileOffsets) {
-                Ok(None) | Err(_) => return self.read_jpeg(true),
-                Ok(_) => return self.read_jpeg(false),
-            }
+            return self.read_jpeg();
         }
 
         self.initialize_strip_decoder()?;

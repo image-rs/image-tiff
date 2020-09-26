@@ -49,6 +49,7 @@ pub enum TiffFormatError {
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
     InflateError(InflateError),
+    Format(String),
     #[doc(hidden)]
     /// Do not match against this variant. It may get removed.
     __NonExhaustive,
@@ -80,6 +81,9 @@ impl fmt::Display for TiffFormatError {
                 write!(fmt, "Expected signed integer, {:?} found.", val)
             }
             InflateError(_) => write!(fmt, "Failed to decode inflate data."),
+            Format(ref val) => {
+                write!(fmt, "Invalid format: {:?}.", val)
+            }
             __NonExhaustive => unreachable!(),
         }
     }
