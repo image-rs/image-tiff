@@ -324,19 +324,18 @@ impl EndianReader for LZWReader {
 
 pub(crate) struct JpegReader {
     buffer: io::Cursor<Vec<u8>>,
-    byte_order: ByteOrder, // for jpeg image data always ...,
+    byte_order: ByteOrder,
 }
-// Only tested with qtables in jpegtables, but it contain both qtables and huffman tables or either
 impl JpegReader {
     /// Constructs new JpegReader wrapping a SmartReader.
-    /// Because Jpeg compression in TIFF allows to save quantization and/or huffman tables in one
+    /// Because JPEG compression in TIFF allows to save quantization and/or huffman tables in one
     /// central loacation, the constructor accepts this data as `jpeg_tables` here containing either
-    /// both.
+    /// or both.
     /// These `jpeg_tables` are simply prepended to the remaining jpeg image data.
-    /// Because these jpegtables start with a `SOI` (HEX: `0xFFD8`) or __start of image__ marker
-    /// which is also at the beginning of the remaining jpeg image data and would
-    /// confuse the jpeg renderer, one of these has to be taken off. In this case the first two
-    /// bytes of the remaining jpeg data is removed because this follows `jpeg_tables`.
+    /// Because these `jpeg_tables` start with a `SOI` (HEX: `0xFFD8`) or __start of image__ marker
+    /// which is also at the beginning of the remaining JPEG image data and would
+    /// confuse the JPEG renderer, one of these has to be taken off. In this case the first two
+    /// bytes of the remaining JPEG data is removed because it follows `jpeg_tables`.
     /// Similary, `jpeg_tables` ends with a `EOI` (HEX: `0xFFD9`) or __end of image__ marker,
     /// this has to be removed as well (last two bytes of `jpeg_tables`).
 
