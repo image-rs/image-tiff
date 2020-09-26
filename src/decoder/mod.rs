@@ -165,6 +165,9 @@ pub struct Limits {
     /// The maximum size of any ifd value in bytes, the default is
     /// 1MiB.
     pub ifd_value_size: usize,
+    /// Maximum size for intermediate buffer which may be used to limit the amount of data read per
+    /// segment even if the entire image is decoded at once.
+    pub intermediate_buffer_size: usize,
     /// The purpose of this is to prevent all the fields of the struct from
     /// being public, as this would make adding new fields a major version
     /// bump.
@@ -175,6 +178,7 @@ impl Default for Limits {
     fn default() -> Limits {
         Limits {
             decoding_buffer_size: 256 * 1024 * 1024,
+            intermediate_buffer_size: 128 * 1024 * 1024,
             ifd_value_size: 1024 * 1024,
             _non_exhaustive: (),
         }
@@ -954,6 +958,11 @@ impl<R: Read + Seek> Decoder<R> {
         let mut res_img = Vec::with_capacity(offsets[0] as usize);
 
         for (idx, offset) in offsets.iter().enumerate() {
+
+            if bytes[idx] as usize > self.limits.intermediate_buffer_size {
+                return Err(TiffError::LimitsExceeded);
+            }
+
             self.goto_offset(*offset)?;
             let jpeg_reader = JpegReader::new(&mut self.reader, bytes[idx], &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
