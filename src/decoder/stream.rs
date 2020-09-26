@@ -356,7 +356,8 @@ impl JpegReader {
         match jpeg_tables {
             Some(tables) => {
                 let mut jpeg_data = tables.clone();
-                jpeg_data.truncate(jpeg_data.len() - 2);
+                let truncated_length = jpeg_data.len() - 2;
+                jpeg_data.truncate(truncated_length);
                 jpeg_data.extend_from_slice(&mut segment[2..]);
 
                 Ok(JpegReader {
