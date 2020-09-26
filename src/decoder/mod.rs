@@ -9,7 +9,7 @@ use self::ifd::Directory;
 use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type};
 
 use self::stream::{
-    ByteOrder, DeflateReader, EndianReader, LZWReader, PackBitsReader, SmartReader,
+    ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,
 };
 
 pub mod ifd;
@@ -165,6 +165,9 @@ pub struct Limits {
     /// The maximum size of any ifd value in bytes, the default is
     /// 1MiB.
     pub ifd_value_size: usize,
+    /// Maximum size for intermediate buffer which may be used to limit the amount of data read per
+    /// segment even if the entire image is decoded at once.
+    pub intermediate_buffer_size: usize,
     /// The purpose of this is to prevent all the fields of the struct from
     /// being public, as this would make adding new fields a major version
     /// bump.
@@ -175,6 +178,7 @@ impl Default for Limits {
     fn default() -> Limits {
         Limits {
             decoding_buffer_size: 256 * 1024 * 1024,
+            intermediate_buffer_size: 128 * 1024 * 1024,
             ifd_value_size: 1024 * 1024,
             _non_exhaustive: (),
         }
@@ -638,7 +642,9 @@ impl<R: Read + Seek> Decoder<R> {
         for _ in 0..num_tags {
             let (tag, entry) = match self.read_entry()? {
                 Some(val) => val,
-                None => continue, // Unknown data type in tag, skip
+                None => {
+                    continue;
+                } // Unknown data type in tag, skip
             };
             dir.insert(tag, entry);
         }
@@ -744,6 +750,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag and convert it to the desired type.
     pub fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
         self.get_tag(tag)?.into_f64_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to a 8bit vector.
+    pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
+        self.get_tag(tag)?.into_u8_vec()
     }
 
     /// Decompresses the strip into the supplied buffer.
@@ -923,6 +934,60 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
+        let offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
+        let bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
+
+        let jpeg_tables: Option<Vec<u8>> = match self.find_tag(Tag::JPEGTables) {
+            Ok(None) => None,
+            Ok(_) => Some(self.get_tag_u8_vec(Tag::JPEGTables)?),
+            Err(e) => return Err(e),
+        };
+
+        if offsets.len() == 0 {
+            return Err(TiffError::FormatError(TiffFormatError::RequiredTagEmpty(
+                Tag::StripOffsets,
+            )));
+        }
+        if offsets.len() != bytes.len() {
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
+        }
+
+        let mut res_img = Vec::with_capacity(offsets[0] as usize);
+
+        for (idx, offset) in offsets.iter().enumerate() {
+            if bytes[idx] as usize > self.limits.intermediate_buffer_size {
+                return Err(TiffError::LimitsExceeded);
+            }
+
+            self.goto_offset(*offset)?;
+            let jpeg_reader = JpegReader::new(&mut self.reader, bytes[idx], &jpeg_tables)?;
+            let mut decoder = jpeg::Decoder::new(jpeg_reader);
+
+            match decoder.decode() {
+                Ok(mut val) => res_img.append(&mut val),
+                Err(e) => {
+                    return match e {
+                        jpeg::Error::Io(io_err) => Err(TiffError::IoError(io_err)),
+                        jpeg::Error::Format(fmt_err) => {
+                            Err(TiffError::FormatError(TiffFormatError::Format(fmt_err)))
+                        }
+                        jpeg::Error::Unsupported(_) => Err(TiffError::UnsupportedError(
+                            TiffUnsupportedError::UnknownInterpretation,
+                        )),
+                        jpeg::Error::Internal(_) => Err(TiffError::UnsupportedError(
+                            TiffUnsupportedError::UnknownInterpretation,
+                        )),
+                    }
+                }
+            }
+        }
+
+        Ok(DecodingResult::U8(res_img))
+    }
+
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.initialize_strip_decoder()?;
 
@@ -1045,6 +1110,10 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
+        if self.compression_method == CompressionMethod::ModernJPEG {
+            return self.read_jpeg();
+        }
+
         self.initialize_strip_decoder()?;
         let rows_per_strip =
             usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
@@ -1057,7 +1126,6 @@ impl<R: Read + Seek> Decoder<R> {
         for i in 0..usize::try_from(self.strip_count()?)? {
             self.read_strip_to_buffer(result.as_buffer(samples_per_strip * i))?;
         }
-
         Ok(result)
     }
 }

@@ -111,6 +111,8 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     Threshholding = 263, // TODO add support
     XResolution = 282,
     YResolution = 283,
+    // JPEG
+    JPEGTables = 347,
     // Advanced tags
     Predictor = 317,
     TileWidth = 322,
@@ -130,6 +132,7 @@ pub enum Type(u16) {
     LONG = 4,
     RATIONAL = 5,
     SBYTE = 6,
+    UNDEFINED = 7,
     SSHORT = 8,
     SLONG = 9,
     SRATIONAL = 10,
@@ -141,6 +144,8 @@ pub enum Type(u16) {
 }
 
 tags! {
+/// See [TIFF compression tags](https://www.awaresystems.be/imaging/tiff/tifftags/compression.html)
+/// for reference.
 pub enum CompressionMethod(u16) {
     None = 1,
     Huffman = 2,
@@ -148,6 +153,8 @@ pub enum CompressionMethod(u16) {
     Fax4 = 4,
     LZW = 5,
     JPEG = 6,
+    // "Extended JPEG" or "new JPEG" style
+    ModernJPEG = 7,
     Deflate = 8,
     OldDeflate = 0x80B2,
     PackBits = 0x8005,

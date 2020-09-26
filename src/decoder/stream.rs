@@ -187,6 +187,14 @@ pub trait EndianReader: Read {
     }
 }
 
+///
+/// # READERS
+///
+
+///
+/// ## Deflate Reader
+///
+
 /// Reader that decompresses DEFLATE streams
 pub struct DeflateReader {
     buffer: io::Cursor<Vec<u8>>,
@@ -232,6 +240,10 @@ impl EndianReader for DeflateReader {
         self.byte_order
     }
 }
+
+///
+/// ## LZW Reader
+///
 
 /// Reader that decompresses LZW streams
 pub struct LZWReader {
@@ -306,6 +318,79 @@ impl EndianReader for LZWReader {
     }
 }
 
+///
+/// ## JPEG Reader (for "new-style" JPEG format (TIFF compression tag 7))
+///
+
+pub(crate) struct JpegReader {
+    buffer: io::Cursor<Vec<u8>>,
+    byte_order: ByteOrder,
+}
+impl JpegReader {
+    /// Constructs new JpegReader wrapping a SmartReader.
+    /// Because JPEG compression in TIFF allows to save quantization and/or huffman tables in one
+    /// central location, the constructor accepts this data as `jpeg_tables` here containing either
+    /// or both.
+    /// These `jpeg_tables` are simply prepended to the remaining jpeg image data.
+    /// Because these `jpeg_tables` start with a `SOI` (HEX: `0xFFD8`) or __start of image__ marker
+    /// which is also at the beginning of the remaining JPEG image data and would
+    /// confuse the JPEG renderer, one of these has to be taken off. In this case the first two
+    /// bytes of the remaining JPEG data is removed because it follows `jpeg_tables`.
+    /// Similary, `jpeg_tables` ends with a `EOI` (HEX: `0xFFD9`) or __end of image__ marker,
+    /// this has to be removed as well (last two bytes of `jpeg_tables`).
+
+    pub fn new<R>(
+        reader: &mut SmartReader<R>,
+        length: u32,
+        jpeg_tables: &Option<Vec<u8>>,
+    ) -> io::Result<JpegReader>
+    where
+        R: Read + Seek,
+    {
+        let order = reader.byte_order;
+
+        // Read jpeg image data
+        let mut segment = vec![0; length as usize];
+        reader.read_exact(&mut segment[..])?;
+
+        match jpeg_tables {
+            Some(tables) => {
+                let mut jpeg_data = tables.clone();
+                let truncated_length = jpeg_data.len() - 2;
+                jpeg_data.truncate(truncated_length);
+                jpeg_data.extend_from_slice(&mut segment[2..]);
+
+                Ok(JpegReader {
+                    buffer: io::Cursor::new(jpeg_data),
+                    byte_order: order,
+                })
+            }
+            None => Ok(JpegReader {
+                buffer: io::Cursor::new(segment),
+                byte_order: order,
+            }),
+        }
+    }
+}
+
+impl Read for JpegReader {
+    // #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.buffer.read(buf)
+    }
+}
+
+impl EndianReader for JpegReader {
+    #[inline(always)]
+    fn byte_order(&self) -> ByteOrder {
+        self.byte_order
+    }
+}
+
+///
+/// ## PackBits Reader
+///
+
 /// Reader that unpacks Apple's `PackBits` format
 pub struct PackBitsReader {
     buffer: io::Cursor<Vec<u8>>,
@@ -377,6 +462,10 @@ impl EndianReader for PackBitsReader {
         self.byte_order
     }
 }
+
+///
+/// ## SmartReader Reader
+///
 
 /// Reader that is aware of the byte order.
 #[derive(Debug)]
