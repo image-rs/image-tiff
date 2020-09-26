@@ -322,7 +322,7 @@ impl EndianReader for LZWReader {
 /// ## JPEG Reader (for "new-style" JPEG format (TIFF compression tag 7))
 ///
 
-pub struct JpegReader {
+pub(crate) struct JpegReader {
     buffer: io::Cursor<Vec<u8>>,
     byte_order: ByteOrder, // for jpeg image data always ...,
 }
