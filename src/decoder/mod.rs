@@ -950,9 +950,9 @@ impl<R: Read + Seek> Decoder<R> {
             )));
         }
         if offsets.len() != bytes.len() {
-            return Err(TiffError::FormatError(TiffFormatError::Format(
-                String::from("Size mismatch of StripOffsets and StripByteCounts"),
-            )));
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
         }
 
         let mut res_img = Vec::with_capacity(offsets[0] as usize);
