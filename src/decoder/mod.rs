@@ -712,32 +712,6 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
-    pub fn get_all_tags(&mut self) -> Vec<(Tag, ifd::Value)> {
-        let mut all_tags = Vec::new();
-
-        let dir = match &self.ifd {
-            Some(d) => d,
-            None => {
-                println!("No tags found");
-                return all_tags;
-            }
-        };
-        let keys = dir.keys().cloned().collect::<Vec<Tag>>();
-        // go through all tags
-        for key in keys {
-            let tag_value = match self.get_tag(key) {
-                Ok(val) => val,
-                _ => {
-                    println!("Could not unwrap {:?}", key);
-                    continue;
-                }
-            };
-            all_tags.push((key, tag_value));
-        }
-
-        all_tags
-    }
-
     /// Tries to retrieve a tag and convert it to the desired type.
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
