@@ -958,7 +958,6 @@ impl<R: Read + Seek> Decoder<R> {
         let mut res_img = Vec::with_capacity(offsets[0] as usize);
 
         for (idx, offset) in offsets.iter().enumerate() {
-
             if bytes[idx] as usize > self.limits.intermediate_buffer_size {
                 return Err(TiffError::LimitsExceeded);
             }

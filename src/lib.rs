@@ -6,9 +6,9 @@
 //! # Related Links
 //! * <https://www.adobe.io/open/standards/TIFF.html> - The TIFF specification
 
+extern crate jpeg;
 extern crate miniz_oxide;
 extern crate weezl;
-extern crate jpeg;
 
 mod bytecast;
 pub mod decoder;

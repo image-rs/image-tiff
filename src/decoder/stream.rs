@@ -364,15 +364,12 @@ impl JpegReader {
                     buffer: io::Cursor::new(jpeg_data),
                     byte_order: order,
                 })
-            },
-            None => {
-                Ok(JpegReader {
-                    buffer: io::Cursor::new(segment),
-                    byte_order: order,
-                })
             }
+            None => Ok(JpegReader {
+                buffer: io::Cursor::new(segment),
+                byte_order: order,
+            }),
         }
-
     }
 }
 
