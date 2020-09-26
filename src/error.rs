@@ -50,6 +50,7 @@ pub enum TiffFormatError {
     SignedIntegerExpected(Value),
     InflateError(InflateError),
     Format(String),
+    RequiredTagEmpty(Tag),
     #[doc(hidden)]
     /// Do not match against this variant. It may get removed.
     __NonExhaustive,
@@ -83,6 +84,9 @@ impl fmt::Display for TiffFormatError {
             InflateError(_) => write!(fmt, "Failed to decode inflate data."),
             Format(ref val) => {
                 write!(fmt, "Invalid format: {:?}.", val)
+            }
+            RequiredTagEmpty(ref val) => {
+                write!(fmt, "Required tag {:?} was empty.", val)
             }
             __NonExhaustive => unreachable!(),
         }

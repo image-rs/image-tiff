@@ -931,20 +931,19 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
-        let offsets: Vec<u32>;
-        let bytes: Vec<u32>;
+        let offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
+        let bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
         let jpeg_tables: Vec<u8> = self.get_tag_u8_vec(Tag::JPEGTables)?;
 
-        match self.find_tag(Tag::TileOffsets) {
-            Ok(None) => {
-                offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
-                bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
-            }
-            Ok(_) => {
-                offsets = self.get_tag_u32_vec(Tag::TileOffsets)?;
-                bytes = self.get_tag_u32_vec(Tag::TileByteCounts)?;
-            }
-            Err(e) => return Err(e),
+        if offsets.len() == 0 {
+            return Err(TiffError::FormatError(TiffFormatError::RequiredTagEmpty(
+                Tag::StripOffsets,
+            )));
+        }
+        if offsets.len() != bytes.len() {
+            return Err(TiffError::FormatError(TiffFormatError::Format(
+                String::from("Size mismatch of StripOffsets and StripByteCounts"),
+            )));
         }
 
         let mut res_img = Vec::with_capacity(offsets[0] as usize);
