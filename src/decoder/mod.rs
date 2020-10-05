@@ -597,6 +597,11 @@ impl<R: Read + Seek> Decoder<R> {
         self.reader.seek(io::SeekFrom::Start(offset)).map(|_| ())
     }
 
+    /// Returns `true` if the file is a BigTiff
+    pub fn is_bigtiff(&self) -> bool {
+        self.bigtiff
+    }
+
     /// Reads a IFD entry.
     // An IFD entry has four fields:
     //
