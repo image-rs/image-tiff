@@ -183,6 +183,12 @@ fn issue_69() {
     test_image_sum_u16("issue_69_packbits.tiff", ColorType::Gray(16), 1015486);
 }
 
+#[test]
+fn test_si_header_metadata_parser() {
+    let file = File::open("./tests/images/bigtiff/BigTIFFScanImage.tif").unwrap();
+    let mut decoder = Decoder::new(file).unwrap();
+}
+
 // TODO: GrayA support
 //#[test]
 //fn test_gray_alpha_u8()
