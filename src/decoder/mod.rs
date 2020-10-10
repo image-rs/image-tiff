@@ -355,7 +355,7 @@ impl<R: Read + Seek> Decoder<R> {
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
             strip_decoder: None,
-            scanimage: false
+            scanimage: None,
         }
         .init()
     }
@@ -472,12 +472,12 @@ impl<R: Read + Seek> Decoder<R> {
         let tif_version = self.read_long()?;
         let nonvar_frame_data_length = self.read_long()?;
         let roi_group_data_length = self.read_long()?;
-        let mut nonvar_buffer = Vec::with_capacity(usize::try_from(nonvar_frame_data_length)?);
-        self.reader.read_exact(&mut nonvar_buffer)?;
+        let mut nonvar_frame_data = Vec::with_capacity(usize::try_from(nonvar_frame_data_length)?);
+        self.reader.read_exact(&mut nonvar_frame_data)?;
         let mut raw_roi_group_data = Vec::with_capacity(usize::try_from(roi_group_data_length)?);
         self.reader.read_exact(&mut raw_roi_group_data)?;
         self.scanimage = Some(
-        ScanImageMetadata::new(tif_version, nonvar_buffer, raw_roi_group_data)
+        ScanImageMetadata::new(tif_version, nonvar_frame_data, raw_roi_group_data)
         );
         Ok(())
     }
