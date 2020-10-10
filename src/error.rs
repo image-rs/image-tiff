@@ -42,6 +42,7 @@ pub enum TiffFormatError {
     ImageFileDirectoryNotFound,
     InconsistentSizesEncountered,
     InvalidTag,
+    InvalidScanImageMetadataEncoding,
     InvalidTagValueType(Tag),
     RequiredTagNotFound(Tag),
     UnknownPredictor(u16),
@@ -65,6 +66,9 @@ impl fmt::Display for TiffFormatError {
             ImageFileDirectoryNotFound => write!(fmt, "Image file directory not found."),
             InconsistentSizesEncountered => write!(fmt, "Inconsistent sizes encountered."),
             InvalidTag => write!(fmt, "Image contains invalid tag."),
+            InvalidScanImageMetadataEncoding => {
+                write!(fmt, "The ScanImage metadata section had invalid UTF bytes")
+            }
             InvalidTagValueType(ref tag) => {
                 write!(fmt, "Tag `{:?}` did not have the expected value type.", tag)
             }
