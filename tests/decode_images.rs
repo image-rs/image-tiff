@@ -5,6 +5,9 @@ use tiff::ColorType;
 
 use std::fs::File;
 use std::path::PathBuf;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
 
@@ -183,10 +186,41 @@ fn issue_69() {
     test_image_sum_u16("issue_69_packbits.tiff", ColorType::Gray(16), 1015486);
 }
 
+/// Relies on the "generate_new_hash_for_scanimage_metadata_parser" 'test' to
+/// generate the correct hash value to be compared.
 #[test]
 fn test_si_header_metadata_parser() {
-    let file = File::open("./tests/images/bigtiff/BigTIFFScanImage.tif").unwrap();
-    let mut decoder = Decoder::new(file).unwrap();
+    let filename = "bigtiff/BigTIFFScanImageV57.tif";
+    let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
+    let file = File::open(path).unwrap();
+    let decoder = Decoder::new(file).unwrap();
+    let meta = decoder.scanimage_metadata().unwrap();
+    let mut hasher_roi = DefaultHasher::new();
+    let mut hasher_frame = DefaultHasher::new();
+    let _ = meta.roi_group_data.hash(&mut hasher_roi);
+    let _ = meta.nonvar_frame_data.hash(&mut hasher_frame);
+    assert_eq!(format!("{:x}", hasher_roi.finish()), "f721c512d06e4a62");
+    assert_eq!(format!("{:x}", hasher_frame.finish()), "f62a98e18c564b82");
+}
+
+/// Generates a new hash value for the metadata in the ScanImage demo file.
+/// It should only be run if the parsing function was knowingly changed which
+/// changes the type of output of the SI metadata. The current hashes are
+/// "f721c512d06e4a62" for the ROI and "f62a98e18c564b82" for the Frame data.
+#[test]
+#[ignore]
+fn generate_new_hash_for_scanimage_metadata_parser() {
+    let filename = "bigtiff/BigTIFFScanImageV57.tif";
+    let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
+    let file = File::open(path).unwrap();
+    let decoder = Decoder::new(file).unwrap();
+    let meta = decoder.scanimage_metadata().unwrap();
+    let mut hasher_roi = DefaultHasher::new();
+    let mut hasher_frame = DefaultHasher::new();
+    let _ = meta.roi_group_data.hash(&mut hasher_roi);
+    let _ = meta.nonvar_frame_data.hash(&mut hasher_frame);
+    println!("{:x}", hasher_roi.finish()); 
+    println!("{:x}", hasher_frame.finish());
 }
 
 // TODO: GrayA support

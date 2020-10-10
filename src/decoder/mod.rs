@@ -186,21 +186,23 @@ impl Default for Limits {
 }
 
 /// Metadata for a ScanImage BigTiff file. The first four bytes of metadata
-/// are always SI's magic number which identifies the image as an SI image.
-#[derive(Debug)]
-struct ScanImageMetadata {
+/// are always SI's magic number which identifies the image as an SI image,
+/// and thus they're left out of the struct. Requesting the ScanImageMetadata
+/// struct from the Decoder via `decoder.scanimage_metadata()` may result in 
+/// a None if the file is not a ScanImage BigTiff.
+#[derive(Debug, Clone)]
+pub struct ScanImageMetadata {
     /// Bytes 4 to 8 of the static metadata section
     pub tif_version: u32,
-    /// Non-varying frame data length in bytes, including NULL terminator
-    pub nonvar_frame_data: Vec<u8>,
-    /// ROI group data length in bytes, including NULL terminator
-    pub roi_group_data: Vec<u8>,
-
+    /// Non-varying frame data
+    pub nonvar_frame_data: String,
+    /// ROI group data
+    pub roi_group_data: String,
 }
 
 
 impl ScanImageMetadata {
-    pub fn new(tif_version: u32, nonvar_frame_data: Vec<u8>, roi_group_data: Vec<u8>) -> Self {
+    pub fn new(tif_version: u32, nonvar_frame_data: String, roi_group_data: String) -> Self {
        ScanImageMetadata { tif_version, nonvar_frame_data, roi_group_data }
     }
 }
@@ -368,6 +370,10 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
         Ok((self.width, self.height))
     }
+    
+    pub fn scanimage_metadata(&self) -> Option<ScanImageMetadata> {
+        self.scanimage.clone()
+    }
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
@@ -472,12 +478,15 @@ impl<R: Read + Seek> Decoder<R> {
         let tif_version = self.read_long()?;
         let nonvar_frame_data_length = self.read_long()?;
         let roi_group_data_length = self.read_long()?;
-        let mut nonvar_frame_data = Vec::with_capacity(usize::try_from(nonvar_frame_data_length)?);
+        let mut nonvar_frame_data = vec![0u8; usize::try_from(nonvar_frame_data_length)?];
         self.reader.read_exact(&mut nonvar_frame_data)?;
-        let mut raw_roi_group_data = Vec::with_capacity(usize::try_from(roi_group_data_length)?);
-        self.reader.read_exact(&mut raw_roi_group_data)?;
+        let mut roi_group_data = vec![0u8; usize::try_from(roi_group_data_length)?];
+        self.reader.read_exact(&mut roi_group_data)?;
+        // Parse the read bytes into UTF8 and into the metadat object
+        let nonvar_frame_data = String::from_utf8(nonvar_frame_data)?;
+        let roi_group_data = String::from_utf8(roi_group_data)?;
         self.scanimage = Some(
-        ScanImageMetadata::new(tif_version, nonvar_frame_data, raw_roi_group_data)
+            ScanImageMetadata::new(tif_version, nonvar_frame_data, roi_group_data)
         );
         Ok(())
     }
