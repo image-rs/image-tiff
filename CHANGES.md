@@ -1,11 +1,19 @@
 # Version 0.6.0-alpha
 
+New features:
 * Support for decoding BigTIFF with 64-bit offsets
+* The value types byte, `f32`, `f64` are now recognized
+* Support for Modern JPEG encoded images
+
+Improvements:
 * Better support for adding auxiliary tags before encoding image data
+* Switched to lzw decoder library `weezl` for performance
+* The `ColorType` trait now supports `SAMPLE_ENCODING` hints
+
+Fixes:
 * Fixed decoding of inline ASCII in tags
 * Fixed handling after null terminator in ASCII data
 * Recognize tile and sample format tags
-* Note: these notes will be merged into 0.6.0 when it is released
 
 # Version 0.5.0
 
