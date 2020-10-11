@@ -198,13 +198,8 @@ pub struct ScanImageMetadata {
     pub nonvar_frame_data: String,
     /// ROI group data
     pub roi_group_data: String,
-}
-
-
-impl ScanImageMetadata {
-    pub fn new(tif_version: u32, nonvar_frame_data: String, roi_group_data: String) -> Self {
-       ScanImageMetadata { tif_version, nonvar_frame_data, roi_group_data }
-    }
+    /// Allow further fields to be inserted
+    _private: (),
 }
 
 /// The representation of a TIFF decoder
@@ -371,8 +366,8 @@ impl<R: Read + Seek> Decoder<R> {
         Ok((self.width, self.height))
     }
     
-    pub fn scanimage_metadata(&self) -> Option<ScanImageMetadata> {
-        self.scanimage.clone()
+    pub fn scanimage_metadata(&self) -> Option<&ScanImageMetadata> {
+        self.scanimage.as_ref()
     }
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
@@ -483,10 +478,11 @@ impl<R: Read + Seek> Decoder<R> {
         let mut roi_group_data = vec![0u8; usize::try_from(roi_group_data_length)?];
         self.reader.read_exact(&mut roi_group_data)?;
         // Parse the read bytes into UTF8 and into the metadat object
-        let nonvar_frame_data = String::from_utf8(nonvar_frame_data)?;
-        let roi_group_data = String::from_utf8(roi_group_data)?;
+        let nonvar_frame_data = String::from_utf8(nonvar_frame_data).map_err(|_| TiffFormatError::InvalidScanImageMetadataEncoding)?;
+        let roi_group_data = String::from_utf8(roi_group_data).map_err(|_| TiffFormatError::InvalidScanImageMetadataEncoding)?;
+        let _private = ();
         self.scanimage = Some(
-            ScanImageMetadata::new(tif_version, nonvar_frame_data, roi_group_data)
+            ScanImageMetadata { tif_version, nonvar_frame_data, roi_group_data, _private }
         );
         Ok(())
     }
@@ -663,7 +659,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns the values located in the next n bytes of the file, where n is
     /// the length of the given buffer
-    pub fn peek_n_bytes(&mut self, buffer: &mut [u8]) -> Result<(), io::Error> {
+    pub(crate) fn peek_n_bytes(&mut self, buffer: &mut [u8]) -> Result<(), io::Error> {
         let len = buffer.len() as i64;
         self.reader.read_exact(buffer)?;
         self.reader.seek(io::SeekFrom::Current(-len))?;
