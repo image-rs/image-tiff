@@ -1,4 +1,4 @@
-# Version 0.6.0-alpha
+# Version 0.6.0
 
 New features:
 * Support for decoding BigTIFF with 64-bit offsets
