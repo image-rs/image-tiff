@@ -193,7 +193,7 @@ fn test_si_header_metadata_parser() {
     let filename = "bigtiff/BigTIFFScanImageV57.tif";
     let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
     let file = File::open(path).unwrap();
-    let decoder = Decoder::new(file).unwrap();
+    let decoder = Decoder::new(file).unwrap().with_scanimage();
     let meta = decoder.scanimage_metadata().unwrap();
     let mut hasher_roi = DefaultHasher::new();
     let mut hasher_frame = DefaultHasher::new();
