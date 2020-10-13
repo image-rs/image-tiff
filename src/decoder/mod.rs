@@ -366,8 +366,6 @@ impl<R: Read + Seek> Decoder<R> {
 
     pub fn with_scanimage(mut self) -> Decoder<R> {
         self.parse_scanimage_metadata = true;
-        println!("HE::P");
-        println!("{}", self.parse_scanimage_metadata);
         self
     }
 

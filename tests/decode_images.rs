@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
+const BIGTIFF_DIR: &str = "bigtiff";
 
 macro_rules! test_image_sum {
     ($name:ident, $buffer:ident, $sum_ty:ty) => {
@@ -190,8 +191,8 @@ fn issue_69() {
 /// generate the correct hash value to be compared.
 #[test]
 fn test_si_header_metadata_parser() {
-    let filename = "bigtiff/BigTIFFScanImageV57.tif";
-    let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
+    let filename = "ScanImageBigTIFFv57.tif";
+    let path = PathBuf::from(TEST_IMAGE_DIR).join(BIGTIFF_DIR).join(filename);
     let file = File::open(path).unwrap();
     let decoder = Decoder::new(file).unwrap().with_scanimage();
     let meta = decoder.scanimage_metadata().unwrap();
@@ -210,8 +211,8 @@ fn test_si_header_metadata_parser() {
 #[test]
 #[ignore]
 fn generate_new_hash_for_scanimage_metadata_parser() {
-    let filename = "bigtiff/BigTIFFScanImageV57.tif";
-    let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
+    let filename = "ScanImageBigTIFFv57.tif";
+    let path = PathBuf::from(TEST_IMAGE_DIR).join(BIGTIFF_DIR).join(filename);
     let file = File::open(path).unwrap();
     let decoder = Decoder::new(file).unwrap();
     let meta = decoder.scanimage_metadata().unwrap();
