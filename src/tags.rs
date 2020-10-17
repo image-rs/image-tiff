@@ -120,6 +120,14 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     TileOffsets = 324,
     TileByteCounts = 325,
     SampleFormat = 339,
+    // GeoTIFF
+    ModelPixelScaleTag = 33550, // (SoftDesk)
+    ModelTransformationTag = 34264, // (JPL Carto Group)
+    ModelTiepointTag = 33922, // (Intergraph)
+    GeoKeyDirectoryTag = 34735, // (SPOT)
+    GeoDoubleParamsTag = 34736, // (SPOT)
+    GeoAsciiParamsTag = 34737, // (SPOT)
+    // GdalNodata = 42113,
 }
 }
 

@@ -14,6 +14,7 @@ mod bytecast;
 pub mod decoder;
 pub mod encoder;
 mod error;
+pub mod geo;
 pub mod tags;
 
 pub use self::error::{InflateError, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};

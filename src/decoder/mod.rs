@@ -13,6 +13,7 @@ use crate::tags::{
 use self::stream::{
     ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,
 };
+use geo;
 
 pub mod ifd;
 mod stream;
@@ -472,6 +473,16 @@ impl<R: Read + Seek> Decoder<R> {
             }
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
         }
+
+        match self.get_tag_u16_vec(Tag::GeoKeyDirectoryTag) {
+            Ok(geodir) => {
+                let ascii_params = Result::ok(self.get_tag_ascii_string(Tag::GeoAsciiParamsTag));
+                let double_params = Result::ok(self.get_tag_f64_vec(Tag::GeoDoubleParamsTag));
+                geo::parse_geo_keys(geodir, ascii_params, double_params);
+            }
+            Err(_) => {}
+        }
+
         Ok(())
     }
 
