@@ -10,14 +10,15 @@ use crate::tags::{Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::Value::{
-    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed,
-    SignedBig, Unsigned, UnsignedBig,
+    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Short,
+    Signed, SignedBig, Unsigned, UnsignedBig,
 };
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Byte(u8),
+    Short(u16),
     Signed(i32),
     SignedBig(i64),
     Unsigned(u32),
@@ -39,6 +40,17 @@ impl Value {
         match self {
             Byte(val) => Ok(val),
             val => Err(TiffError::FormatError(TiffFormatError::ByteExpected(val))),
+        }
+    }
+
+    pub fn into_u16(self) -> TiffResult<u16> {
+        match self {
+            Short(val) => Ok(val),
+            Unsigned(val) => Ok(u16::try_from(val)?),
+            UnsignedBig(val) => Ok(u16::try_from(val)?),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
         }
     }
 
@@ -100,6 +112,15 @@ impl Value {
         }
     }
 
+    pub fn into_string(self) -> TiffResult<String> {
+        match self {
+            Ascii(val) => Ok(val),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
     pub fn into_u32_vec(self) -> TiffResult<Vec<u32>> {
         match self {
             List(vec) => {
@@ -133,6 +154,22 @@ impl Value {
             }
             Byte(val) => Ok(vec![val]),
 
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_u16_vec(self) -> TiffResult<Vec<u16>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    new_vec.push(v.into_u16()?)
+                }
+                Ok(new_vec)
+            }
+            Short(val) => Ok(vec![val]),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),
@@ -400,6 +437,7 @@ impl Entry {
                         Signed(i32::from(r.read_i16()?)),
                     ]))
                 }
+                (Type::SHORT, 16) => Ok(Short(u16::from(decoder.read_short()?))),
                 (Type::SHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
                     Ok(UnsignedBig(u64::from(decoder.read_short()?)))
                 }),
