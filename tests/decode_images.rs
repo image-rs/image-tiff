@@ -1,5 +1,7 @@
 extern crate tiff;
 
+use std::io::{Read, Seek};
+
 use tiff::decoder::{ifd, Decoder, DecodingResult};
 use tiff::ColorType;
 
@@ -187,19 +189,42 @@ fn issue_69() {
     test_image_sum_u16("issue_69_packbits.tiff", ColorType::Gray(16), 1015486);
 }
 
-/// Relies on the "generate_new_hash_for_scanimage_metadata_parser" 'test' to
-/// generate the correct hash value to be compared.
-#[test]
-fn test_si_header_metadata_parser() {
+fn read_si_tif() -> Decoder<impl Read + Seek> {
     let filename = "ScanImageBigTIFFv57.tif";
     let path = PathBuf::from(TEST_IMAGE_DIR).join(BIGTIFF_DIR).join(filename);
     let file = File::open(path).unwrap();
-    let decoder = Decoder::new(file).unwrap().with_scanimage();
+    Decoder::new_with_scanimage(file).unwrap()
+}
+
+
+#[test]
+fn test_si_tif_reading() {
+    let mut decoder = read_si_tif();
+    decoder.next_image().unwrap();
+    let res = decoder.read_image().unwrap();
+    println!("{:?}", res);
+}    
+
+
+/// Captures the basic functionality of SI header parsing to be used
+/// by tests for the format
+fn read_si_header_metadata_and_hash() -> (DefaultHasher, DefaultHasher) {
+    let decoder = read_si_tif();
     let meta = decoder.scanimage_metadata().unwrap();
+    // println!("{}", meta.roi_group_data);
+    // println!("{}", meta.nonvar_frame_data);
     let mut hasher_roi = DefaultHasher::new();
     let mut hasher_frame = DefaultHasher::new();
     let _ = meta.roi_group_data.hash(&mut hasher_roi);
     let _ = meta.nonvar_frame_data.hash(&mut hasher_frame);
+    (hasher_roi, hasher_frame)
+}
+
+/// Relies on the "generate_new_hash_for_scanimage_metadata_parser" 'test' to
+/// generate the correct hash value to be compared.
+#[test]
+fn test_si_header_metadata_parser() {
+    let (hasher_roi, hasher_frame) = read_si_header_metadata_and_hash();
     assert_eq!(format!("{:x}", hasher_roi.finish()), "f721c512d06e4a62");
     assert_eq!(format!("{:x}", hasher_frame.finish()), "f62a98e18c564b82");
 }
@@ -211,15 +236,7 @@ fn test_si_header_metadata_parser() {
 #[test]
 #[ignore]
 fn generate_new_hash_for_scanimage_metadata_parser() {
-    let filename = "ScanImageBigTIFFv57.tif";
-    let path = PathBuf::from(TEST_IMAGE_DIR).join(BIGTIFF_DIR).join(filename);
-    let file = File::open(path).unwrap();
-    let decoder = Decoder::new(file).unwrap();
-    let meta = decoder.scanimage_metadata().unwrap();
-    let mut hasher_roi = DefaultHasher::new();
-    let mut hasher_frame = DefaultHasher::new();
-    let _ = meta.roi_group_data.hash(&mut hasher_roi);
-    let _ = meta.nonvar_frame_data.hash(&mut hasher_frame);
+    let (hasher_roi, hasher_frame) = read_si_header_metadata_and_hash();
     println!("{:x}", hasher_roi.finish()); 
     println!("{:x}", hasher_frame.finish());
 }
