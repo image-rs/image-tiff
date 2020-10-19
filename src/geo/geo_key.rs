@@ -105,18 +105,11 @@ pub fn parse_geo_keys(
 ) -> HashMap<GeoKey, GeoKeyType> {
     let mut geodir: HashMap<GeoKey, GeoKeyType> = HashMap::new();
     if geokey_dir.len() < 4 {
-        // TODO: or return a error in a result
+        // TODO: or return an error in a result
         return geodir;
     }
-    println!(
-        "Directory Version: {}, {}.{}, dir length: {}",
-        geokey_dir[0], geokey_dir[1], geokey_dir[2], geokey_dir[3],
-    );
 
     let num_keys = geokey_dir[3] as usize;
-    if geokey_dir.len() > 4 * num_keys + 4 {
-        println!("There are some aditional keys!!!");
-    }
 
     for i in 0..num_keys {
         let idx = 4 + i * 4;
@@ -124,18 +117,12 @@ pub fn parse_geo_keys(
         let key_id = match GeoKey::try_from(geokey_dir[idx] as usize) {
             Ok(value) => value,
             Err(_) => {
-                println!("Unknown tag found with geokey: {}", geokey_dir[idx]);
                 continue;
             }
         };
         let tiff_tag_location = geokey_dir[idx + 1];
         let count = geokey_dir[idx + 2];
         let value_offset = geokey_dir[idx + 3];
-
-        println!(
-            "KeyID: {:?}, TiffTag: {:?}, Count {:?}, ValueOffset {:?}",
-            key_id, tiff_tag_location, count, value_offset
-        );
 
         if tiff_tag_location == 0 {
             geodir.insert(key_id, GeoKeyType::Short(value_offset as u16));
@@ -171,7 +158,6 @@ pub fn parse_geo_keys(
                 None => continue,
             }
         } else if tiff_tag_location == 34735 {
-            println!("\n===========================================\n\nTHE CASE IS HERE\n\n\n---------------------------------\n");
             // should be accessed rather by Tag::GeoKeyDirectoryTag
             // If the tag is the same as the GeoKeyDirectoryTag, the value_offset represents
             // SHORT values at the end of the `geokey_dir` itself.
@@ -190,6 +176,5 @@ pub fn parse_geo_keys(
             continue;
         }
     }
-    println!("{:#?}", geodir);
     geodir
 }
