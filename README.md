@@ -10,6 +10,7 @@ TIFF decoding and encoding library in pure Rust
 ### Features
 - Baseline spec (other than formats and tags listed below as not supported)
 - Multipage
+- BigTIFF
 - Incremental decoding
 
 ### Formats
@@ -43,4 +44,3 @@ Formats and interpretations not listed above or with empty entries are unsupport
 - Baseline tags
   - `ExtraSamples`
 - Extension tags
-- BigTIFF

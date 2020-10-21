@@ -90,7 +90,7 @@ impl DecodingResult {
             Ok(DecodingResult::I16(vec![0; size]))
         }
     }
-    
+
 
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
@@ -205,7 +205,7 @@ impl Default for Limits {
 /// Metadata for a ScanImage BigTiff file. The first four bytes of metadata
 /// are always SI's magic number which identifies the image as an SI image,
 /// and thus they're left out of the struct. Requesting the ScanImageMetadata
-/// struct from the Decoder via `decoder.scanimage_metadata()` may result in 
+/// struct from the Decoder via `decoder.scanimage_metadata()` may result in
 /// a None if the file is not a ScanImage BigTiff.
 #[derive(Debug, Clone)]
 pub struct ScanImageMetadata {
@@ -270,24 +270,6 @@ impl Wrapping for u32 {
 impl Wrapping for u64 {
     fn wrapping_add(&self, other: Self) -> Self {
         u64::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for f32 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        self + other
-    }
-}
-
-impl Wrapping for f64 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        self + other
-    }
-}
-
-impl Wrapping for i16 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        i16::wrapping_add(*self, other)
     }
 }
 
@@ -422,7 +404,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
         Ok((self.width, self.height))
     }
-    
+
     pub fn scanimage_metadata(&self) -> Option<&ScanImageMetadata> {
         self.scanimage_metadata.as_ref()
     }
@@ -498,7 +480,7 @@ impl<R: Read + Seek> Decoder<R> {
                         TiffFormatError::TiffSignatureNotFound,
                     ));
                 }
-                
+
             }
             _ => {
                 return Err(TiffError::FormatError(
@@ -542,7 +524,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    /// Makes sure that a ScanImage file is indeed identified by a 
+    /// Makes sure that a ScanImage file is indeed identified by a
     /// magic number, as the spec suggests.
     fn assert_magic_number_exists(&mut self) -> TiffResult<()> {
         let mut si_magic_number_buffer = [0u8; 4];
@@ -1171,7 +1153,7 @@ impl<R: Read + Seek> Decoder<R> {
         let strip_height = cmp::min(rows_per_strip, sized_height - index * rows_per_strip);
 
         let buffer_size = sized_width * strip_height * self.bits_per_sample.len();
-        
+
         if buffer.len() < buffer_size {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
