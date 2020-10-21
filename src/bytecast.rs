@@ -25,7 +25,7 @@ macro_rules! integral_slice_as_bytes{($int:ty, $const:ident $(,$mut:ident)*) => 
 
 integral_slice_as_bytes!(i8, i8_as_ne_bytes);
 integral_slice_as_bytes!(u16, u16_as_ne_bytes, u16_as_ne_mut_bytes);
-integral_slice_as_bytes!(i16, i16_as_ne_bytes);
+integral_slice_as_bytes!(i16, i16_as_ne_bytes, i16_as_ne_mut_bytes);
 integral_slice_as_bytes!(u32, u32_as_ne_bytes, u32_as_ne_mut_bytes);
 integral_slice_as_bytes!(i32, i32_as_ne_bytes);
 integral_slice_as_bytes!(u64, u64_as_ne_bytes, u64_as_ne_mut_bytes);
