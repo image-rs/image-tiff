@@ -1,40 +1,13 @@
-name: Rust CI
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust: ["1.34.2", stable, beta, nightly]
-        command: [build, test]
-    steps:
-    - uses: actions/checkout@v2
-    - run: rustup default ${{ matrix.rust }}
-    - name: build
-      run: >
-        cargo build --verbose --no-default-features --features "$FEATURES"
-    - name: test
-      run: >
-        cargo test --tests --benches --no-default-features --features "$FEATURES"
-      if: ${{ matrix.rust != '1.34.2' }}
-      env:
-        FEATURES: ${{ matrix.features }}
-  rustfmt:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-        components: rustfmt
-    - name: Run rustfmt check
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: -- --check
+<!DOCTYPE html>
+<html>
 
+   <head>
+      <title>Using Image in Webpage</title>
+   </head>
+	
+   <body>
+      <p>Simple Image Insert</p>
+      <img src = "/html/images/test.png" alt = "Test Image" />
+   </body>
+	
+</html
