@@ -6,8 +6,8 @@ use std::io::{self, Read, Seek};
 use std::mem;
 
 use super::stream::{ByteOrder, EndianReader, SmartReader};
-use tags::{Tag, Type};
-use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::tags::{Tag, Type};
+use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::Value::{
     Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed,

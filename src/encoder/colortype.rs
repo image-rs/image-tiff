@@ -1,4 +1,4 @@
-use tags::{PhotometricInterpretation, SampleFormat};
+use crate::tags::{PhotometricInterpretation, SampleFormat};
 
 /// Trait for different colortypes that can be encoded.
 pub trait ColorType {

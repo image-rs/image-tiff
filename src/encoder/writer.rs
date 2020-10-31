@@ -1,4 +1,4 @@
-use error::TiffResult;
+use crate::error::TiffResult;
 use std::io::{self, Seek, SeekFrom, Write};
 
 pub fn write_tiff_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
