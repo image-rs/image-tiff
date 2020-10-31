@@ -6,7 +6,7 @@ use std::{cmp, io, mem};
 use crate::bytecast;
 use crate::error::{TiffError, TiffFormatError, TiffResult};
 use crate::tags::{self, ResolutionUnit, Tag, Type};
-
+use weezl::{encode::Encoder, BitOrder};
 pub mod colortype;
 mod writer;
 
@@ -442,7 +442,19 @@ impl<W: Write + Seek> TiffEncoder<W> {
         height: u32,
     ) -> TiffResult<ImageEncoder<W, C>> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        ImageEncoder::new(encoder, width, height)
+        ImageEncoder::new(encoder, width, height, tags::CompressionMethod::None)
+    }
+
+    /// Create an 'ImageEncoder' to encode an image one slice at a time,
+    /// using a specific compression method
+    pub fn new_image_compressed<C: ColorType>(
+        &mut self,
+        width: u32,
+        height: u32,
+        compression: tags::CompressionMethod,
+    ) -> TiffResult<ImageEncoder<W, C>> {
+        let encoder = DirectoryEncoder::new(&mut self.writer)?;
+        ImageEncoder::new(encoder, width, height, compression)
     }
 
     /// Convenience function to write an entire image from memory.
@@ -456,7 +468,23 @@ impl<W: Write + Seek> TiffEncoder<W> {
         [C::Inner]: TiffValue,
     {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height)?;
+        let image: ImageEncoder<W, C> =
+            ImageEncoder::new(encoder, width, height, tags::CompressionMethod::None)?;
+        image.write_data(data)
+    }
+
+    pub fn write_image_compressed<C: ColorType>(
+        &mut self,
+        width: u32,
+        height: u32,
+        compression: tags::CompressionMethod,
+        data: &[C::Inner],
+    ) -> TiffResult<()>
+    where
+        [C::Inner]: TiffValue,
+    {
+        let encoder = DirectoryEncoder::new(&mut self.writer)?;
+        let image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height, compression)?;
         image.write_data(data)
     }
 }
@@ -609,6 +637,9 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType> {
     rows_per_strip: u64,
     strip_offsets: Vec<u32>,
     strip_byte_count: Vec<u32>,
+    compression: tags::CompressionMethod,
+    lzw_buffer: Vec<u8>,
+    lzw_encoder: Encoder,
     dropped: bool,
     _phantom: ::std::marker::PhantomData<C>,
 }
@@ -618,6 +649,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         mut encoder: DirectoryEncoder<'a, W>,
         width: u32,
         height: u32,
+        compression: tags::CompressionMethod,
     ) -> TiffResult<ImageEncoder<'a, W, T>> {
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
@@ -629,7 +661,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
         encoder.write_tag(Tag::ImageWidth, width)?;
         encoder.write_tag(Tag::ImageLength, height)?;
-        encoder.write_tag(Tag::Compression, tags::CompressionMethod::None.to_u16())?;
+        encoder.write_tag(Tag::Compression, compression.to_u16())?;
 
         encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
         let sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
@@ -656,6 +688,9 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
             height,
             strip_offsets: Vec::new(),
             strip_byte_count: Vec::new(),
+            compression,
+            lzw_encoder: Encoder::with_tiff_size_switch(BitOrder::Msb, 8),
+            lzw_buffer: vec![0; 1024 * 1024],
             dropped: false,
             _phantom: ::std::marker::PhantomData,
         })
@@ -689,9 +724,27 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
             .into());
         }
 
-        let offset = self.encoder.write_data(value)?;
+        let (offset, bytes) = match self.compression {
+            tags::CompressionMethod::None => (self.encoder.write_data(value)?, value.bytes()),
+            tags::CompressionMethod::LZW => {
+                let mut compressed: Vec<u8> = Vec::with_capacity(std::mem::size_of_val(value));
+                let mut hack: Vec<u8> = Vec::with_capacity(std::mem::size_of_val(value));
+                let mut hack_writer = TiffWriter::new(&mut hack);
+                value.write(&mut hack_writer)?;
+                let mut stream = self.lzw_encoder.into_stream(&mut compressed);
+                stream.set_buffer(&mut self.lzw_buffer);
+                stream.encode_all(&hack[..]).status?;
+                self.lzw_encoder.reset();
+                (
+                    self.encoder.write_data(&*compressed)?,
+                    compressed.len() as u32,
+                )
+            }
+            _ => panic!("Unsupported compression method"),
+        };
+
         self.strip_offsets.push(u32::try_from(offset)?);
-        self.strip_byte_count.push(value.bytes());
+        self.strip_byte_count.push(bytes);
 
         self.strip_idx += 1;
         Ok(())

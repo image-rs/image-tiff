@@ -18,7 +18,7 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 edition = "2018"
 
 [dependencies]
-weezl = "0.1.0"
+weezl = "0.1"
 jpeg = { package = "jpeg-decoder", version = "0.1.17", default-features = false }
 
 [dependencies.miniz_oxide]
