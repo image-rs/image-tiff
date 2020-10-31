@@ -3,10 +3,12 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 
-use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
-use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type};
+use crate::tags::{
+    CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
+};
 
 use self::stream::{
     ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,

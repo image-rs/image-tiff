@@ -3,9 +3,9 @@ use std::convert::TryFrom;
 use std::io::{Seek, Write};
 use std::{cmp, io, mem};
 
-use bytecast;
-use error::{TiffError, TiffFormatError, TiffResult};
-use tags::{self, ResolutionUnit, Tag, Type};
+use crate::bytecast;
+use crate::error::{TiffError, TiffFormatError, TiffResult};
+use crate::tags::{self, ResolutionUnit, Tag, Type};
 
 pub mod colortype;
 mod writer;
