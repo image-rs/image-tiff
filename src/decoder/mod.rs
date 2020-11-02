@@ -13,7 +13,6 @@ use crate::tags::{
 use self::stream::{
     ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,
 };
-use geo;
 
 pub mod ifd;
 mod stream;

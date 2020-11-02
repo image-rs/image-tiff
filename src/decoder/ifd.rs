@@ -56,6 +56,7 @@ impl Value {
 
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
+            Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val),
             UnsignedBig(val) => Ok(u32::try_from(val)?),
             val => Err(TiffError::FormatError(
@@ -76,6 +77,7 @@ impl Value {
 
     pub fn into_u64(self) -> TiffResult<u64> {
         match self {
+            Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val.into()),
             UnsignedBig(val) => Ok(val),
             val => Err(TiffError::FormatError(
