@@ -210,7 +210,6 @@ where
     photometric_interpretation: PhotometricInterpretation,
     compression_method: CompressionMethod,
     strip_decoder: Option<StripDecodeState>,
-    geokey_dir: Option<HashMap<geo::geo_key::GeoKey, geo::geo_key::GeoKeyType>>,
 }
 
 trait Wrapping {
@@ -326,7 +325,6 @@ impl<R: Read + Seek> Decoder<R> {
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
             strip_decoder: None,
-            geokey_dir: None,
         }
         .init()
     }
@@ -474,20 +472,6 @@ impl<R: Read + Seek> Decoder<R> {
                 }
             }
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
-        }
-
-        match self.get_tag_u16_vec(Tag::GeoKeyDirectoryTag) {
-            Ok(geodir) => {
-                let ascii_params = Result::ok(self.get_tag_ascii_string(Tag::GeoAsciiParamsTag));
-                let double_params = Result::ok(self.get_tag_f64_vec(Tag::GeoDoubleParamsTag));
-                self.geokey_dir = Some(geo::geo_key::parse_geo_keys(
-                    geodir,
-                    ascii_params,
-                    double_params,
-                ));
-                // TODO: save the hashmap somewhere in this module/decoder
-            }
-            Err(_) => {}
         }
 
         Ok(())
