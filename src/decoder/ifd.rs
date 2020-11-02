@@ -437,7 +437,6 @@ impl Entry {
                         Signed(i32::from(r.read_i16()?)),
                     ]))
                 }
-                (Type::SHORT, 16) => Ok(Short(u16::from(decoder.read_short()?))),
                 (Type::SHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
                     Ok(UnsignedBig(u64::from(decoder.read_short()?)))
                 }),
