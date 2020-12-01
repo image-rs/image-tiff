@@ -380,7 +380,7 @@ impl<R: Read + Seek> Decoder<R> {
         Decoder {
             reader: SmartReader::wrap(r, ByteOrder::LittleEndian),
             byte_order: ByteOrder::LittleEndian,
-            bigtiff: false,
+            bigtiff: true,
             limits: Default::default(),
             next_ifd: None,
             ifd: None,

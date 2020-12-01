@@ -201,9 +201,9 @@ fn read_si_tif() -> Decoder<impl Read + Seek> {
 fn test_si_tif_reading() {
     let mut decoder = read_si_tif();
     decoder.next_image().unwrap();
+    println!("hi");
     let res = decoder.read_image().unwrap();
-    println!("{:?}", res);
-}    
+}
 
 
 /// Captures the basic functionality of SI header parsing to be used
@@ -237,7 +237,7 @@ fn test_si_header_metadata_parser() {
 #[ignore]
 fn generate_new_hash_for_scanimage_metadata_parser() {
     let (hasher_roi, hasher_frame) = read_si_header_metadata_and_hash();
-    println!("{:x}", hasher_roi.finish()); 
+    println!("{:x}", hasher_roi.finish());
     println!("{:x}", hasher_frame.finish());
 }
 
