@@ -3,10 +3,12 @@ use std::fmt;
 use std::io;
 use std::string;
 
-use decoder::ifd::Value;
+use crate::decoder::ifd::Value;
+use crate::tags::{
+    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
+};
+use crate::ColorType;
 use miniz_oxide::inflate::TINFLStatus;
-use tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag};
-use ColorType;
 
 /// Tiff error kinds.
 #[derive(Debug)]

@@ -6,18 +6,19 @@ use std::io::{self, Read, Seek};
 use std::mem;
 
 use super::stream::{ByteOrder, EndianReader, SmartReader};
-use tags::{Tag, Type};
-use {TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::tags::{Tag, Type};
+use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::Value::{
-    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Signed,
-    SignedBig, Unsigned, UnsignedBig,
+    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Short,
+    Signed, SignedBig, Unsigned, UnsignedBig,
 };
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Byte(u8),
+    Short(u16),
     Signed(i32),
     SignedBig(i64),
     Unsigned(u32),
@@ -42,8 +43,20 @@ impl Value {
         }
     }
 
+    pub fn into_u16(self) -> TiffResult<u16> {
+        match self {
+            Short(val) => Ok(val),
+            Unsigned(val) => Ok(u16::try_from(val)?),
+            UnsignedBig(val) => Ok(u16::try_from(val)?),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
+            Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val),
             UnsignedBig(val) => Ok(u32::try_from(val)?),
             val => Err(TiffError::FormatError(
@@ -64,6 +77,7 @@ impl Value {
 
     pub fn into_u64(self) -> TiffResult<u64> {
         match self {
+            Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val.into()),
             UnsignedBig(val) => Ok(val),
             val => Err(TiffError::FormatError(
@@ -94,6 +108,15 @@ impl Value {
     pub fn into_f64(self) -> TiffResult<f64> {
         match self {
             Double(val) => Ok(val),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_string(self) -> TiffResult<String> {
+        match self {
+            Ascii(val) => Ok(val),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -133,6 +156,22 @@ impl Value {
             }
             Byte(val) => Ok(vec![val]),
 
+            val => Err(TiffError::FormatError(
+                TiffFormatError::UnsignedIntegerExpected(val),
+            )),
+        }
+    }
+
+    pub fn into_u16_vec(self) -> TiffResult<Vec<u16>> {
+        match self {
+            List(vec) => {
+                let mut new_vec = Vec::with_capacity(vec.len());
+                for v in vec {
+                    new_vec.push(v.into_u16()?)
+                }
+                Ok(new_vec)
+            }
+            Short(val) => Ok(vec![val]),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),

@@ -15,6 +15,7 @@ license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
 repository = "https://github.com/image-rs/image-tiff"
 exclude = ["tests/images/*", "tests/fuzz_images/*"]
+edition = "2018"
 
 [dependencies]
 weezl = "0.1.0"

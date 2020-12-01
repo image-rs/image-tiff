@@ -3,10 +3,12 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 
-use {ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
-use tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type};
+use crate::tags::{
+    CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
+};
 
 use self::stream::{
     ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,
@@ -593,6 +595,7 @@ impl<R: Read + Seek> Decoder<R> {
             }
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
         }
+
         Ok(())
     }
 
@@ -863,6 +866,10 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
     }
+
+    pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
+        self.get_tag(tag)?.into_u16_vec()
+    }
     pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
         self.get_tag(tag)?.into_u64_vec()
     }
@@ -880,6 +887,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag and convert it to a 8bit vector.
     pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
         self.get_tag(tag)?.into_u8_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to a ascii vector.
+    pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
+        self.get_tag(tag)?.into_string()
     }
 
     /// Decompresses the strip into the supplied buffer.
