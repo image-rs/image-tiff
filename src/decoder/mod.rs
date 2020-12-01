@@ -273,6 +273,13 @@ impl Wrapping for u64 {
     }
 }
 
+impl Wrapping for i16 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        i16::wrapping_add(*self, other)
+    }
+}
+
+
 fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize) -> TiffResult<()>
 where
     T: Copy + Wrapping,
