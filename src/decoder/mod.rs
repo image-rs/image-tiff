@@ -354,6 +354,11 @@ impl<R: Read + Seek> Decoder<R> {
             PhotometricInterpretation::RGB => match self.bits_per_sample[..] {
                 [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
                 [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
+                // FIXME: We should _ignore_ other components. In particular:
+                // > Beware of extra components. Some TIFF files may have more components per pixel
+                // than you think. A Baseline TIFF reader must skip over them gracefully,using the
+                // values of the SamplesPerPixel and BitsPerSample fields.
+                // > -- TIFF 6.0 Specification, Section 7, Additional Baseline requirements.
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
@@ -766,7 +771,7 @@ impl<R: Read + Seek> Decoder<R> {
         buffer: DecodingBuffer<'a>,
         offset: u64,
         length: u64,
-        max_uncompressed_length: usize,
+        strip_sample_count: usize,
     ) -> TiffResult<usize> {
         let color_type = self.colortype()?;
         self.goto_offset_u64(offset)?;
@@ -782,7 +787,7 @@ impl<R: Read + Seek> Decoder<R> {
                 let (bytes, reader) = LZWReader::new(
                     &mut self.reader,
                     usize::try_from(length)?,
-                    max_uncompressed_length * buffer.byte_len(),
+                    strip_sample_count * buffer.byte_len(),
                 )?;
                 (bytes, Box::new(reader))
             }
@@ -793,8 +798,7 @@ impl<R: Read + Seek> Decoder<R> {
                 (bytes, Box::new(reader))
             }
             CompressionMethod::OldDeflate => {
-                let (bytes, reader) =
-                    DeflateReader::new(&mut self.reader, max_uncompressed_length)?;
+                let (bytes, reader) = DeflateReader::new(&mut self.reader, strip_sample_count)?;
                 (bytes, Box::new(reader))
             }
             method => {
@@ -804,9 +808,14 @@ impl<R: Read + Seek> Decoder<R> {
             }
         };
 
-        if bytes / buffer.byte_len() > max_uncompressed_length {
+        // FIXME: this might be suboptimal. We might default remaining bits to ´0`, which some
+        // other decoders might do.
+        if bytes / buffer.byte_len() > strip_sample_count {
             return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
+                TiffFormatError::UnexpectedCompressedData {
+                    actual: bytes,
+                    required: strip_sample_count * buffer.byte_len(),
+                },
             ));
         }
 
@@ -1039,7 +1048,10 @@ impl<R: Read + Seek> Decoder<R> {
 
         if units_read < buffer_size {
             return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
+                TiffFormatError::InconsistentStripElements {
+                    actual: units_read,
+                    required: buffer_size,
+                },
             ));
         }
         if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {

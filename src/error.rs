@@ -43,6 +43,14 @@ pub enum TiffFormatError {
     TiffSignatureInvalid,
     ImageFileDirectoryNotFound,
     InconsistentSizesEncountered,
+    UnexpectedCompressedData {
+        actual: usize,
+        required: usize,
+    },
+    InconsistentStripElements {
+        actual: usize,
+        required: usize,
+    },
     InvalidTag,
     InvalidTagValueType(Tag),
     RequiredTagNotFound(Tag),
@@ -66,6 +74,20 @@ impl fmt::Display for TiffFormatError {
             TiffSignatureInvalid => write!(fmt, "TIFF signature invalid."),
             ImageFileDirectoryNotFound => write!(fmt, "Image file directory not found."),
             InconsistentSizesEncountered => write!(fmt, "Inconsistent sizes encountered."),
+            UnexpectedCompressedData { actual, required } => {
+                write!(
+                    fmt,
+                    "Decompression returned different amount of bytes than expected: got {}, expected {}.",
+                    actual, required
+                )
+            }
+            InconsistentStripElements { actual, required } => {
+                write!(
+                    fmt,
+                    "Inconsistent elements in strip: got {}, expected {}.",
+                    actual, required
+                )
+            }
             InvalidTag => write!(fmt, "Image contains invalid tag."),
             InvalidTagValueType(ref tag) => {
                 write!(fmt, "Tag `{:?}` did not have the expected value type.", tag)
