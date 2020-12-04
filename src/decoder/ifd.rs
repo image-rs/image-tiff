@@ -7,7 +7,7 @@ use std::mem;
 
 use super::stream::{ByteOrder, EndianReader, SmartReader};
 use crate::tags::{Tag, Type};
-use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::{TiffError, TiffFormatError, TiffResult};
 
 use self::Value::{
     Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Short,
@@ -332,171 +332,206 @@ impl Entry {
         limits: &super::Limits,
         decoder: &mut super::Decoder<R>,
     ) -> TiffResult<Value> {
+        // Case 1: there are no values so we can return immediately.
+        if self.count == 0 {
+            return Ok(List(Vec::new()));
+        }
+
         let bo = decoder.byte_order();
-        let bigtiff_value = if decoder.bigtiff {
-            match (self.type_, self.count) {
-                (Type::BYTE, 5) => Some(offset_to_bytes(5, self)?),
-                (Type::BYTE, 6) => Some(offset_to_bytes(6, self)?),
-                (Type::BYTE, 7) => Some(offset_to_bytes(7, self)?),
-                (Type::BYTE, 8) => Some(offset_to_bytes(8, self)?),
-                (Type::SBYTE, 5) => Some(offset_to_sbytes(5, self)?),
-                (Type::SBYTE, 6) => Some(offset_to_sbytes(6, self)?),
-                (Type::SBYTE, 7) => Some(offset_to_sbytes(7, self)?),
-                (Type::SBYTE, 8) => Some(offset_to_sbytes(8, self)?),
-                (Type::SHORT, 3) => {
-                    let mut r = self.r(bo);
-                    Some(List(vec![
-                        Unsigned(u32::from(r.read_u16()?)),
-                        Unsigned(u32::from(r.read_u16()?)),
-                        Unsigned(u32::from(r.read_u16()?)),
-                    ]))
-                }
-                (Type::SSHORT, 3) => {
-                    let mut r = self.r(bo);
-                    Some(List(vec![
-                        Signed(i32::from(r.read_i16()?)),
-                        Signed(i32::from(r.read_i16()?)),
-                        Signed(i32::from(r.read_i16()?)),
-                    ]))
-                }
-                (Type::SHORT, 4) => {
-                    let mut r = self.r(bo);
-                    Some(List(vec![
-                        Unsigned(u32::from(r.read_u16()?)),
-                        Unsigned(u32::from(r.read_u16()?)),
-                        Unsigned(u32::from(r.read_u16()?)),
-                        Unsigned(u32::from(r.read_u16()?)),
-                    ]))
-                }
-                (Type::SSHORT, 4) => {
-                    let mut r = self.r(bo);
-                    Some(List(vec![
-                        Signed(i32::from(r.read_i16()?)),
-                        Signed(i32::from(r.read_i16()?)),
-                        Signed(i32::from(r.read_i16()?)),
-                        Signed(i32::from(r.read_i16()?)),
-                    ]))
-                }
-                (Type::LONG, 2) => {
-                    let mut r = self.r(bo);
-                    Some(List(vec![Unsigned(r.read_u32()?), Unsigned(r.read_u32()?)]))
-                }
-                (Type::SLONG, 2) => {
-                    let mut r = self.r(bo);
-                    Some(List(vec![Signed(r.read_i32()?), Signed(r.read_i32()?)]))
-                }
-                (Type::RATIONAL, 1) => {
-                    let mut r = self.r(bo);
-                    let numerator = r.read_u32()?;
-                    let denominator = r.read_u32()?;
-                    Some(Rational(numerator, denominator))
-                }
-                (Type::SRATIONAL, 1) => {
-                    let mut r = self.r(bo);
-                    let numerator = r.read_i32()?;
-                    let denominator = r.read_i32()?;
-                    Some(SRational(numerator, denominator))
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
+        let value_bytes = self.count
+            * match self.type_ {
+                Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
+                Type::SHORT | Type::SSHORT => 2,
+                Type::LONG | Type::SLONG | Type::FLOAT => 4,
+                Type::LONG8 | Type::DOUBLE | Type::RATIONAL | Type::SRATIONAL => 8,
+                Type::__NonExhaustive => unreachable!(),
+            };
 
-        if let Some(v) = bigtiff_value {
-            Ok(v)
-        } else {
-            match (self.type_, self.count) {
-                // TODO check if this could give wrong results
-                // at a different endianess of file/computer.
-                (Type::BYTE, 1) => Ok(Unsigned(u32::from(self.offset[0]))),
-                (Type::BYTE, 2) => offset_to_bytes(2, self),
-                (Type::BYTE, 3) => offset_to_bytes(3, self),
-                (Type::BYTE, 4) => offset_to_bytes(4, self),
-                (Type::BYTE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(UnsignedBig(u64::from(decoder.read_byte()?)))
-                }),
-                (Type::SBYTE, 1) => Ok(Signed(i32::from(self.offset[0] as i8))),
-                (Type::SBYTE, 2) => offset_to_sbytes(2, self),
-                (Type::SBYTE, 3) => offset_to_sbytes(3, self),
-                (Type::SBYTE, 4) => offset_to_sbytes(4, self),
-                (Type::SBYTE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(SignedBig(i64::from(decoder.read_byte()? as i8)))
-                }),
-                (Type::SHORT, 1) => Ok(Unsigned(u32::from(self.r(bo).read_u16()?))),
-                (Type::SSHORT, 1) => Ok(Signed(i32::from(self.r(bo).read_i16()?))),
-                (Type::SHORT, 2) => {
-                    let mut r = self.r(bo);
-                    Ok(List(vec![
-                        Unsigned(u32::from(r.read_u16()?)),
-                        Unsigned(u32::from(r.read_u16()?)),
-                    ]))
-                }
-                (Type::SSHORT, 2) => {
-                    let mut r = self.r(bo);
-                    Ok(List(vec![
-                        Signed(i32::from(r.read_i16()?)),
-                        Signed(i32::from(r.read_i16()?)),
-                    ]))
-                }
-                (Type::SHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(UnsignedBig(u64::from(decoder.read_short()?)))
-                }),
-                (Type::SSHORT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(SignedBig(i64::from(decoder.read_sshort()?)))
-                }),
-                (Type::LONG, 1) => Ok(Unsigned(self.r(bo).read_u32()?)),
-                (Type::SLONG, 1) => Ok(Signed(self.r(bo).read_i32()?)),
-                (Type::LONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Unsigned(decoder.read_long()?))
-                }),
-                (Type::SLONG, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Signed(decoder.read_slong()?))
-                }),
-                (Type::FLOAT, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Float(decoder.read_float()?))
-                }),
-                (Type::DOUBLE, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Double(decoder.read_double()?))
-                }),
-                (Type::RATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Rational(decoder.read_long()?, decoder.read_long()?))
-                }),
-                (Type::SRATIONAL, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(SRational(decoder.read_slong()?, decoder.read_slong()?))
-                }),
-                (Type::LONG8, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(UnsignedBig(decoder.read_long8()?))
-                }),
-                (Type::ASCII, n) => {
-                    let n = usize::try_from(n)?;
-                    if n > limits.decoding_buffer_size {
-                        return Err(TiffError::LimitsExceeded);
+        // Case 2: there is one value.
+        if self.count == 1 {
+            // 2a: the value is 5-8 bytes and we're in BigTiff mode.
+            if decoder.bigtiff && value_bytes > 4 && value_bytes <= 8 {
+                return Ok(match self.type_ {
+                    Type::LONG8 => UnsignedBig(self.r(bo).read_u64()?),
+                    Type::DOUBLE => Double(self.r(bo).read_f64()?),
+                    Type::RATIONAL => {
+                        let mut r = self.r(bo);
+                        Rational(r.read_u32()?, r.read_u32()?)
                     }
+                    Type::SRATIONAL => {
+                        let mut r = self.r(bo);
+                        SRational(r.read_i32()?, r.read_i32()?)
+                    }
+                    Type::BYTE
+                    | Type::SBYTE
+                    | Type::ASCII
+                    | Type::UNDEFINED
+                    | Type::SHORT
+                    | Type::SSHORT
+                    | Type::LONG
+                    | Type::SLONG
+                    | Type::FLOAT => unreachable!(),
+                    Type::__NonExhaustive => unreachable!(),
+                });
+            }
 
-                    if (n <= 4 && !decoder.bigtiff) || (n <= 8 && decoder.bigtiff) {
-                        let mut buf = vec![0; n];
-                        self.r(bo).read_exact(&mut buf)?;
-                        let v = String::from_utf8(buf)?;
-                        let v = v.trim_matches(char::from(0));
-                        Ok(Ascii(v.into()))
+            // 2b: the value is at most 4 bytes or doesn't fit in the offset field.
+            return Ok(match self.type_ {
+                Type::BYTE => Unsigned(u32::from(self.offset[0])),
+                Type::SBYTE => Signed(i32::from(self.offset[0] as i8)),
+                Type::UNDEFINED => Byte(self.offset[0]),
+                Type::SHORT => Unsigned(u32::from(self.r(bo).read_u16()?)),
+                Type::SSHORT => Signed(i32::from(self.r(bo).read_i16()?)),
+                Type::LONG => Unsigned(self.r(bo).read_u32()?),
+                Type::SLONG => Signed(self.r(bo).read_i32()?),
+                Type::FLOAT => Float(self.r(bo).read_f32()?),
+                Type::ASCII => {
+                    if self.offset[0] == 0 {
+                        Ascii("".to_string())
                     } else {
-                        if decoder.bigtiff {
-                            decoder.goto_offset_u64(self.r(bo).read_u64()?)?
-                        } else {
-                            decoder.goto_offset(self.r(bo).read_u32()?)?
-                        }
-                        let string = decoder.read_string(n)?;
-                        Ok(Ascii(string))
+                        return Err(TiffError::FormatError(TiffFormatError::InvalidTag));
                     }
                 }
-                (Type::UNDEFINED, n) => self.decode_offset(n, bo, limits, decoder, |decoder| {
-                    Ok(Byte(u8::from(decoder.read_byte()?)))
-                }),
-                _ => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedDataType,
-                )),
+                Type::LONG8 => {
+                    decoder.goto_offset(self.r(bo).read_u32()?)?;
+                    UnsignedBig(decoder.read_long8()?)
+                }
+                Type::DOUBLE => {
+                    decoder.goto_offset(self.r(bo).read_u32()?)?;
+                    Double(decoder.read_double()?)
+                }
+                Type::RATIONAL => {
+                    decoder.goto_offset(self.r(bo).read_u32()?)?;
+                    Rational(decoder.read_long()?, decoder.read_long()?)
+                }
+                Type::SRATIONAL => {
+                    decoder.goto_offset(self.r(bo).read_u32()?)?;
+                    SRational(decoder.read_slong()?, decoder.read_slong()?)
+                }
+                Type::__NonExhaustive => unreachable!(),
+            });
+        }
+
+        // Case 3: There is more than one value, but it fits in the offset field.
+        if value_bytes <= 4 || decoder.bigtiff && value_bytes <= 8 {
+            match self.type_ {
+                Type::BYTE => return Ok(offset_to_bytes(self.count as usize, self)?),
+                Type::SBYTE => return Ok(offset_to_sbytes(self.count as usize, self)?),
+                Type::ASCII => {
+                    let mut buf = vec![0; self.count as usize];
+                    self.r(bo).read_exact(&mut buf)?;
+                    let v = String::from_utf8(buf)?;
+                    let v = v.trim_matches(char::from(0));
+                    return Ok(Ascii(v.into()));
+                }
+                Type::UNDEFINED => {
+                    return Ok(List(
+                        self.offset[0..self.count as usize]
+                            .iter()
+                            .map(|&b| Byte(b))
+                            .collect(),
+                    ));
+                }
+                Type::SHORT => {
+                    let mut r = self.r(bo);
+                    let mut v = Vec::new();
+                    for _ in 0..self.count {
+                        v.push(Short(r.read_u16()?));
+                    }
+                    return Ok(List(v));
+                }
+                Type::SSHORT => {
+                    let mut r = self.r(bo);
+                    let mut v = Vec::new();
+                    for _ in 0..self.count {
+                        v.push(Signed(i32::from(r.read_i16()?)));
+                    }
+                    return Ok(List(v));
+                }
+                Type::LONG => {
+                    let mut r = self.r(bo);
+                    let mut v = Vec::new();
+                    for _ in 0..self.count {
+                        v.push(Unsigned(r.read_u32()?));
+                    }
+                    return Ok(List(v));
+                }
+                Type::SLONG => {
+                    let mut r = self.r(bo);
+                    let mut v = Vec::new();
+                    for _ in 0..self.count {
+                        v.push(Signed(r.read_i32()?));
+                    }
+                    return Ok(List(v));
+                }
+                Type::FLOAT => {
+                    let mut r = self.r(bo);
+                    let mut v = Vec::new();
+                    for _ in 0..self.count {
+                        v.push(Float(r.read_f32()?));
+                    }
+                    return Ok(List(v));
+                }
+                Type::LONG8 | Type::RATIONAL | Type::SRATIONAL | Type::DOUBLE => unreachable!(),
+                Type::__NonExhaustive => unreachable!(),
             }
+        }
+
+        // Case 4: there is more than one value, and it doesn't fit in the offset field.
+        match self.type_ {
+            // TODO check if this could give wrong results
+            // at a different endianess of file/computer.
+            Type::BYTE => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(UnsignedBig(u64::from(decoder.read_byte()?)))
+            }),
+            Type::SBYTE => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(SignedBig(i64::from(decoder.read_byte()? as i8)))
+            }),
+            Type::SHORT => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(UnsignedBig(u64::from(decoder.read_short()?)))
+            }),
+            Type::SSHORT => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(SignedBig(i64::from(decoder.read_sshort()?)))
+            }),
+            Type::LONG => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(Unsigned(decoder.read_long()?))
+            }),
+            Type::SLONG => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(Signed(decoder.read_slong()?))
+            }),
+            Type::FLOAT => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(Float(decoder.read_float()?))
+            }),
+            Type::DOUBLE => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(Double(decoder.read_double()?))
+            }),
+            Type::RATIONAL => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(Rational(decoder.read_long()?, decoder.read_long()?))
+            }),
+            Type::SRATIONAL => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(SRational(decoder.read_slong()?, decoder.read_slong()?))
+            }),
+            Type::LONG8 => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(UnsignedBig(decoder.read_long8()?))
+            }),
+            Type::UNDEFINED => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(Byte(u8::from(decoder.read_byte()?)))
+            }),
+            Type::ASCII => {
+                let n = usize::try_from(self.count)?;
+                if n > limits.decoding_buffer_size {
+                    return Err(TiffError::LimitsExceeded);
+                }
+
+                if decoder.bigtiff {
+                    decoder.goto_offset_u64(self.r(bo).read_u64()?)?
+                } else {
+                    decoder.goto_offset(self.r(bo).read_u32()?)?
+                }
+                let string = decoder.read_string(n)?;
+                Ok(Ascii(string))
+            }
+            Type::__NonExhaustive => unreachable!(),
         }
     }
 
