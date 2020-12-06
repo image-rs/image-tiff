@@ -813,8 +813,8 @@ impl<R: Read + Seek> Decoder<R> {
         if bytes / buffer.byte_len() > strip_sample_count {
             return Err(TiffError::FormatError(
                 TiffFormatError::UnexpectedCompressedData {
-                    actual: bytes,
-                    required: strip_sample_count * buffer.byte_len(),
+                    actual_bytes: bytes,
+                    required_bytes: strip_sample_count * buffer.byte_len(),
                 },
             ));
         }
@@ -1048,9 +1048,9 @@ impl<R: Read + Seek> Decoder<R> {
 
         if units_read < buffer_size {
             return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentStripElements {
-                    actual: units_read,
-                    required: buffer_size,
+                TiffFormatError::InconsistentStripSamples {
+                    actual_samples: units_read,
+                    required_samples: buffer_size,
                 },
             ));
         }
