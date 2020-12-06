@@ -176,6 +176,24 @@ pub struct Limits {
     _non_exhaustive: (),
 }
 
+impl Limits {
+    /// A configuration that does not impose any limits.
+    ///
+    /// This is a good start if the caller only wants to impose selective limits, contrary to the
+    /// default limits which allows selectively disabling limits.
+    ///
+    /// Note that this configuration is likely to crash on excessively large images since,
+    /// naturally, the machine running the program does not have infinite memory.
+    pub fn unlimited() -> Limits {
+        Limits {
+            decoding_buffer_size: usize::max_value(),
+            ifd_value_size: usize::max_value(),
+            intermediate_buffer_size: usize::max_value(),
+            _non_exhaustive: (),
+        }
+    }
+}
+
 impl Default for Limits {
     fn default() -> Limits {
         Limits {
