@@ -760,7 +760,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     /// Set image number of lines per strip
     ///
-    /// This function must be called before calling write_data() or write_strip().
+    /// `write_strip` and will return an error otherwise.
     pub fn rows_per_strip(&mut self, value: u32) -> TiffResult<()> {
         if self.strip_idx != 0 {
             return Err(io::Error::new(

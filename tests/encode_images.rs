@@ -381,6 +381,7 @@ fn test_rows_per_strip() {
             image.write_strip(&img2[..]).unwrap();
         }
         assert!(image.write_strip(&img2[..]).is_err());
+        image.finish().unwrap();
     }
 
     file.seek(SeekFrom::Start(0)).unwrap();
@@ -391,10 +392,9 @@ fn test_rows_per_strip() {
 
         for i in 0..50 {
             let img2 = [i; 2 * 100];
-            if let DecodingResult::U8(data) = decoder.read_strip().unwrap() {
-                assert_eq!(&img2[..], &data[..]);
-            } else {
-                assert!(false);
+            match decoder.read_strip().unwrap() {
+                DecodingResult::U8(data) => assert_eq!(&img2[..], &data[..]),
+                other => panic!("Incorrect strip type {:?}", other),
             }
         }
     }
