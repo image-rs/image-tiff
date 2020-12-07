@@ -623,10 +623,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         height: u32,
     ) -> TiffResult<ImageEncoder<'a, W, T>> {
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
+        let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
-        // By default write the image as single strip. This can be changed by calling
-        // rows_per_strip() before the first data is written.
-        let rows_per_strip = height as u64;
+        // Limit the strip size to prevent potential memory and security issues.
+        // Also keep the multiple strip handling 'oiled'
+        let rows_per_strip = (1_000_000 + row_bytes - 1) / row_bytes;
 
         let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
 
@@ -760,6 +761,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     /// Set image number of lines per strip
     ///
+    /// This function needs to be called before any calls to `write_data` or
     /// `write_strip` and will return an error otherwise.
     pub fn rows_per_strip(&mut self, value: u32) -> TiffResult<()> {
         if self.strip_idx != 0 {
