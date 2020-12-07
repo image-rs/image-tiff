@@ -589,7 +589,7 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 /// // You can encode tags here
 /// image.encoder().write_tag(Tag::Artist, "Image-tiff").unwrap();
 ///
-/// // Smaller strip size can be configured before writing data
+/// // Strip size can be configured before writing data
 /// image.rows_per_strip(2).unwrap();
 ///
 /// let mut idx = 0;
