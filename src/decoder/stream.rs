@@ -285,10 +285,11 @@ impl LZWReader {
         let mut uncompressed = Vec::with_capacity(max_uncompressed_length);
         let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
         let mut bytes_read = 0;
-        while bytes_read < compressed_length && uncompressed.len() < max_uncompressed_length {
+
+        while uncompressed.len() < max_uncompressed_length {
             let bytes_written = uncompressed.len();
             uncompressed.reserve(1 << 12);
-            let buffer_space = uncompressed.capacity();
+            let buffer_space = uncompressed.capacity().min(max_uncompressed_length);
             uncompressed.resize(buffer_space, 0u8);
 
             let result = decoder.decode_bytes(
