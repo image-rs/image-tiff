@@ -589,6 +589,9 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 /// // You can encode tags here
 /// image.encoder().write_tag(Tag::Artist, "Image-tiff").unwrap();
 ///
+/// // Strip size can be configured before writing data
+/// image.rows_per_strip(2).unwrap();
+///
 /// let mut idx = 0;
 /// while image.next_strip_sample_count() > 0 {
 ///     let sample_count = image.next_strip_sample_count() as usize;
@@ -622,8 +625,9 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
-        // As per tiff spec each strip should be about 8k long
-        let rows_per_strip = (8000 + row_bytes - 1) / row_bytes;
+        // Limit the strip size to prevent potential memory and security issues.
+        // Also keep the multiple strip handling 'oiled'
+        let rows_per_strip = (1_000_000 + row_bytes - 1) / row_bytes;
 
         let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
 
@@ -753,6 +757,28 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     /// Set image y-resolution
     pub fn y_resolution(&mut self, value: Rational) {
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
+    }
+
+    /// Set image number of lines per strip
+    ///
+    /// This function needs to be called before any calls to `write_data` or
+    /// `write_strip` and will return an error otherwise.
+    pub fn rows_per_strip(&mut self, value: u32) -> TiffResult<()> {
+        if self.strip_idx != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Cannot change strip size after data was written",
+            )
+            .into());
+        }
+        // Write tag as 32 bits
+        self.encoder.write_tag(Tag::RowsPerStrip, value)?;
+
+        let value: u64 = value as u64;
+        self.strip_count = (self.height as u64 + value - 1) / value;
+        self.rows_per_strip = value;
+
+        Ok(())
     }
 
     fn finish_internal(&mut self) -> TiffResult<()> {

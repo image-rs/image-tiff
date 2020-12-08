@@ -360,3 +360,42 @@ fn test_multipage_image() {
         assert_eq!(img_decoder.dimensions().unwrap(), (3, 3));
     }
 }
+
+#[test]
+/// verify rows per strip setting
+fn test_rows_per_strip() {
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut img_encoder = TiffEncoder::new(&mut file).unwrap();
+
+        let mut image = img_encoder.new_image::<colortype::Gray8>(100, 100).unwrap();
+        assert_eq!(image.next_strip_sample_count(), 100 * 100);
+        image.rows_per_strip(2).unwrap();
+        assert_eq!(image.next_strip_sample_count(), 2 * 100);
+
+        let img2: Vec<u8> = vec![0; 2 * 100];
+        image.write_strip(&img2[..]).unwrap();
+        assert!(image.rows_per_strip(5).is_err());
+        for i in 1..50 {
+            let img2: Vec<u8> = vec![i; 2 * 100];
+            image.write_strip(&img2[..]).unwrap();
+        }
+        assert!(image.write_strip(&img2[..]).is_err());
+        image.finish().unwrap();
+    }
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        assert_eq!(decoder.get_tag_u64(Tag::RowsPerStrip).unwrap(), 2);
+        assert_eq!(decoder.strip_count().unwrap(), 50);
+
+        for i in 0..50 {
+            let img2 = [i; 2 * 100];
+            match decoder.read_strip().unwrap() {
+                DecodingResult::U8(data) => assert_eq!(&img2[..], &data[..]),
+                other => panic!("Incorrect strip type {:?}", other),
+            }
+        }
+    }
+}
