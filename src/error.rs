@@ -52,7 +52,6 @@ pub enum TiffFormatError {
         required_samples: usize,
     },
     InvalidTag,
-    InvalidScanImageMetadataEncoding,
     InvalidTagValueType(Tag),
     RequiredTagNotFound(Tag),
     UnknownPredictor(u16),
@@ -96,9 +95,6 @@ impl fmt::Display for TiffFormatError {
                 )
             }
             InvalidTag => write!(fmt, "Image contains invalid tag."),
-            InvalidScanImageMetadataEncoding => {
-                write!(fmt, "The ScanImage metadata section had invalid UTF bytes")
-            }
             InvalidTagValueType(ref tag) => {
                 write!(fmt, "Tag `{:?}` did not have the expected value type.", tag)
             }
