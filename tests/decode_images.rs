@@ -1,18 +1,12 @@
 extern crate tiff;
 
-use std::io::{Read, Seek};
-
 use tiff::decoder::{ifd, Decoder, DecodingResult};
 use tiff::ColorType;
 
 use std::fs::File;
 use std::path::PathBuf;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
-const BIGTIFF_DIR: &str = "bigtiff";
 
 macro_rules! test_image_sum {
     ($name:ident, $buffer:ident, $sum_ty:ty) => {

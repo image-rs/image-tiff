@@ -645,15 +645,6 @@ impl<R: Read + Seek> Decoder<R> {
         self.bigtiff
     }
 
-    /// Returns the values located in the next n bytes of the file, where n is
-    /// the length of the given buffer
-    pub(crate) fn peek_n_bytes(&mut self, buffer: &mut [u8]) -> Result<(), io::Error> {
-        let len = buffer.len() as i64;
-        self.reader.read_exact(buffer)?;
-        self.reader.seek(io::SeekFrom::Current(-len))?;
-        Ok(())
-    }
-
     /// Reads a IFD entry.
     // An IFD entry has four fields:
     //
@@ -1221,56 +1212,3 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(result)
     }
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use std::io::Cursor;
-
-    // The following tests assert that peek_n_bytes behaves well with most
-    // types of input.
-
-    fn mock_decoder() -> Decoder<io::Cursor<[u8; 3]>> {
-        let byteslice = Cursor::new([0u8, 1, 2]);
-        Decoder {
-            reader: SmartReader::wrap(byteslice, ByteOrder::LittleEndian),
-            byte_order: ByteOrder::LittleEndian,
-            bigtiff: true,
-            limits: Default::default(),
-            next_ifd: None,
-            ifd: None,
-            width: 0,
-            height: 0,
-            bits_per_sample: vec![1],
-            samples: 1,
-            sample_format: vec![SampleFormat::Uint],
-            photometric_interpretation: PhotometricInterpretation::BlackIsZero,
-            compression_method: CompressionMethod::None,
-            strip_decoder: None,
-        }
-    }
-
-    #[test]
-    /// Assert that peek_n_bytes returns the correct number of bytes and
-    /// returns the file cursor back to the original location, earning it its
-    /// 'peek' property.
-    fn test_peek_valid() {
-        let mut buffer = [0u8; 2];
-        let mut decoder = mock_decoder();
-        decoder.peek_n_bytes(&mut buffer).unwrap();
-        assert_eq!([0u8, 1], buffer);
-        assert_eq!(0, decoder.reader.seek(io::SeekFrom::Current(0)).unwrap());
-    }
-
-    #[test]
-    /// Assert that peek_n_bytes doesn't crash when an empty buffer is handed
-    /// to it.
-    fn test_peek_zero_len() {
-        let mut buffer = [0u8; 0];
-        let mut decoder = mock_decoder();
-        decoder.peek_n_bytes(&mut buffer).unwrap();
-        assert_eq!([0u8; 0], buffer);
-        assert_eq!(0, decoder.reader.seek(io::SeekFrom::Current(0)).unwrap());
-    }
-}
-
