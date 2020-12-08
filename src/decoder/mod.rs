@@ -198,6 +198,7 @@ where
     bigtiff: bool,
     limits: Limits,
     next_ifd: Option<u64>,
+    current_ifd: Option<u64>,
     ifd: Option<Directory>,
     width: u32,
     height: u32,
@@ -207,6 +208,11 @@ where
     photometric_interpretation: PhotometricInterpretation,
     compression_method: CompressionMethod,
     strip_decoder: Option<StripDecodeState>,
+}
+
+/// Stores state necessary to seek back (or forward) to particular part of the tiff.
+pub struct Checkpoint {
+    offset: u64,
 }
 
 trait Wrapping {
@@ -313,6 +319,7 @@ impl<R: Read + Seek> Decoder<R> {
             bigtiff: false,
             limits: Default::default(),
             next_ifd: None,
+            current_ifd: None,
             ifd: None,
             width: 0,
             height: 0,
@@ -585,6 +592,44 @@ impl<R: Read + Seek> Decoder<R> {
         self.reader.seek(io::SeekFrom::Start(offset)).map(|_| ())
     }
 
+    /// Retrieve a checkpoint that allows seeking before the TIFF header.
+    ///
+    /// This is a special checkpoint where the caller should call `init` after restoring the
+    /// checkpoint and no ifd is being read.
+    pub fn checkpoint_init(&self) -> Checkpoint {
+        Checkpoint { offset: Checkpoint::INITIAL_OFFSET }
+    }
+
+    /// Retrieve a `Checkpoint` that can be used to seek to the current image directory.
+    pub fn checkpoint(&self) -> Checkpoint {
+        match self.current_ifd {
+            None => self.checkpoint_init(),
+            Some(offset) => Checkpoint { offset },
+        }
+    }
+
+    /// Get the next image directory as a checkpoint.
+    ///
+    /// This allows jumping forward to the next image directory later, without needing to pay the
+    /// additional cost of parsing it right away.
+    pub fn checkpoint_next(&self) -> Option<Checkpoint> {
+        match self.next_ifd {
+            None => None,
+            Some(offset) => Some(Checkpoint { offset })
+        }
+    }
+
+    /// Restore the state of a previous checkpoint.
+    pub fn restore(&mut self, checkpoint: &Checkpoint) -> TiffResult<()> {
+        if checkpoint.offset == Checkpoint::INITIAL_OFFSET {
+            self.goto_offset_u64(0)?;
+            Ok(())
+        } else {
+            self.next_ifd = Some(checkpoint.offset);
+            self.next_image()
+        }
+    }
+
     /// Reads a IFD entry.
     // An IFD entry has four fields:
     //
@@ -620,7 +665,10 @@ impl<R: Read + Seek> Decoder<R> {
                     TiffFormatError::ImageFileDirectoryNotFound,
                 ))
             }
-            Some(offset) => self.goto_offset_u64(offset)?,
+            Some(offset) => {
+                self.goto_offset_u64(offset)?;
+                self.current_ifd = Some(offset);
+            }
         }
         let num_tags = if self.bigtiff {
             self.read_long8()?
@@ -1116,4 +1164,8 @@ impl<R: Read + Seek> Decoder<R> {
         }
         Ok(result)
     }
+}
+
+impl Checkpoint {
+    const INITIAL_OFFSET: u64 = 0;
 }
