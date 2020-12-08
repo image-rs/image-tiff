@@ -274,18 +274,6 @@ impl Wrapping for u64 {
     }
 }
 
-impl Wrapping for f32 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        self + other
-    }
-}
-
-impl Wrapping for f64 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        self + other
-    }
-}
-
 impl Wrapping for i16 {
     fn wrapping_add(&self, other: Self) -> Self {
         i16::wrapping_add(*self, other)
