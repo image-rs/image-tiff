@@ -30,6 +30,7 @@ macro_rules! test_image_sum {
 
 test_image_sum!(test_image_sum_u8, U8, u64);
 test_image_sum!(test_image_sum_u16, U16, u64);
+test_image_sum!(test_image_sum_i16, I16, i64);
 test_image_sum!(test_image_sum_u32, U32, u64);
 test_image_sum!(test_image_sum_u64, U64, u64);
 test_image_sum!(test_image_sum_f32, F32, f32);
@@ -133,6 +134,16 @@ fn test_rgb_u64() {
 #[test]
 fn test_rgb_f32() {
     test_image_sum_f32("gradient-3c-32b-float.tiff", ColorType::RGB(32), 472.8405);
+}
+
+#[test]
+fn test_int16() {
+    test_image_sum_i16("int16.tif", ColorType::Gray(16), 354396);
+}
+
+#[test]
+fn test_int16_rgb() {
+    test_image_sum_i16("int16_rgb.tif", ColorType::RGB(16), 1063188);
 }
 
 #[test]
