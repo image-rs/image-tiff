@@ -92,7 +92,6 @@ impl DecodingResult {
             Ok(DecodingResult::I16(vec![0; size]))
         }
     }
-    
 
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
@@ -932,12 +931,13 @@ impl<R: Read + Seek> Decoder<R> {
                 }
                 bytes / 2
             }
-            // TODO: not sure about the following implementation
+            // The following conversions interpret the image as in libtiff.
+            // In particular, MIN is white and MAX is black and not Zero as the name would imply.
             (ColorType::Gray(16), DecodingBuffer::I16(ref mut buffer)) => {
                 reader.read_i16_into(&mut buffer[..bytes / 2])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     for datum in buffer[..bytes / 2].iter_mut() {
-                        *datum = 0xff - *datum
+                        *datum = !*datum;
                     }
                 }
                 bytes / 2
@@ -946,7 +946,7 @@ impl<R: Read + Seek> Decoder<R> {
                 reader.read_exact(&mut buffer[..bytes])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     for byte in buffer[..bytes].iter_mut() {
-                        *byte = 0xff - *byte
+                        *byte = !*byte;
                     }
                 }
                 bytes
@@ -1088,7 +1088,7 @@ impl<R: Read + Seek> Decoder<R> {
         let strip_height = cmp::min(rows_per_strip, sized_height - index * rows_per_strip);
 
         let buffer_size = sized_width * strip_height * self.bits_per_sample.len();
-        
+
         if buffer.len() < buffer_size {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
@@ -1152,11 +1152,11 @@ impl<R: Read + Seek> Decoder<R> {
                 )),
             },
             SampleFormat::Int => match max_sample_bits {
-                n if n <=16 => DecodingResult::new_i16(buffer_size, &self.limits),
+                n if n <= 16 => DecodingResult::new_i16(buffer_size, &self.limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
-            }
+            },
             format => {
                 Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format.clone()]).into())
             }
