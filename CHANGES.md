@@ -1,3 +1,20 @@
+# Version 0.6.1
+
+New features:
+* Support for reading `u16` and ascii string tags.
+* Added `Limits::unlimited` for disabling all limits.
+* Added `ImageEncoder::rows_per_strip` to overwrite the default.
+
+Changes:
+* The default strip size for chunked encoding is now 1MB, up from 8KB. This
+  should lead to more efficient decoding and compression.
+
+Fixes:
+* Fixed a bug where LZW compressed strips could not be decoded, instead
+  returning an error `Inconsistent sizes encountered`.
+* Reading a tag with a complex type and a single value returns the proper Value
+  variant, instead of a vector with one entry.
+
 # Version 0.6.0
 
 New features:
