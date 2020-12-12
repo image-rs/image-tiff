@@ -1,6 +1,6 @@
 [package]
 name = "tiff"
-version = "0.6.0"
+version = "0.6.1"
 authors = [
     "ccgn",
     "bvssvni <bvssvni@gmail.com>",
