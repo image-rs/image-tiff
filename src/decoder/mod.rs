@@ -923,6 +923,12 @@ impl<R: Read + Seek> Decoder<R> {
                 reader.read_u64_into(&mut buffer[..bytes / 8])?;
                 bytes / 8
             }
+            (ColorType::RGBA(8), DecodingBuffer::I8(ref mut buffer))
+            | (ColorType::RGB(8), DecodingBuffer::I8(ref mut buffer))
+            | (ColorType::CMYK(8), DecodingBuffer::I8(ref mut buffer)) => {
+                reader.read_i8_into(&mut buffer[..bytes])?;
+                bytes
+            }
             (ColorType::RGBA(16), DecodingBuffer::I16(ref mut buffer))
             | (ColorType::RGB(16), DecodingBuffer::I16(ref mut buffer))
             | (ColorType::CMYK(16), DecodingBuffer::I16(ref mut buffer)) => {
@@ -956,6 +962,15 @@ impl<R: Read + Seek> Decoder<R> {
                     }
                 }
                 bytes / 2
+            }
+            (ColorType::Gray(8), DecodingBuffer::I8(ref mut buffer)) => {
+                reader.read_i8_into(&mut buffer[..bytes])?;
+                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    for datum in buffer[..bytes].iter_mut() {
+                        *datum = !*datum;
+                    }
+                }
+                bytes
             }
             // The following conversions interpret the image as in libtiff.
             // In particular, MIN is white and MAX is black and not Zero as the name would imply.
