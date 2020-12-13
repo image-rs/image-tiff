@@ -48,6 +48,35 @@ pub trait EndianReader: Read {
         Ok(())
     }
 
+    /// Reads an i8
+    #[inline(always)]
+    fn read_i8(&mut self) -> Result<i8, io::Error> {
+        let mut n = [0u8; 1];
+        self.read_exact(&mut n)?;
+        Ok(match self.byte_order() {
+            ByteOrder::LittleEndian => i8::from_le_bytes(n),
+            ByteOrder::BigEndian => i8::from_be_bytes(n),
+        })
+    }
+
+    #[inline(always)]
+    fn read_i8_into(&mut self, buffer: &mut [i8]) -> Result<(), io::Error> {
+        self.read_exact(bytecast::i8_as_ne_mut_bytes(buffer))?;
+        match self.byte_order() {
+            ByteOrder::LittleEndian => {
+                for n in buffer {
+                    *n = i8::from_le(*n);
+                }
+            }
+            ByteOrder::BigEndian => {
+                for n in buffer {
+                    *n = i8::from_be(*n);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Reads an i16
     #[inline(always)]
     fn read_i16(&mut self) -> Result<i16, io::Error> {
@@ -57,6 +86,24 @@ pub trait EndianReader: Read {
             ByteOrder::LittleEndian => i16::from_le_bytes(n),
             ByteOrder::BigEndian => i16::from_be_bytes(n),
         })
+    }
+
+    #[inline(always)]
+    fn read_i16_into(&mut self, buffer: &mut [i16]) -> Result<(), io::Error> {
+        self.read_exact(bytecast::i16_as_ne_mut_bytes(buffer))?;
+        match self.byte_order() {
+            ByteOrder::LittleEndian => {
+                for n in buffer {
+                    *n = i16::from_le(*n);
+                }
+            }
+            ByteOrder::BigEndian => {
+                for n in buffer {
+                    *n = i16::from_be(*n);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Reads an u32
