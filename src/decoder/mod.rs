@@ -289,7 +289,6 @@ impl Wrapping for u64 {
     }
 }
 
-
 impl Wrapping for i8 {
     fn wrapping_add(&self, other: Self) -> Self {
         i8::wrapping_add(*self, other)
