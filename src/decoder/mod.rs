@@ -36,6 +36,8 @@ pub enum DecodingResult {
     I8(Vec<i8>),
     /// A vector of 16 bit signed ints
     I16(Vec<i16>),
+    /// A vector of 32 bit signed ints
+    I32(Vec<i32>),
 }
 
 impl DecodingResult {
@@ -103,6 +105,14 @@ impl DecodingResult {
         }
     }
 
+    fn new_i32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / 4 {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::I32(vec![0; size]))
+        }
+    }
+
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
@@ -113,6 +123,7 @@ impl DecodingResult {
             DecodingResult::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[start..]),
             DecodingResult::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[start..]),
             DecodingResult::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[start..]),
+            DecodingResult::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[start..]),
         }
     }
 }
@@ -135,6 +146,8 @@ pub enum DecodingBuffer<'a> {
     I8(&'a mut [i8]),
     /// A slice of 16 bits signed ints
     I16(&'a mut [i16]),
+    /// A slice of 16 bits signed ints
+    I32(&'a mut [i32]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -148,6 +161,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::F64(ref buf) => buf.len(),
             DecodingBuffer::I8(ref buf) => buf.len(),
             DecodingBuffer::I16(ref buf) => buf.len(),
+            DecodingBuffer::I32(ref buf) => buf.len(),
         }
     }
 
@@ -161,6 +175,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::F64(_) => 8,
             DecodingBuffer::I8(_) => 1,
             DecodingBuffer::I16(_) => 2,
+            DecodingBuffer::I32(_) => 4,
         }
     }
 
@@ -177,6 +192,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(buf),
             DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(buf),
             DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(buf),
+            DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(buf),
         }
     }
 }
@@ -301,6 +317,12 @@ impl Wrapping for i16 {
     }
 }
 
+impl Wrapping for i32 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        i32::wrapping_add(*self, other)
+    }
+}
+
 fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize) -> TiffResult<()>
 where
     T: Copy + Wrapping,
@@ -368,6 +390,9 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
             rev_hpredict_nsamp(buf, size, samples)?;
         }
         DecodingBuffer::I16(buf) => {
+            rev_hpredict_nsamp(buf, size, samples)?;
+        }
+        DecodingBuffer::I32(buf) => {
             rev_hpredict_nsamp(buf, size, samples)?;
         }
     }
@@ -953,6 +978,10 @@ impl<R: Read + Seek> Decoder<R> {
                 }
                 bytes / 4
             }
+            (ColorType::Gray(32), DecodingBuffer::I32(ref mut buffer)) => {
+                reader.read_i32_into(&mut buffer[..bytes / 4])?;
+                bytes / 4
+            }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
                 reader.read_u16_into(&mut buffer[..bytes / 2])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1193,7 +1222,8 @@ impl<R: Read + Seek> Decoder<R> {
             },
             SampleFormat::Int => match max_sample_bits {
                 n if n <= 8 => DecodingResult::new_i8(buffer_size, &self.limits),
-                n if (n > 8) & (n <= 16) => DecodingResult::new_i16(buffer_size, &self.limits),
+                n if n == 16 => DecodingResult::new_i16(buffer_size, &self.limits),
+                n if (n > 16) & (n <= 32) => DecodingResult::new_i32(buffer_size, &self.limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
