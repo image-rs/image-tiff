@@ -135,6 +135,24 @@ pub trait EndianReader: Read {
         Ok(())
     }
 
+    #[inline(always)]
+    fn read_i32_into(&mut self, buffer: &mut [i32]) -> Result<(), io::Error> {
+        self.read_exact(bytecast::i32_as_ne_mut_bytes(buffer))?;
+        match self.byte_order() {
+            ByteOrder::LittleEndian => {
+                for n in buffer {
+                    *n = i32::from_le(*n);
+                }
+            }
+            ByteOrder::BigEndian => {
+                for n in buffer {
+                    *n = i32::from_be(*n);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Reads an i32
     #[inline(always)]
     fn read_i32(&mut self) -> Result<i32, io::Error> {
