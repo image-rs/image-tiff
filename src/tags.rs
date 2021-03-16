@@ -134,20 +134,38 @@ pub enum Tag(u16) unknown("A private or extension tag") {
 tags! {
 /// The type of an IFD entry (a 2 byte field).
 pub enum Type(u16) {
+    /// 8-bit unsigned integer
     BYTE = 1,
+    /// 8-bit byte that contains a 7-bit ASCII code; the last byte must be zero
     ASCII = 2,
+    /// 16-bit unsigned integer
     SHORT = 3,
+    /// 32-bit unsigned integer
     LONG = 4,
+    /// Fraction stored as two 32-bit unsigned integers
     RATIONAL = 5,
+    /// 8-bit signed integer
     SBYTE = 6,
+    /// 8-bit byte that may contain anything, depending on the field
     UNDEFINED = 7,
+    /// 16-bit signed integer
     SSHORT = 8,
+    /// 32-bit signed integer
     SLONG = 9,
+    /// Fraction stored as two 32-bit signed integers
     SRATIONAL = 10,
+    /// 32-bit IEEE floating point
     FLOAT = 11,
+    /// 64-bit IEEE floating point
     DOUBLE = 12,
+    /// 32-bit unsigned integer (offset)
+    IFD = 13,
     /// BigTIFF 64-bit unsigned integer
     LONG8 = 16,
+    /// BigTIFF 64-bit signed integer
+    SLONG8 = 17,
+    /// BigTIFF 64-bit unsigned integer (offset)
+    IFD8 = 18,
 }
 }
 

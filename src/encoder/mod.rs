@@ -13,6 +13,14 @@ mod writer;
 use self::colortype::*;
 use self::writer::*;
 
+/// Type to represent tiff values of type `IFD`
+#[derive(Clone)]
+pub struct Ifd(pub u32);
+
+/// Type to represent tiff values of type `IFD8`
+#[derive(Clone)]
+pub struct Ifd8(pub u64);
+
 /// Type to represent tiff values of type `RATIONAL`
 #[derive(Clone)]
 pub struct Rational {
@@ -21,6 +29,7 @@ pub struct Rational {
 }
 
 /// Type to represent tiff values of type `SRATIONAL`
+#[derive(Clone)]
 pub struct SRational {
     pub n: i32,
     pub d: i32,
@@ -141,6 +150,21 @@ impl TiffValue for [u64] {
     }
 }
 
+impl TiffValue for [i64] {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: Type = Type::SLONG8;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        let slice = bytecast::i64_as_ne_bytes(self);
+        writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for [f32] {
     const BYTE_LEN: u32 = 4;
     const FIELD_TYPE: Type = Type::FLOAT;
@@ -169,6 +193,38 @@ impl TiffValue for [f64] {
         // We write using nativeedian so this sould be safe
         let slice = bytecast::f64_as_ne_bytes(self);
         writer.write_bytes(slice)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for [Ifd] {
+    const BYTE_LEN: u32 = 4;
+    const FIELD_TYPE: Type = Type::IFD;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        for x in self {
+            x.write(writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl TiffValue for [Ifd8] {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: Type = Type::IFD8;
+
+    fn count(&self) -> u32 {
+        self.len() as u32
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        for x in self {
+            x.write(writer)?;
+        }
         Ok(())
     }
 }
@@ -303,6 +359,20 @@ impl TiffValue for u64 {
     }
 }
 
+impl TiffValue for i64 {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: Type = Type::SLONG8;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_i64(*self)?;
+        Ok(())
+    }
+}
+
 impl TiffValue for f32 {
     const BYTE_LEN: u32 = 4;
     const FIELD_TYPE: Type = Type::FLOAT;
@@ -327,6 +397,34 @@ impl TiffValue for f64 {
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
         writer.write_f64(*self)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for Ifd {
+    const BYTE_LEN: u32 = 4;
+    const FIELD_TYPE: Type = Type::IFD;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_u32(self.0)?;
+        Ok(())
+    }
+}
+
+impl TiffValue for Ifd8 {
+    const BYTE_LEN: u32 = 8;
+    const FIELD_TYPE: Type = Type::IFD8;
+
+    fn count(&self) -> u32 {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_u64(self.0)?;
         Ok(())
     }
 }
