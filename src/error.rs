@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
+use std::str;
 use std::string;
 
 use crate::decoder::ifd::Value;
@@ -243,6 +244,12 @@ impl Error for TiffError {
 impl From<io::Error> for TiffError {
     fn from(err: io::Error) -> TiffError {
         TiffError::IoError(err)
+    }
+}
+
+impl From<str::Utf8Error> for TiffError {
+    fn from(_err: str::Utf8Error) -> TiffError {
+        TiffError::FormatError(TiffFormatError::InvalidTag)
     }
 }
 

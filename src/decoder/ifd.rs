@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::io::{self, Read, Seek};
 use std::mem;
+use std::str;
 
 use super::stream::{ByteOrder, EndianReader, SmartReader};
 use crate::tags::{Tag, Type};
@@ -420,9 +421,13 @@ impl Entry {
                 Type::ASCII => {
                     let mut buf = vec![0; self.count as usize];
                     self.r(bo).read_exact(&mut buf)?;
-                    let v = String::from_utf8(buf)?;
-                    let v = v.trim_matches(char::from(0));
-                    return Ok(Ascii(v.into()));
+                    if buf.is_ascii() && buf.ends_with(&[0]) {
+                        let v = str::from_utf8(&buf)?;
+                        let v = v.trim_matches(char::from(0));
+                        return Ok(Ascii(v.into()));
+                    } else {
+                        return Err(TiffError::FormatError(TiffFormatError::InvalidTag));
+                    }
                 }
                 Type::UNDEFINED => {
                     return Ok(List(
