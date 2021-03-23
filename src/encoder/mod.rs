@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, convert::TryInto};
 use std::convert::TryFrom;
 use std::io::{Seek, Write};
 use std::{cmp, io, mem};
@@ -28,21 +28,21 @@ pub struct SRational {
 
 /// Trait for types that can be encoded in a tiff file
 pub trait TiffValue {
-    const BYTE_LEN: u32;
+    const BYTE_LEN: u8;
     const FIELD_TYPE: Type;
-    fn count(&self) -> u32;
-    fn bytes(&self) -> u32 {
-        self.count() * Self::BYTE_LEN
+    fn count(&self) -> usize;
+    fn bytes(&self) -> usize {
+        self.count() * usize::from(Self::BYTE_LEN)
     }
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()>;
 }
 
 impl TiffValue for [u8] {
-    const BYTE_LEN: u32 = 1;
+    const BYTE_LEN: u8 = 1;
     const FIELD_TYPE: Type = Type::BYTE;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -52,11 +52,11 @@ impl TiffValue for [u8] {
 }
 
 impl TiffValue for [i8] {
-    const BYTE_LEN: u32 = 1;
+    const BYTE_LEN: u8 = 1;
     const FIELD_TYPE: Type = Type::SBYTE;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -67,11 +67,11 @@ impl TiffValue for [i8] {
 }
 
 impl TiffValue for [u16] {
-    const BYTE_LEN: u32 = 2;
+    const BYTE_LEN: u8 = 2;
     const FIELD_TYPE: Type = Type::SHORT;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -82,11 +82,11 @@ impl TiffValue for [u16] {
 }
 
 impl TiffValue for [i16] {
-    const BYTE_LEN: u32 = 2;
+    const BYTE_LEN: u8 = 2;
     const FIELD_TYPE: Type = Type::SSHORT;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -97,11 +97,11 @@ impl TiffValue for [i16] {
 }
 
 impl TiffValue for [u32] {
-    const BYTE_LEN: u32 = 4;
+    const BYTE_LEN: u8 = 4;
     const FIELD_TYPE: Type = Type::LONG;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -112,11 +112,11 @@ impl TiffValue for [u32] {
 }
 
 impl TiffValue for [i32] {
-    const BYTE_LEN: u32 = 4;
+    const BYTE_LEN: u8 = 4;
     const FIELD_TYPE: Type = Type::SLONG;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -127,11 +127,11 @@ impl TiffValue for [i32] {
 }
 
 impl TiffValue for [u64] {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::LONG8;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -142,11 +142,11 @@ impl TiffValue for [u64] {
 }
 
 impl TiffValue for [f32] {
-    const BYTE_LEN: u32 = 4;
+    const BYTE_LEN: u8 = 4;
     const FIELD_TYPE: Type = Type::FLOAT;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -158,11 +158,11 @@ impl TiffValue for [f32] {
 }
 
 impl TiffValue for [f64] {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::DOUBLE;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -174,11 +174,11 @@ impl TiffValue for [f64] {
 }
 
 impl TiffValue for [Rational] {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::RATIONAL;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -190,11 +190,11 @@ impl TiffValue for [Rational] {
 }
 
 impl TiffValue for [SRational] {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::SRATIONAL;
 
-    fn count(&self) -> u32 {
-        self.len() as u32
+    fn count(&self) -> usize {
+        self.len()
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -206,10 +206,10 @@ impl TiffValue for [SRational] {
 }
 
 impl TiffValue for u8 {
-    const BYTE_LEN: u32 = 1;
+    const BYTE_LEN: u8 = 1;
     const FIELD_TYPE: Type = Type::BYTE;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -220,10 +220,10 @@ impl TiffValue for u8 {
 }
 
 impl TiffValue for i8 {
-    const BYTE_LEN: u32 = 1;
+    const BYTE_LEN: u8 = 1;
     const FIELD_TYPE: Type = Type::SBYTE;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -234,10 +234,10 @@ impl TiffValue for i8 {
 }
 
 impl TiffValue for u16 {
-    const BYTE_LEN: u32 = 2;
+    const BYTE_LEN: u8 = 2;
     const FIELD_TYPE: Type = Type::SHORT;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -248,10 +248,10 @@ impl TiffValue for u16 {
 }
 
 impl TiffValue for i16 {
-    const BYTE_LEN: u32 = 2;
+    const BYTE_LEN: u8 = 2;
     const FIELD_TYPE: Type = Type::SSHORT;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -262,10 +262,10 @@ impl TiffValue for i16 {
 }
 
 impl TiffValue for u32 {
-    const BYTE_LEN: u32 = 4;
+    const BYTE_LEN: u8 = 4;
     const FIELD_TYPE: Type = Type::LONG;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -276,10 +276,10 @@ impl TiffValue for u32 {
 }
 
 impl TiffValue for i32 {
-    const BYTE_LEN: u32 = 4;
+    const BYTE_LEN: u8 = 4;
     const FIELD_TYPE: Type = Type::SLONG;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -290,10 +290,10 @@ impl TiffValue for i32 {
 }
 
 impl TiffValue for u64 {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::LONG8;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -304,10 +304,10 @@ impl TiffValue for u64 {
 }
 
 impl TiffValue for f32 {
-    const BYTE_LEN: u32 = 4;
+    const BYTE_LEN: u8 = 4;
     const FIELD_TYPE: Type = Type::FLOAT;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -318,10 +318,10 @@ impl TiffValue for f32 {
 }
 
 impl TiffValue for f64 {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::DOUBLE;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -332,10 +332,10 @@ impl TiffValue for f64 {
 }
 
 impl TiffValue for Rational {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::RATIONAL;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -347,10 +347,10 @@ impl TiffValue for Rational {
 }
 
 impl TiffValue for SRational {
-    const BYTE_LEN: u32 = 8;
+    const BYTE_LEN: u8 = 8;
     const FIELD_TYPE: Type = Type::SRATIONAL;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         1
     }
 
@@ -362,11 +362,11 @@ impl TiffValue for SRational {
 }
 
 impl TiffValue for str {
-    const BYTE_LEN: u32 = 1;
+    const BYTE_LEN: u8 = 1;
     const FIELD_TYPE: Type = Type::ASCII;
 
-    fn count(&self) -> u32 {
-        self.len() as u32 + 1
+    fn count(&self) -> usize {
+        self.len() + 1
     }
 
     fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
@@ -381,10 +381,10 @@ impl TiffValue for str {
 }
 
 impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
-    const BYTE_LEN: u32 = T::BYTE_LEN;
+    const BYTE_LEN: u8 = T::BYTE_LEN;
     const FIELD_TYPE: Type = T::FIELD_TYPE;
 
-    fn count(&self) -> u32 {
+    fn count(&self) -> usize {
         (*self).count()
     }
 
@@ -488,8 +488,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
     /// Write a single ifd tag.
     pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
-        let len = <T>::BYTE_LEN * value.count();
-        let mut bytes = Vec::with_capacity(usize::try_from(len)?);
+        let mut bytes = Vec::with_capacity(value.bytes());
         {
             let mut writer = TiffWriter::new(&mut bytes);
             value.write(&mut writer)?;
@@ -497,7 +496,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
         self.ifd.insert(
             tag.to_u16(),
-            (<T>::FIELD_TYPE.to_u16(), value.count(), bytes),
+            (<T>::FIELD_TYPE.to_u16(), value.count().try_into()?, bytes),
         );
 
         Ok(())
@@ -695,7 +694,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
         let offset = self.encoder.write_data(value)?;
         self.strip_offsets.push(u32::try_from(offset)?);
-        self.strip_byte_count.push(value.bytes());
+        self.strip_byte_count.push(value.bytes().try_into()?);
 
         self.strip_idx += 1;
         Ok(())
