@@ -494,7 +494,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     fn new(writer: &'a mut TiffWriter<W>) -> TiffResult<Self> {
         // the previous word is the IFD offset position
         let ifd_pointer_pos = writer.offset() - mem::size_of::<K::OffsetType>() as u64;
-        writer.pad_word_boundary()?; // TODO?
+        writer.pad_word_boundary()?; // TODO: Do we need to adjust this for BigTiff?
         Ok(DirectoryEncoder {
             writer,
             dropped: false,
