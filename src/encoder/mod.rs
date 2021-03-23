@@ -848,18 +848,43 @@ struct DirectoryEntry<S> {
     data: Vec<u8>,
 }
 
+/// Helper trait to abstract over Tiff/BigTiff differences.
 pub trait TiffKind {
+    /// The type of offset fields, `u32` for normal Tiff, `u64` for BigTiff.
     type OffsetType: TryFrom<usize, Error = TryFromIntError> + Into<u64> + TiffValue;
+
+    /// Needed for the `convert_slice` method.
     type OffsetArrayType: ?Sized + TiffValue;
 
+    /// Write the (Big)Tiff header.
     fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()>;
 
+    /// Convert a file offset to `Self::OffsetType`.
+    ///
+    /// This returns an error for normal Tiff if the offset is larger than `u32::MAX`.
     fn convert_offset(offset: u64) -> TiffResult<Self::OffsetType>;
 
+    /// Write an offset value to the given writer.
+    ///
+    /// Like `convert_offset`, this errors if `offset > u32::MAX` for normal Tiff.
     fn write_offset<W: Write>(writer: &mut TiffWriter<W>, offset: u64) -> TiffResult<()>;
 
+    /// Write the IFD entry count field with the given `count` value.
+    ///
+    /// The entry count field is an `u16` for normal Tiff and `u64` for BigTiff. Errors
+    /// if the given `usize` is larger than the representable values.
     fn write_entry_count<W: Write>(writer: &mut TiffWriter<W>, count: usize) -> TiffResult<()>;
 
+    /// Internal helper method for satisfying Rust's type checker.
+    ///
+    /// The `TiffValue` trait is implemented for both primitive values (e.g. `u8`, `u32`) and
+    /// slices of primitive values (e.g. `[u8]`, `[u32]`). However, this is not represented in
+    /// the type system, so there is no guarantee that that for all `T: TiffValue` there is also
+    /// an implementation of `TiffValue` for `[T]`. This method works around that problem by
+    /// providing a conversion from `[T]` to some value that implements `TiffValue`, thereby
+    /// making all slices of `OffsetType` usable with `write_tag` and similar methods.
+    ///
+    /// Implementations of this trait should always set `OffsetArrayType` to `[OffsetType]`.
     fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType;
 }
 
