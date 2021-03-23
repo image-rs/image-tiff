@@ -14,6 +14,31 @@ pub fn write_tiff_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()>
     Ok(())
 }
 
+/// Writes a BigTiff header, excluding the IFD offset field.
+///
+/// Writes the byte order, version number, offset byte size, and zero constant fields. Does
+// _not_ write the offset to the first IFD, this should be done by the caller.
+pub fn write_bigtiff_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
+    #[cfg(target_endian = "little")]
+    let boi: u8 = 0x49;
+    #[cfg(not(target_endian = "little"))]
+    let boi: u8 = 0x4d;
+
+    // byte order indication
+    writer.writer.write_all(&[boi, boi])?;
+    // version number
+    writer.writer.write_all(&43u16.to_ne_bytes())?;
+    // bytesize of offsets (pointer size)
+    writer.writer.write_all(&8u16.to_ne_bytes())?;
+    // always 0
+    writer.writer.write_all(&0u16.to_ne_bytes())?;
+
+    // we wrote 8 bytes, so set the internal offset accordingly
+    writer.offset += 8;
+
+    Ok(())
+}
+
 pub struct TiffWriter<W> {
     writer: W,
     offset: u64,
