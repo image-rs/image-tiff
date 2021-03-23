@@ -482,7 +482,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
 ///
 /// You should call `finish` on this when you are finished with it.
 /// Encoding can silently fail while this is dropping.
-pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind = TiffKindStandard> {
+pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     writer: &'a mut TiffWriter<W>,
     dropped: bool,
     // We use BTreeMap to make sure tags are written in correct order
@@ -636,8 +636,8 @@ impl<'a, W: Write + Seek, K: TiffKind> Drop for DirectoryEncoder<'a, W, K> {
 /// # }
 /// ```
 /// You can also call write_data function wich will encode by strip and finish
-pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind = TiffKindStandard> {
-    encoder: DirectoryEncoder<'a, W>,
+pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
+    encoder: DirectoryEncoder<'a, W, K>,
     strip_idx: u64,
     strip_count: u64,
     row_samples: u64,
@@ -651,7 +651,7 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind = Ti
 }
 
 impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T, K> {
-    fn new(mut encoder: DirectoryEncoder<'a, W>, width: u32, height: u32) -> TiffResult<Self> {
+    fn new(mut encoder: DirectoryEncoder<'a, W, K>, width: u32, height: u32) -> TiffResult<Self> {
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
@@ -824,7 +824,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     }
 
     /// Get a reference of the underlying `DirectoryEncoder`
-    pub fn encoder(&mut self) -> &mut DirectoryEncoder<'a, W> {
+    pub fn encoder(&mut self) -> &mut DirectoryEncoder<'a, W, K> {
         &mut self.encoder
     }
 
