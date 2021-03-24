@@ -193,6 +193,35 @@ pub trait EndianReader: Read {
         Ok(())
     }
 
+    #[inline(always)]
+    fn read_i64_into(&mut self, buffer: &mut [i64]) -> Result<(), io::Error> {
+        self.read_exact(bytecast::i64_as_ne_mut_bytes(buffer))?;
+        match self.byte_order() {
+            ByteOrder::LittleEndian => {
+                for n in buffer {
+                    *n = i64::from_le(*n);
+                }
+            }
+            ByteOrder::BigEndian => {
+                for n in buffer {
+                    *n = i64::from_be(*n);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads an i64
+    #[inline(always)]
+    fn read_i64(&mut self) -> Result<i64, io::Error> {
+        let mut n = [0u8; 8];
+        self.read_exact(&mut n)?;
+        Ok(match self.byte_order() {
+            ByteOrder::LittleEndian => i64::from_le_bytes(n),
+            ByteOrder::BigEndian => i64::from_be_bytes(n),
+        })
+    }
+
     /// Reads an f32
     #[inline(always)]
     fn read_f32(&mut self) -> Result<f32, io::Error> {
