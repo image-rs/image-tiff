@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::{TiffError, TiffFormatError, TiffResult, bytecast, tags::Type};
+use crate::{bytecast, tags::Type, TiffError, TiffFormatError, TiffResult};
 
 use super::writer::TiffWriter;
 

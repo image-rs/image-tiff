@@ -10,15 +10,17 @@ use std::{
     num::TryFromIntError,
 };
 
-use crate::{error::TiffResult, tags::{self, ResolutionUnit, Tag}};
+use crate::{
+    error::TiffResult,
+    tags::{self, ResolutionUnit, Tag},
+};
 
 pub mod colortype;
-mod writer;
 mod tiff_value;
+mod writer;
 
 use self::colortype::*;
 use self::writer::*;
-
 
 /// Encoder for Tiff and BigTiff files.
 ///
