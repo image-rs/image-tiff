@@ -20,10 +20,10 @@ use self::colortype::*;
 use self::writer::*;
 
 
-/// Tiff encoder.
+/// Encoder for Tiff and BigTiff files.
 ///
 /// With this type you can get a `DirectoryEncoder` or a `ImageEncoder`
-/// to encode tiff ifd directories with images.
+/// to encode Tiff/BigTiff ifd directories with images.
 ///
 /// See `DirectoryEncoder` and `ImageEncoder`.
 ///
@@ -35,9 +35,14 @@ use self::writer::*;
 /// # let image_data = vec![0; 100*100*3];
 /// use tiff::encoder::*;
 ///
+/// // create a standard Tiff file
 /// let mut tiff = TiffEncoder::new(&mut file).unwrap();
-///
 /// tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
+///
+/// // create a BigTiff file
+/// let mut bigtiff = TiffEncoder::new_big(&mut file).unwrap();
+/// bigtiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
+///
 /// # }
 /// ```
 pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
@@ -45,19 +50,31 @@ pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
     kind: PhantomData<K>,
 }
 
+/// Constructor functions to create standard Tiff files.
 impl<W: Write + Seek> TiffEncoder<W> {
-    pub fn new(writer: W) -> TiffResult<Self> {
+    /// Creates a new encoder for standard Tiff files.
+    ///
+    /// To create BigTiff files, use [`new_big`][TiffEncoder::new_big] or
+    /// [`new_generic`][TiffEncoder::new_generic].
+    pub fn new(writer: W) -> TiffResult<TiffEncoder<W, TiffKindStandard>> {
         TiffEncoder::new_generic(writer)
     }
 }
 
+/// Constructor functions to create BigTiff files.
 impl<W: Write + Seek> TiffEncoder<W, TiffKindBig> {
+    /// Creates a new encoder for BigTiff files.
+    ///
+    /// To create standard Tiff files, use [`new`][TiffEncoder::new] or
+    /// [`new_generic`][TiffEncoder::new_generic].
     pub fn new_big(writer: W) -> TiffResult<Self> {
         TiffEncoder::new_generic(writer)
     }
 }
 
+/// Generic functions that are available for both Tiff and BigTiff encoders.
 impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
+    /// Creates a new Tiff or BigTiff encoder, inferred from the return type.
     pub fn new_generic(writer: W) -> TiffResult<Self> {
         let mut encoder = TiffEncoder {
             writer: TiffWriter::new(writer),
@@ -69,12 +86,12 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         Ok(encoder)
     }
 
-    /// Create a `DirectoryEncoder` to encode an ifd directory.
+    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
     pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W, K>> {
         DirectoryEncoder::new(&mut self.writer)
     }
 
-    /// Create an 'ImageEncoder' to encode an image one slice at a time.
+    /// Create an [`ImageEncoder`] to encode an image one slice at a time.
     pub fn new_image<C: ColorType>(
         &mut self,
         width: u32,
@@ -470,7 +487,9 @@ struct DirectoryEntry<S> {
     data: Vec<u8>,
 }
 
-/// Helper trait to abstract over Tiff/BigTiff differences.
+/// Trait to abstract over Tiff/BigTiff differences.
+///
+/// Implemented for [`TiffKindStandard`] and [`TiffKindBig`].
 pub trait TiffKind {
     /// The type of offset fields, `u32` for normal Tiff, `u64` for BigTiff.
     type OffsetType: TryFrom<usize, Error = TryFromIntError> + Into<u64> + TiffValue;
@@ -510,6 +529,7 @@ pub trait TiffKind {
     fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType;
 }
 
+/// Create a standard Tiff file.
 pub struct TiffKindStandard;
 
 impl TiffKind for TiffKindStandard {
@@ -544,6 +564,7 @@ impl TiffKind for TiffKindStandard {
     }
 }
 
+/// Create a BigTiff file.
 pub struct TiffKindBig;
 
 impl TiffKind for TiffKindBig {
