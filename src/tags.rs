@@ -111,15 +111,18 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     Threshholding = 263, // TODO add support
     XResolution = 282,
     YResolution = 283,
-    // JPEG
-    JPEGTables = 347,
     // Advanced tags
     Predictor = 317,
     TileWidth = 322,
     TileLength = 323,
     TileOffsets = 324,
     TileByteCounts = 325,
+    // Data Sample Format
     SampleFormat = 339,
+    SMinSampleValue = 340, // TODO add support
+    SMaxSampleValue = 341, // TODO add support
+    // JPEG
+    JPEGTables = 347,
     // GeoTIFF
     ModelPixelScaleTag = 33550, // (SoftDesk)
     ModelTransformationTag = 34264, // (JPL Carto Group)
