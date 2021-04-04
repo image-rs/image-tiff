@@ -460,50 +460,50 @@ fn rev_hpredict(
     Ok(())
 }
 
-fn process_photometric_u64(buffer: &mut [u64], bytes: usize) {
+fn process_photometry_u64(buffer: &mut [u64], bytes: usize) {
     for datum in buffer[..bytes / 8].iter_mut() {
         *datum = 0xffff_ffff_ffff_ffff - *datum
     }
 }
 
-fn process_photometric_u32(buffer: &mut [u32], bytes: usize) {
+fn process_photometry_u32(buffer: &mut [u32], bytes: usize) {
     for datum in buffer[..bytes / 4].iter_mut() {
         *datum = 0xffff_ffff - *datum
     }
 }
 
-fn process_photometric_u16(buffer: &mut [u16], bytes: usize) {
+fn process_photometry_u16(buffer: &mut [u16], bytes: usize) {
     for datum in buffer[..bytes / 2].iter_mut() {
         *datum = 0xffff - *datum
     }
 }
 
-fn process_photometric_i16(buffer: &mut [i16], bytes: usize) {
+fn process_photometry_i16(buffer: &mut [i16], bytes: usize) {
     for datum in buffer[..bytes / 2].iter_mut() {
         *datum = !*datum;
     }
 }
 
-fn process_photometric_i8(buffer: &mut [i8], bytes: usize) {
+fn process_photometry_i8(buffer: &mut [i8], bytes: usize) {
     for datum in buffer[..bytes].iter_mut() {
         *datum = !*datum;
     }
 }
 
-fn process_photometric_u8(buffer: &mut [u8], bytes: usize) {
+fn process_photometry_u8(buffer: &mut [u8], bytes: usize) {
     for byte in buffer[..bytes].iter_mut() {
         *byte = !*byte;
     }
 }
 
-fn process_photometric_f64(buffer: &mut [f64], bytes: usize) {
+fn process_photometry_f64(buffer: &mut [f64], bytes: usize) {
     for datum in buffer[..bytes / 8].iter_mut() {
         // FIXME: assumes [0, 1) range for floats
         *datum = 1.0 - *datum
     }
 }
 
-fn process_photometric_f32(buffer: &mut [f32], bytes: usize) {
+fn process_photometry_f32(buffer: &mut [f32], bytes: usize) {
     for datum in buffer[..bytes / 4].iter_mut() {
         // FIXME: assumes [0, 1) range for floats
         *datum = 1.0 - *datum
@@ -1099,7 +1099,7 @@ impl<R: Read + Seek> Decoder<R> {
             (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
                 reader.read_u64_into(&mut buffer[..bytes / 8])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u64(buffer, bytes)
+                    process_photometry_u64(buffer, bytes)
                 }
                 bytes / 8
             }
@@ -1110,7 +1110,7 @@ impl<R: Read + Seek> Decoder<R> {
             (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
                 reader.read_u32_into(&mut buffer[..bytes / 4])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u32(buffer, bytes)
+                    process_photometry_u32(buffer, bytes)
                 }
                 bytes / 4
             }
@@ -1121,14 +1121,14 @@ impl<R: Read + Seek> Decoder<R> {
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
                 reader.read_u16_into(&mut buffer[..bytes / 2])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u16(buffer, bytes)
+                    process_photometry_u16(buffer, bytes)
                 }
                 bytes / 2
             }
             (ColorType::Gray(8), DecodingBuffer::I8(ref mut buffer)) => {
                 reader.read_i8_into(&mut buffer[..bytes])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_i8(buffer, bytes)
+                    process_photometry_i8(buffer, bytes)
                 }
                 bytes
             }
@@ -1137,28 +1137,28 @@ impl<R: Read + Seek> Decoder<R> {
             (ColorType::Gray(16), DecodingBuffer::I16(ref mut buffer)) => {
                 reader.read_i16_into(&mut buffer[..bytes / 2])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_i16(buffer, bytes)
+                    process_photometry_i16(buffer, bytes)
                 }
                 bytes / 2
             }
             (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
                 reader.read_exact(&mut buffer[..bytes])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u8(buffer, bytes)
+                    process_photometry_u8(buffer, bytes)
                 }
                 bytes
             }
             (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
                 reader.read_f32_into(&mut buffer[..bytes / 4])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_f32(buffer, bytes)
+                    process_photometry_f32(buffer, bytes)
                 }
                 bytes / 4
             }
             (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
                 reader.read_f64_into(&mut buffer[..bytes / 8])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_f64(buffer, bytes)
+                    process_photometry_f64(buffer, bytes)
                 }
                 bytes / 8
             }
@@ -1177,12 +1177,12 @@ impl<R: Read + Seek> Decoder<R> {
         buffer: DecodingBuffer<'a>,
         offset: u64,
         compressed_length: u64,
-        padding_right: usize,
-        padding_down: usize,
+        tile: usize,
     ) -> TiffResult<usize> {
         let color_type = self.colortype()?;
         self.goto_offset_u64(offset)?;
 
+        let (padding_right, padding_down) = self.get_tile_padding(tile);
         let tile_attributes = self.tile_attributes.as_mut().unwrap();
         let tile_samples = tile_attributes.tile_samples;
         let tile_length = tile_attributes.tile_length;
@@ -1243,15 +1243,33 @@ impl<R: Read + Seek> Decoder<R> {
                 for row in 0..(tile_length - padding_down) {
                     let row_start = row * line_samples;
                     let row_end = row_start + row_samples - padding_right_samples;
-                    reader
-                        .$read_fn(&mut $img_buf[(row_start / $byte_len)..(row_end / $byte_len)])?;
+
+                    let src = &mut $img_buf[(row_start / $byte_len)..(row_end / $byte_len)];
+                    reader.$read_fn(src)?;
                     // Skip horizontal padding
                     // TODO(Tomáš Král): is there a better way of skipping the padding ?
                     if padding_right > 0 {
                         reader.read_exact(padding_buffer)?
                     }
                 }
-                Ok(bytes / $byte_len)
+                Ok((bytes / $byte_len))
+            }};
+        }
+
+        macro_rules! tile_photometry {
+            ($img_buf:ident, $byte_len:expr, $photometry_fn:ident) => {{
+                for row in 0..(tile_length - padding_down) {
+                    let row_start = row * line_samples;
+                    let row_end = row_start + row_samples - padding_right_samples;
+
+                    let buf = &mut $img_buf[row_start..row_end];
+                    if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                        $photometry_fn(
+                            buf,
+                            (row_samples - padding_right_samples) * self.bits_per_sample.len(),
+                        )
+                    };
+                }
             }};
         }
 
@@ -1298,9 +1316,7 @@ impl<R: Read + Seek> Decoder<R> {
             }
             (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
                 let units_read = fill_tile_buffer! {buffer, 8, read_u64_into};
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u64(buffer, bytes)
-                };
+                tile_photometry!(buffer, 8, process_photometry_u64);
                 units_read
             }
             (ColorType::Gray(64), DecodingBuffer::I64(ref mut buffer)) => {
@@ -1308,9 +1324,7 @@ impl<R: Read + Seek> Decoder<R> {
             }
             (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
                 let units_read = fill_tile_buffer!(buffer, 4, read_u32_into);
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u32(buffer, bytes)
-                }
+                tile_photometry!(buffer, 4, process_photometry_u32);
                 units_read
             }
             (ColorType::Gray(32), DecodingBuffer::I32(ref mut buffer)) => {
@@ -1318,46 +1332,34 @@ impl<R: Read + Seek> Decoder<R> {
             }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
                 let units_read = fill_tile_buffer!(buffer, 2, read_u16_into);
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u16(buffer, bytes)
-                }
+                tile_photometry!(buffer, 2, process_photometry_u16);
                 units_read
             }
             (ColorType::Gray(8), DecodingBuffer::I8(ref mut buffer)) => {
                 let units_read = fill_tile_buffer!(buffer, 1, read_i8_into);
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_i8(buffer, bytes);
-                }
+                tile_photometry!(buffer, 1, process_photometry_i8);
                 units_read
             }
             // The following conversions interpret the image as in libtiff.
             // In particular, MIN is white and MAX is black and not Zero as the name would imply.
             (ColorType::Gray(16), DecodingBuffer::I16(ref mut buffer)) => {
                 let units_read = fill_tile_buffer!(buffer, 2, read_i16_into);
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_i16(buffer, bytes);
-                }
+                tile_photometry!(buffer, 2, process_photometry_i16);
                 units_read
             }
             (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
                 let units_read = fill_tile_buffer!(buffer, 1, read_exact);
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_u8(buffer, bytes);
-                }
+                tile_photometry!(buffer, 1, process_photometry_u8);
                 units_read
             }
             (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
                 let units_read = fill_tile_buffer!(buffer, 4, read_f32_into);
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_f32(buffer, bytes);
-                }
+                tile_photometry!(buffer, 4, process_photometry_f32);
                 units_read
             }
             (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
                 let units_read = fill_tile_buffer!(buffer, 8, read_f64_into);
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometric_f64(buffer, bytes);
-                }
+                tile_photometry!(buffer, 8, process_photometry_f64);
                 units_read
             }
             (type_, _) => {
@@ -1638,11 +1640,7 @@ impl<R: Read + Seek> Decoder<R> {
         (padding_right, padding_down)
     }
 
-    pub fn read_tile_to_buffer(
-        &mut self,
-        result: &mut DecodingResult,
-        tile: usize,
-    ) -> TiffResult<()> {
+    fn read_tile_to_buffer(&mut self, result: &mut DecodingResult, tile: usize) -> TiffResult<()> {
         let file_offset = *self
             .tile_attributes
             .as_ref()
@@ -1675,8 +1673,7 @@ impl<R: Read + Seek> Decoder<R> {
             result.as_buffer(buffer_offset),
             file_offset,
             compressed_bytes,
-            padding_right,
-            padding_down,
+            tile,
         )?;
 
         if units_read < tile_samples {
