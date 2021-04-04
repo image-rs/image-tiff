@@ -215,3 +215,33 @@ fn issue_69() {
 //let img_res = decoder.read_image();
 //assert!(img_res.is_ok());
 //}
+
+#[test]
+fn test_tiled_rgb_u8() {
+    test_image_sum_u8("tiled-rgb-u8.tif", ColorType::RGB(8), 93031606);
+}
+
+#[test]
+fn test_tiled_rect_rgb_u8() {
+    test_image_sum_u8("tiled-rect-rgb-u8.tif", ColorType::RGB(8), 67915736);
+}
+
+/* #[test]
+fn test_tiled_jpeg_rgb_u8() {
+    test_image_sum_u8("tiled-jpeg-rgb-u8.tif", ColorType::RGB(8), 93031606);
+} */
+
+#[test]
+fn test_tiled_oversize_gray_u8() {
+    test_image_sum_u8("tiled-oversize-gray-u8.tif", ColorType::Gray(8), 7095522);
+}
+
+#[test]
+fn test_tiled_predictor_gray_u8() {
+    test_image_sum_u8("tiled-predictor-gray-u8.tif", ColorType::Gray(8), 7095522);
+}
+
+#[test]
+fn test_tiled_cmyk_i8() {
+    test_image_sum_i8("tiled-cmyk-i8.tif", ColorType::CMYK(8), 8156802);
+}
