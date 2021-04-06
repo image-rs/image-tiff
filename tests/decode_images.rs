@@ -218,12 +218,12 @@ fn issue_69() {
 
 #[test]
 fn test_tiled_rgb_u8() {
-    test_image_sum_u8("tiled-rgb-u8.tif", ColorType::RGB(8), 93031606);
+    test_image_sum_u8("tiled-rgb-u8.tif", ColorType::RGB(8), 39528948);
 }
 
 #[test]
 fn test_tiled_rect_rgb_u8() {
-    test_image_sum_u8("tiled-rect-rgb-u8.tif", ColorType::RGB(8), 67915736);
+    test_image_sum_u8("tiled-rect-rgb-u8.tif", ColorType::RGB(8), 62081032);
 }
 
 /* #[test]
@@ -232,16 +232,16 @@ fn test_tiled_jpeg_rgb_u8() {
 } */
 
 #[test]
-fn test_tiled_oversize_gray_u8() {
-    test_image_sum_u8("tiled-oversize-gray-u8.tif", ColorType::Gray(8), 7095522);
+fn test_tiled_oversize_gray_i8() {
+    test_image_sum_i8("tiled-oversize-gray-i8.tif", ColorType::Gray(8), 1214996);
 }
 
 #[test]
-fn test_tiled_predictor_gray_u8() {
-    test_image_sum_u8("tiled-predictor-gray-u8.tif", ColorType::Gray(8), 7095522);
+fn test_tiled_whiteiszero_gray_i8() {
+    test_image_sum_i8("tiled-whiteiszero-gray-i8.tif", ColorType::Gray(8), 1214996);
 }
 
 #[test]
 fn test_tiled_cmyk_i8() {
-    test_image_sum_i8("tiled-cmyk-i8.tif", ColorType::CMYK(8), 8156802);
+    test_image_sum_i8("tiled-cmyk-i8.tif", ColorType::CMYK(8), 1759101);
 }
