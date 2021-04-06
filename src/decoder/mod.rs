@@ -229,13 +229,19 @@ struct TileAttributes {
     tile_length: usize,
     tiles_down: usize,
     tiles_across: usize,
-    padding_right: usize,    // Length of padding for rightmost tiles in pixels
-    padding_down: usize,     // length of padding for bottommost tile in pixels
-    padding_buffer: Vec<u8>, // A simple buffer right paddding is read into
+    /// Length of padding for rightmost tiles in pixels
+    padding_right: usize,
+    /// length of padding for bottommost tile in pixels
+    padding_down: usize,
+    /// A simple buffer right paddding is read into
+    padding_buffer: Vec<u8>,
     tile_samples: usize,
-    line_samples: usize,       // Sample count of one row of the image
-    row_samples: usize,        // Sample count of one row of one tile
-    tile_strip_samples: usize, // Sample count of one row of tiles
+    /// Sample count of one row of the image
+    line_samples: usize,
+    /// Sample count of one row of one tile
+    row_samples: usize,
+    /// Sample count of one row of tiles
+    tile_strip_samples: usize,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1410,6 +1416,11 @@ impl<R: Read + Seek> Decoder<R> {
             let tile_strip_sample_count = (tile_sample_count * tiles_across)
                 - (padding_right * tile_length * samples_per_pixel);
 
+            let padding_buffer_size = padding_right * samples_per_pixel * buffer_byte_len;
+            if padding_buffer_size > self.limits.intermediate_buffer_size {
+                return Err(TiffError::LimitsExceeded);
+            }
+
             self.tile_attributes = Some(TileAttributes {
                 tile_offsets: self.get_tag_u64_vec(Tag::TileOffsets)?,
                 tile_bytes: self.get_tag_u64_vec(Tag::TileByteCounts)?,
@@ -1420,7 +1431,7 @@ impl<R: Read + Seek> Decoder<R> {
                 tile_samples: tile_sample_count,
                 padding_right,
                 padding_down: (tiles_down * tile_length) - usize::try_from(self.height)?,
-                padding_buffer: vec![0; padding_right * samples_per_pixel * buffer_byte_len],
+                padding_buffer: vec![0; padding_buffer_size],
                 line_samples: usize::try_from(self.width)? * samples_per_pixel,
                 row_samples: (tile_width * samples_per_pixel),
                 tile_strip_samples: tile_strip_sample_count,
