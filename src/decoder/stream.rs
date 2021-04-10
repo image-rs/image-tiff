@@ -358,22 +358,19 @@ impl LZWReader {
         let order = reader.byte_order;
         let mut compressed = vec![0; compressed_length as usize];
         reader.read_exact(&mut compressed[..])?;
-        let mut uncompressed = Vec::with_capacity(max_uncompressed_length);
+        let mut uncompressed = vec![0; max_uncompressed_length];
         let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
+
         let mut bytes_read = 0;
+        let mut bytes_written = 0;
 
-        while uncompressed.len() < max_uncompressed_length {
-            let bytes_written = uncompressed.len();
-            uncompressed.reserve(1 << 12);
-            let buffer_space = uncompressed.capacity().min(max_uncompressed_length);
-            uncompressed.resize(buffer_space, 0u8);
-
+        while bytes_written < max_uncompressed_length {
             let result = decoder.decode_bytes(
                 &compressed[bytes_read..],
                 &mut uncompressed[bytes_written..],
             );
             bytes_read += result.consumed_in;
-            uncompressed.truncate(bytes_written + result.consumed_out);
+            bytes_written += result.consumed_out;
 
             match result.status {
                 Ok(weezl::LzwStatus::Ok) => {}
@@ -388,9 +385,9 @@ impl LZWReader {
             }
         }
 
-        let bytes = uncompressed.len();
+        uncompressed.resize(bytes_written, 0);
         Ok((
-            bytes,
+            uncompressed.len(),
             LZWReader {
                 buffer: io::Cursor::new(uncompressed),
                 byte_order: order,
@@ -453,7 +450,7 @@ impl JpegReader {
                 let mut jpeg_data = tables.clone();
                 let truncated_length = jpeg_data.len() - 2;
                 jpeg_data.truncate(truncated_length);
-                jpeg_data.extend_from_slice(&mut segment[2..]);
+                jpeg_data.extend_from_slice(&segment[2..]);
 
                 Ok(JpegReader {
                     buffer: io::Cursor::new(jpeg_data),
@@ -500,14 +497,31 @@ impl PackBitsReader {
         length: usize,
     ) -> io::Result<(usize, PackBitsReader)> {
         let mut buffer = Vec::new();
-        let mut read: usize = 0;
-        while read < length {
-            let lread = read_packbits_run(&mut reader, &mut buffer)?;
-            if lread == 0 {
-                return Err(io::ErrorKind::UnexpectedEof.into());
+        let mut header: [u8; 1] = [0];
+        let mut data: [u8; 1] = [0];
+
+        let mut bytes_read = 0;
+        while bytes_read < length {
+            reader.read_exact(&mut header)?;
+            bytes_read += 1;
+
+            let h = header[0] as i8;
+            if h >= -127 && h <= -1 {
+                let new_len = buffer.len() + (1 - h as isize) as usize;
+                reader.read_exact(&mut data)?;
+                buffer.resize(new_len, data[0]);
+                bytes_read += 1;
+            } else if h >= 0 {
+                let num_vals = h as usize + 1;
+                let start = buffer.len();
+                buffer.resize(start + num_vals, 0);
+                reader.read_exact(&mut buffer[start..])?;
+                bytes_read += num_vals
+            } else {
+                // h = -128 is a no-op.
             }
-            read += lread;
         }
+
         Ok((
             buffer.len(),
             PackBitsReader {
@@ -515,32 +529,6 @@ impl PackBitsReader {
                 byte_order,
             },
         ))
-    }
-}
-
-fn read_packbits_run<R: Read + Seek>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<usize> {
-    let mut header: [u8; 1] = [0];
-
-    let bytes = reader.read(&mut header)?;
-
-    match bytes {
-        0 => Ok(0),
-        _ => match header[0] as i8 {
-            -128 => Ok(1),
-            h if h >= -127 && h <= -1 => {
-                let new_len = buffer.len() + (1 - h as isize) as usize;
-                reader.read_exact(&mut header)?;
-                buffer.resize(new_len, header[0]);
-                Ok(2)
-            }
-            h => {
-                let num_vals = h as usize + 1;
-                let start = buffer.len();
-                buffer.resize(start + num_vals, 0);
-                reader.read_exact(&mut buffer[start..])?;
-                Ok(num_vals + 1)
-            }
-        },
     }
 }
 
@@ -566,7 +554,7 @@ impl EndianReader for PackBitsReader {
 #[derive(Debug)]
 pub struct SmartReader<R>
 where
-    R: Read + Seek,
+    R: Read,
 {
     reader: R,
     pub byte_order: ByteOrder,
@@ -574,7 +562,7 @@ where
 
 impl<R> SmartReader<R>
 where
-    R: Read + Seek,
+    R: Read,
 {
     /// Wraps a reader
     pub fn wrap(reader: R, byte_order: ByteOrder) -> SmartReader<R> {
@@ -584,7 +572,7 @@ where
 
 impl<R> EndianReader for SmartReader<R>
 where
-    R: Read + Seek,
+    R: Read,
 {
     #[inline(always)]
     fn byte_order(&self) -> ByteOrder {
@@ -592,7 +580,7 @@ where
     }
 }
 
-impl<R: Read + Seek> Read for SmartReader<R> {
+impl<R: Read> Read for SmartReader<R> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.reader.read(buf)
