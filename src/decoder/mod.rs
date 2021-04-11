@@ -973,7 +973,7 @@ impl<R: Read + Seek> Decoder<R> {
                 match reader.read(&mut buffer[bytes_written..]) {
                     Ok(0) => break,
                     Ok(n) => bytes_written += n,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
                     Err(e) => Err(e)?,
                 }
             }
