@@ -1,6 +1,5 @@
 //! All IO functionality needed for TIFF decoding
 
-use crate::bytecast;
 use crate::error::{TiffError, TiffResult};
 use miniz_oxide::inflate;
 use std::io::{self, Read, Seek};
@@ -30,24 +29,6 @@ pub trait EndianReader: Read {
         })
     }
 
-    #[inline(always)]
-    fn read_u16_into(&mut self, buffer: &mut [u16]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::u16_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = u16::from_le(*n);
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = u16::from_be(*n);
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Reads an i8
     #[inline(always)]
     fn read_i8(&mut self) -> Result<i8, io::Error> {
@@ -57,24 +38,6 @@ pub trait EndianReader: Read {
             ByteOrder::LittleEndian => i8::from_le_bytes(n),
             ByteOrder::BigEndian => i8::from_be_bytes(n),
         })
-    }
-
-    #[inline(always)]
-    fn read_i8_into(&mut self, buffer: &mut [i8]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::i8_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = i8::from_le(*n);
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = i8::from_be(*n);
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Reads an i16
@@ -88,24 +51,6 @@ pub trait EndianReader: Read {
         })
     }
 
-    #[inline(always)]
-    fn read_i16_into(&mut self, buffer: &mut [i16]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::i16_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = i16::from_le(*n);
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = i16::from_be(*n);
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Reads an u32
     #[inline(always)]
     fn read_u32(&mut self) -> Result<u32, io::Error> {
@@ -115,42 +60,6 @@ pub trait EndianReader: Read {
             ByteOrder::LittleEndian => u32::from_le_bytes(n),
             ByteOrder::BigEndian => u32::from_be_bytes(n),
         })
-    }
-
-    #[inline(always)]
-    fn read_u32_into(&mut self, buffer: &mut [u32]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::u32_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = u32::from_le(*n);
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = u32::from_be(*n);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn read_i32_into(&mut self, buffer: &mut [i32]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::i32_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = i32::from_le(*n);
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = i32::from_be(*n);
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Reads an i32
@@ -175,42 +84,6 @@ pub trait EndianReader: Read {
         })
     }
 
-    #[inline(always)]
-    fn read_u64_into(&mut self, buffer: &mut [u64]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::u64_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = u64::from_le(*n);
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = u64::from_be(*n);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn read_i64_into(&mut self, buffer: &mut [i64]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::i64_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = i64::from_le(*n);
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = i64::from_be(*n);
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Reads an i64
     #[inline(always)]
     fn read_i64(&mut self) -> Result<i64, io::Error> {
@@ -233,24 +106,6 @@ pub trait EndianReader: Read {
         }))
     }
 
-    #[inline(always)]
-    fn read_f32_into(&mut self, buffer: &mut [f32]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::f32_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = f32::from_bits(u32::from_le(n.to_bits()));
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = f32::from_bits(u32::from_be(n.to_bits()));
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Reads an f64
     #[inline(always)]
     fn read_f64(&mut self) -> Result<f64, io::Error> {
@@ -260,24 +115,6 @@ pub trait EndianReader: Read {
             ByteOrder::LittleEndian => u64::from_le_bytes(n),
             ByteOrder::BigEndian => u64::from_be_bytes(n),
         }))
-    }
-
-    #[inline(always)]
-    fn read_f64_into(&mut self, buffer: &mut [f64]) -> Result<(), io::Error> {
-        self.read_exact(bytecast::f64_as_ne_mut_bytes(buffer))?;
-        match self.byte_order() {
-            ByteOrder::LittleEndian => {
-                for n in buffer {
-                    *n = f64::from_bits(u64::from_le(n.to_bits()));
-                }
-            }
-            ByteOrder::BigEndian => {
-                for n in buffer {
-                    *n = f64::from_bits(u64::from_be(n.to_bits()));
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -292,7 +129,6 @@ pub trait EndianReader: Read {
 /// Reader that decompresses DEFLATE streams
 pub struct DeflateReader {
     buffer: io::Cursor<Vec<u8>>,
-    byte_order: ByteOrder,
 }
 
 impl DeflateReader {
@@ -300,7 +136,6 @@ impl DeflateReader {
         reader: &mut SmartReader<R>,
         max_uncompressed_length: usize,
     ) -> TiffResult<(usize, Self)> {
-        let byte_order = reader.byte_order;
         let mut compressed = Vec::new();
         reader.read_to_end(&mut compressed)?;
 
@@ -316,7 +151,6 @@ impl DeflateReader {
         Ok((
             uncompressed.len(),
             Self {
-                byte_order,
                 buffer: io::Cursor::new(uncompressed),
             },
         ))
@@ -329,12 +163,6 @@ impl Read for DeflateReader {
     }
 }
 
-impl EndianReader for DeflateReader {
-    fn byte_order(&self) -> ByteOrder {
-        self.byte_order
-    }
-}
-
 ///
 /// ## LZW Reader
 ///
@@ -342,7 +170,6 @@ impl EndianReader for DeflateReader {
 /// Reader that decompresses LZW streams
 pub struct LZWReader {
     buffer: io::Cursor<Vec<u8>>,
-    byte_order: ByteOrder,
 }
 
 impl LZWReader {
@@ -355,7 +182,6 @@ impl LZWReader {
     where
         R: Read + Seek,
     {
-        let order = reader.byte_order;
         let mut compressed = vec![0; compressed_length as usize];
         reader.read_exact(&mut compressed[..])?;
         let mut uncompressed = Vec::with_capacity(max_uncompressed_length);
@@ -393,7 +219,6 @@ impl LZWReader {
             bytes,
             LZWReader {
                 buffer: io::Cursor::new(uncompressed),
-                byte_order: order,
             },
         ))
     }
@@ -406,20 +231,12 @@ impl Read for LZWReader {
     }
 }
 
-impl EndianReader for LZWReader {
-    #[inline(always)]
-    fn byte_order(&self) -> ByteOrder {
-        self.byte_order
-    }
-}
-
 ///
 /// ## JPEG Reader (for "new-style" JPEG format (TIFF compression tag 7))
 ///
 
 pub(crate) struct JpegReader {
     buffer: io::Cursor<Vec<u8>>,
-    byte_order: ByteOrder,
 }
 impl JpegReader {
     /// Constructs new JpegReader wrapping a SmartReader.
@@ -442,8 +259,6 @@ impl JpegReader {
     where
         R: Read + Seek,
     {
-        let order = reader.byte_order;
-
         // Read jpeg image data
         let mut segment = vec![0; length as usize];
         reader.read_exact(&mut segment[..])?;
@@ -457,12 +272,10 @@ impl JpegReader {
 
                 Ok(JpegReader {
                     buffer: io::Cursor::new(jpeg_data),
-                    byte_order: order,
                 })
             }
             None => Ok(JpegReader {
                 buffer: io::Cursor::new(segment),
-                byte_order: order,
             }),
         }
     }
@@ -475,13 +288,6 @@ impl Read for JpegReader {
     }
 }
 
-impl EndianReader for JpegReader {
-    #[inline(always)]
-    fn byte_order(&self) -> ByteOrder {
-        self.byte_order
-    }
-}
-
 ///
 /// ## PackBits Reader
 ///
@@ -489,14 +295,12 @@ impl EndianReader for JpegReader {
 /// Reader that unpacks Apple's `PackBits` format
 pub struct PackBitsReader {
     buffer: io::Cursor<Vec<u8>>,
-    byte_order: ByteOrder,
 }
 
 impl PackBitsReader {
     /// Wraps a reader
     pub fn new<R: Read + Seek>(
         mut reader: R,
-        byte_order: ByteOrder,
         length: usize,
     ) -> io::Result<(usize, PackBitsReader)> {
         let mut buffer = Vec::new();
@@ -512,7 +316,6 @@ impl PackBitsReader {
             buffer.len(),
             PackBitsReader {
                 buffer: io::Cursor::new(buffer),
-                byte_order,
             },
         ))
     }
@@ -548,13 +351,6 @@ impl Read for PackBitsReader {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.buffer.read(buf)
-    }
-}
-
-impl EndianReader for PackBitsReader {
-    #[inline(always)]
-    fn byte_order(&self) -> ByteOrder {
-        self.byte_order
     }
 }
 
@@ -619,8 +415,7 @@ mod test {
         let encoded_len = encoded.len();
 
         let buff = io::Cursor::new(encoded);
-        let (_, mut decoder) =
-            PackBitsReader::new(buff, ByteOrder::LittleEndian, encoded_len).unwrap();
+        let (_, mut decoder) = PackBitsReader::new(buff, encoded_len).unwrap();
 
         let mut decoded = Vec::new();
         decoder.read_to_end(&mut decoded).unwrap();

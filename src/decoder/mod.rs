@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::{bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 use self::ifd::Directory;
 use crate::tags::{
@@ -209,6 +209,24 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(buf),
             DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(buf),
             DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(buf),
+        }
+    }
+
+    fn prefix<'b>(&'b mut self, new_length: usize) -> DecodingBuffer<'b>
+    where
+        'a: 'b,
+    {
+        match *self {
+            DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[..new_length]),
+            DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[..new_length]),
+            DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[..new_length]),
+            DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[..new_length]),
+            DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[..new_length]),
+            DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[..new_length]),
+            DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[..new_length]),
+            DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[..new_length]),
+            DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[..new_length]),
+            DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[..new_length]),
         }
     }
 }
@@ -892,8 +910,7 @@ impl<R: Read + Seek> Decoder<R> {
         mut buffer: DecodingBuffer<'a>,
         offset: u64,
         length: u64,
-        strip_sample_count: usize,
-    ) -> TiffResult<usize> {
+    ) -> TiffResult<()> {
         // Validate that the provided buffer is of the expected type.
         let color_type = self.colortype()?;
         match (color_type, &buffer) {
@@ -912,31 +929,22 @@ impl<R: Read + Seek> Decoder<R> {
 
         // Construct necessary reader to perform decompression.
         self.goto_offset_u64(offset)?;
-        let (bytes, mut reader): (usize, Box<dyn EndianReader>) = match self.compression_method {
-            CompressionMethod::None => {
-                let order = self.reader.byte_order;
-                (
-                    usize::try_from(length)?,
-                    Box::new(SmartReader::wrap(&mut self.reader, order)),
-                )
-            }
-            CompressionMethod::LZW => {
-                let (bytes, reader) = LZWReader::new(
+        let byte_order = self.reader.byte_order;
+        let mut reader: Box<dyn Read> = match self.compression_method {
+            CompressionMethod::None => Box::new(&mut self.reader),
+            CompressionMethod::LZW => Box::new(
+                LZWReader::new(
                     &mut self.reader,
                     usize::try_from(length)?,
-                    strip_sample_count * buffer.byte_len(),
-                )?;
-                (bytes, Box::new(reader))
-            }
+                    buffer.len() * buffer.byte_len(),
+                )?
+                .1,
+            ),
             CompressionMethod::PackBits => {
-                let order = self.reader.byte_order;
-                let (bytes, reader) =
-                    PackBitsReader::new(&mut self.reader, order, usize::try_from(length)?)?;
-                (bytes, Box::new(reader))
+                Box::new(PackBitsReader::new(&mut self.reader, usize::try_from(length)?)?.1)
             }
             CompressionMethod::OldDeflate => {
-                let (bytes, reader) = DeflateReader::new(&mut self.reader, strip_sample_count)?;
-                (bytes, Box::new(reader))
+                Box::new(DeflateReader::new(&mut self.reader, buffer.len() * buffer.byte_len())?.1)
             }
             method => {
                 return Err(TiffError::UnsupportedError(
@@ -945,83 +953,100 @@ impl<R: Read + Seek> Decoder<R> {
             }
         };
 
-        // FIXME: this might be suboptimal. We might default remaining bits to ´0`, which some
-        // other decoders might do.
-        if bytes / buffer.byte_len() > strip_sample_count {
-            return Err(TiffError::FormatError(
-                TiffFormatError::UnexpectedCompressedData {
-                    actual_bytes: bytes,
-                    required_bytes: strip_sample_count * buffer.byte_len(),
-                },
-            ));
+        // Read into output buffer.
+        {
+            let buffer = match &mut buffer {
+                DecodingBuffer::U8(buf) => &mut *buf,
+                DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
+                DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
+                DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
+                DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
+                DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
+                DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
+                DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
+                DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
+                DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
+            };
+
+            let mut bytes_written = 0;
+            while bytes_written < buffer.len() {
+                match reader.read(&mut buffer[bytes_written..]) {
+                    Ok(0) => break,
+                    Ok(n) => bytes_written += n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => Err(e)?,
+                }
+            }
+            for b in &mut buffer[bytes_written..] {
+                *b = 0;
+            }
         }
 
-        // Read into the output buffer.
-        let samples = bytes / buffer.byte_len();
-        match buffer {
-            DecodingBuffer::U8(ref mut buffer) => {
-                reader.read_exact(&mut buffer[..samples])?
-            }
-            DecodingBuffer::U16(ref mut buffer) => {
-                reader.read_u16_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::U32(ref mut buffer) => {
-                reader.read_u32_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::U64(ref mut buffer) => {
-                reader.read_u64_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::I8(ref mut buffer) => {
-                reader.read_i8_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::I16(ref mut buffer) => {
-                reader.read_i16_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::I32(ref mut buffer) => {
-                reader.read_i32_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::I64(ref mut buffer) => {
-                reader.read_i64_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::F32(ref mut buffer) => {
-                reader.read_f32_into(&mut buffer[..samples])?
-            }
-            DecodingBuffer::F64(ref mut buffer) => {
-                reader.read_f64_into(&mut buffer[..samples])?
-            }
+        // Fix endianness. If `byte_order` matches the host, then conversion is a no-op.
+        match byte_order {
+            ByteOrder::LittleEndian => match &mut buffer {
+                DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+                DecodingBuffer::U16(buf) => buf.iter_mut().for_each(|v| *v = u16::from_le(*v)),
+                DecodingBuffer::I16(buf) => buf.iter_mut().for_each(|v| *v = i16::from_le(*v)),
+                DecodingBuffer::U32(buf) => buf.iter_mut().for_each(|v| *v = u32::from_le(*v)),
+                DecodingBuffer::I32(buf) => buf.iter_mut().for_each(|v| *v = i32::from_le(*v)),
+                DecodingBuffer::U64(buf) => buf.iter_mut().for_each(|v| *v = u64::from_le(*v)),
+                DecodingBuffer::I64(buf) => buf.iter_mut().for_each(|v| *v = i64::from_le(*v)),
+                DecodingBuffer::F32(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f32::from_bits(u32::from_le(v.to_bits()))),
+                DecodingBuffer::F64(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f64::from_bits(u64::from_le(v.to_bits()))),
+            },
+            ByteOrder::BigEndian => match &mut buffer {
+                DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+                DecodingBuffer::U16(buf) => buf.iter_mut().for_each(|v| *v = u16::from_be(*v)),
+                DecodingBuffer::I16(buf) => buf.iter_mut().for_each(|v| *v = i16::from_be(*v)),
+                DecodingBuffer::U32(buf) => buf.iter_mut().for_each(|v| *v = u32::from_be(*v)),
+                DecodingBuffer::I32(buf) => buf.iter_mut().for_each(|v| *v = i32::from_be(*v)),
+                DecodingBuffer::U64(buf) => buf.iter_mut().for_each(|v| *v = u64::from_be(*v)),
+                DecodingBuffer::I64(buf) => buf.iter_mut().for_each(|v| *v = i64::from_be(*v)),
+                DecodingBuffer::F32(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f32::from_bits(u32::from_be(v.to_bits()))),
+                DecodingBuffer::F64(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f64::from_bits(u64::from_be(v.to_bits()))),
+            },
         }
 
         // Invert colors if necessary.
         if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-            match (color_type, buffer) {
+            match (color_type, &mut buffer) {
                 (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
-                    for datum in buffer[..samples].iter_mut() {
+                    for datum in buffer.iter_mut() {
                         *datum = 0xffff_ffff_ffff_ffff - *datum
                     }
                 }
                 (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
-                    for datum in buffer[..samples].iter_mut() {
+                    for datum in buffer.iter_mut() {
                         *datum = 0xffff_ffff - *datum
                     }
                 }
                 (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                    for datum in buffer[..samples].iter_mut() {
+                    for datum in buffer.iter_mut() {
                         *datum = 0xffff - *datum
                     }
                 }
                 (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
-                    for byte in buffer[..samples].iter_mut() {
+                    for byte in buffer.iter_mut() {
                         *byte = 0xff - *byte
                     }
                 }
                 (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
-                    for datum in buffer[..samples].iter_mut() {
+                    for datum in buffer.iter_mut() {
                         // FIXME: assumes [0, 1) range for floats
                         *datum = 1.0 - *datum
                     }
                 }
                 (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
-                    for datum in buffer[..samples].iter_mut() {
+                    for datum in buffer.iter_mut() {
                         // FIXME: assumes [0, 1) range for floats
                         *datum = 1.0 - *datum
                     }
@@ -1030,7 +1055,7 @@ impl<R: Read + Seek> Decoder<R> {
             }
         }
 
-        Ok(samples)
+        Ok(())
     }
 
     /// Number of strips in image
@@ -1149,19 +1174,11 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let units_read = self.expand_strip(buffer.copy(), offset, byte_count, buffer_size)?;
+        self.expand_strip(buffer.prefix(buffer_size), offset, byte_count)?;
         self.strip_decoder.as_mut().unwrap().strip_index += 1;
 
         if u32::try_from(index)? == self.strip_count()? {
             self.strip_decoder = None;
-        }
-        if units_read < buffer_size {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentStripSamples {
-                    actual_samples: units_read,
-                    required_samples: buffer_size,
-                },
-            ));
         }
         if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
             match Predictor::from_u16(predictor) {
