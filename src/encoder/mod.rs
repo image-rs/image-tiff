@@ -1,500 +1,31 @@
-use std::collections::BTreeMap;
-use std::convert::TryFrom;
-use std::io::{Seek, Write};
-use std::{cmp, io, mem};
+pub use tiff_value::*;
 
-use crate::bytecast;
-use crate::error::{TiffError, TiffFormatError, TiffResult};
-use crate::tags::{self, ResolutionUnit, Tag, Type};
+use std::{
+    cmp,
+    collections::BTreeMap,
+    convert::{TryFrom, TryInto},
+    io::{self, Seek, Write},
+    marker::PhantomData,
+    mem,
+    num::TryFromIntError,
+};
+
+use crate::{
+    error::TiffResult,
+    tags::{self, ResolutionUnit, Tag},
+};
 
 pub mod colortype;
+mod tiff_value;
 mod writer;
 
 use self::colortype::*;
 use self::writer::*;
 
-/// Type to represent tiff values of type `IFD`
-#[derive(Clone)]
-pub struct Ifd(pub u32);
-
-/// Type to represent tiff values of type `IFD8`
-#[derive(Clone)]
-pub struct Ifd8(pub u64);
-
-/// Type to represent tiff values of type `RATIONAL`
-#[derive(Clone)]
-pub struct Rational {
-    pub n: u32,
-    pub d: u32,
-}
-
-/// Type to represent tiff values of type `SRATIONAL`
-#[derive(Clone)]
-pub struct SRational {
-    pub n: i32,
-    pub d: i32,
-}
-
-/// Trait for types that can be encoded in a tiff file
-pub trait TiffValue {
-    const BYTE_LEN: u32;
-    const FIELD_TYPE: Type;
-    fn count(&self) -> u32;
-    fn bytes(&self) -> u32 {
-        self.count() * Self::BYTE_LEN
-    }
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()>;
-}
-
-impl TiffValue for [u8] {
-    const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: Type = Type::BYTE;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_bytes(self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [i8] {
-    const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: Type = Type::SBYTE;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        let slice = bytecast::i8_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [u16] {
-    const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: Type = Type::SHORT;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        let slice = bytecast::u16_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [i16] {
-    const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: Type = Type::SSHORT;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        let slice = bytecast::i16_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [u32] {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::LONG;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        let slice = bytecast::u32_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [i32] {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::SLONG;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        let slice = bytecast::i32_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [u64] {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::LONG8;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        let slice = bytecast::u64_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [i64] {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::SLONG8;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        let slice = bytecast::i64_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [f32] {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::FLOAT;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this sould be safe
-        let slice = bytecast::f32_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [f64] {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::DOUBLE;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        // We write using nativeedian so this sould be safe
-        let slice = bytecast::f64_as_ne_bytes(self);
-        writer.write_bytes(slice)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for [Ifd] {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::IFD;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        for x in self {
-            x.write(writer)?;
-        }
-        Ok(())
-    }
-}
-
-impl TiffValue for [Ifd8] {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::IFD8;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        for x in self {
-            x.write(writer)?;
-        }
-        Ok(())
-    }
-}
-
-impl TiffValue for [Rational] {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::RATIONAL;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        for x in self {
-            x.write(writer)?;
-        }
-        Ok(())
-    }
-}
-
-impl TiffValue for [SRational] {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::SRATIONAL;
-
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        for x in self {
-            x.write(writer)?;
-        }
-        Ok(())
-    }
-}
-
-impl TiffValue for u8 {
-    const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: Type = Type::BYTE;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_u8(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for i8 {
-    const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: Type = Type::SBYTE;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_i8(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for u16 {
-    const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: Type = Type::SHORT;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_u16(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for i16 {
-    const BYTE_LEN: u32 = 2;
-    const FIELD_TYPE: Type = Type::SSHORT;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_i16(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for u32 {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::LONG;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_u32(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for i32 {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::SLONG;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_i32(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for u64 {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::LONG8;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_u64(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for i64 {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::SLONG8;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_i64(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for f32 {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::FLOAT;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_f32(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for f64 {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::DOUBLE;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_f64(*self)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for Ifd {
-    const BYTE_LEN: u32 = 4;
-    const FIELD_TYPE: Type = Type::IFD;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_u32(self.0)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for Ifd8 {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::IFD8;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_u64(self.0)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for Rational {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::RATIONAL;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_u32(self.n)?;
-        writer.write_u32(self.d)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for SRational {
-    const BYTE_LEN: u32 = 8;
-    const FIELD_TYPE: Type = Type::SRATIONAL;
-
-    fn count(&self) -> u32 {
-        1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        writer.write_i32(self.n)?;
-        writer.write_i32(self.d)?;
-        Ok(())
-    }
-}
-
-impl TiffValue for str {
-    const BYTE_LEN: u32 = 1;
-    const FIELD_TYPE: Type = Type::ASCII;
-
-    fn count(&self) -> u32 {
-        self.len() as u32 + 1
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        if self.is_ascii() && !self.bytes().any(|b| b == 0) {
-            writer.write_bytes(self.as_bytes())?;
-            writer.write_u8(0)?;
-            Ok(())
-        } else {
-            Err(TiffError::FormatError(TiffFormatError::InvalidTag))
-        }
-    }
-}
-
-impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
-    const BYTE_LEN: u32 = T::BYTE_LEN;
-    const FIELD_TYPE: Type = T::FIELD_TYPE;
-
-    fn count(&self) -> u32 {
-        (*self).count()
-    }
-
-    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        (*self).write(writer)
-    }
-}
-
-/// Tiff encoder.
+/// Encoder for Tiff and BigTiff files.
 ///
 /// With this type you can get a `DirectoryEncoder` or a `ImageEncoder`
-/// to encode tiff ifd directories with images.
+/// to encode Tiff/BigTiff ifd directories with images.
 ///
 /// See `DirectoryEncoder` and `ImageEncoder`.
 ///
@@ -506,39 +37,68 @@ impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
 /// # let image_data = vec![0; 100*100*3];
 /// use tiff::encoder::*;
 ///
+/// // create a standard Tiff file
 /// let mut tiff = TiffEncoder::new(&mut file).unwrap();
-///
 /// tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
+///
+/// // create a BigTiff file
+/// let mut bigtiff = TiffEncoder::new_big(&mut file).unwrap();
+/// bigtiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
+///
 /// # }
 /// ```
-pub struct TiffEncoder<W> {
+pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
     writer: TiffWriter<W>,
+    kind: PhantomData<K>,
 }
 
+/// Constructor functions to create standard Tiff files.
 impl<W: Write + Seek> TiffEncoder<W> {
-    pub fn new(writer: W) -> TiffResult<TiffEncoder<W>> {
+    /// Creates a new encoder for standard Tiff files.
+    ///
+    /// To create BigTiff files, use [`new_big`][TiffEncoder::new_big] or
+    /// [`new_generic`][TiffEncoder::new_generic].
+    pub fn new(writer: W) -> TiffResult<TiffEncoder<W, TiffKindStandard>> {
+        TiffEncoder::new_generic(writer)
+    }
+}
+
+/// Constructor functions to create BigTiff files.
+impl<W: Write + Seek> TiffEncoder<W, TiffKindBig> {
+    /// Creates a new encoder for BigTiff files.
+    ///
+    /// To create standard Tiff files, use [`new`][TiffEncoder::new] or
+    /// [`new_generic`][TiffEncoder::new_generic].
+    pub fn new_big(writer: W) -> TiffResult<Self> {
+        TiffEncoder::new_generic(writer)
+    }
+}
+
+/// Generic functions that are available for both Tiff and BigTiff encoders.
+impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
+    /// Creates a new Tiff or BigTiff encoder, inferred from the return type.
+    pub fn new_generic(writer: W) -> TiffResult<Self> {
         let mut encoder = TiffEncoder {
             writer: TiffWriter::new(writer),
+            kind: PhantomData,
         };
 
-        write_tiff_header(&mut encoder.writer)?;
-        // blank the IFD offset location
-        encoder.writer.write_u32(0)?;
+        K::write_header(&mut encoder.writer)?;
 
         Ok(encoder)
     }
 
-    /// Create a `DirectoryEncoder` to encode an ifd directory.
-    pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W>> {
+    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W, K>> {
         DirectoryEncoder::new(&mut self.writer)
     }
 
-    /// Create an 'ImageEncoder' to encode an image one slice at a time.
+    /// Create an [`ImageEncoder`] to encode an image one slice at a time.
     pub fn new_image<C: ColorType>(
         &mut self,
         width: u32,
         height: u32,
-    ) -> TiffResult<ImageEncoder<W, C>> {
+    ) -> TiffResult<ImageEncoder<W, C, K>> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         ImageEncoder::new(encoder, width, height)
     }
@@ -554,7 +114,7 @@ impl<W: Write + Seek> TiffEncoder<W> {
         [C::Inner]: TiffValue,
     {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let image: ImageEncoder<W, C> = ImageEncoder::new(encoder, width, height)?;
+        let image: ImageEncoder<W, C, K> = ImageEncoder::new(encoder, width, height)?;
         image.write_data(data)
     }
 }
@@ -563,19 +123,19 @@ impl<W: Write + Seek> TiffEncoder<W> {
 ///
 /// You should call `finish` on this when you are finished with it.
 /// Encoding can silently fail while this is dropping.
-pub struct DirectoryEncoder<'a, W: 'a + Write + Seek> {
+pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     writer: &'a mut TiffWriter<W>,
     dropped: bool,
     // We use BTreeMap to make sure tags are written in correct order
     ifd_pointer_pos: u64,
-    ifd: BTreeMap<u16, (u16, u32, Vec<u8>)>,
+    ifd: BTreeMap<u16, DirectoryEntry<K::OffsetType>>,
 }
 
-impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
-    fn new(writer: &'a mut TiffWriter<W>) -> TiffResult<DirectoryEncoder<'a, W>> {
+impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
+    fn new(writer: &'a mut TiffWriter<W>) -> TiffResult<Self> {
         // the previous word is the IFD offset position
-        let ifd_pointer_pos = writer.offset() - mem::size_of::<u32>() as u64;
-        writer.pad_word_boundary()?;
+        let ifd_pointer_pos = writer.offset() - mem::size_of::<K::OffsetType>() as u64;
+        writer.pad_word_boundary()?; // TODO: Do we need to adjust this for BigTiff?
         Ok(DirectoryEncoder {
             writer,
             dropped: false,
@@ -586,8 +146,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
     /// Write a single ifd tag.
     pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
-        let len = <T>::BYTE_LEN * value.count();
-        let mut bytes = Vec::with_capacity(usize::try_from(len)?);
+        let mut bytes = Vec::with_capacity(value.bytes());
         {
             let mut writer = TiffWriter::new(&mut bytes);
             value.write(&mut writer)?;
@@ -595,7 +154,11 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
         self.ifd.insert(
             tag.to_u16(),
-            (<T>::FIELD_TYPE.to_u16(), value.count(), bytes),
+            DirectoryEntry {
+                data_type: <T>::FIELD_TYPE.to_u16(),
+                count: value.count().try_into()?,
+                data: bytes,
+            },
         );
 
         Ok(())
@@ -603,15 +166,21 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
     fn write_directory(&mut self) -> TiffResult<u64> {
         // Start by writing out all values
-        for &mut (_, _, ref mut bytes) in self.ifd.values_mut() {
-            if bytes.len() > 4 {
+        for &mut DirectoryEntry {
+            data: ref mut bytes,
+            ..
+        } in self.ifd.values_mut()
+        {
+            let data_bytes = mem::size_of::<K::OffsetType>();
+
+            if bytes.len() > data_bytes {
                 let offset = self.writer.offset();
                 self.writer.write_bytes(bytes)?;
-                *bytes = vec![0, 0, 0, 0];
+                *bytes = vec![0; data_bytes];
                 let mut writer = TiffWriter::new(bytes as &mut [u8]);
-                writer.write_u32(u32::try_from(offset)?)?;
+                K::write_offset(&mut writer, offset)?;
             } else {
-                while bytes.len() < 4 {
+                while bytes.len() < data_bytes {
                     bytes.push(0);
                 }
             }
@@ -619,11 +188,19 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
 
         let offset = self.writer.offset();
 
-        self.writer.write_u16(u16::try_from(self.ifd.len())?)?;
-        for (tag, &(ref field_type, ref count, ref offset)) in self.ifd.iter() {
+        K::write_entry_count(&mut self.writer, self.ifd.len())?;
+        for (
+            tag,
+            &DirectoryEntry {
+                data_type: ref field_type,
+                ref count,
+                data: ref offset,
+            },
+        ) in self.ifd.iter()
+        {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(*field_type)?;
-            self.writer.write_u32(*count)?;
+            (*count).write(&mut self.writer)?;
             self.writer.write_bytes(offset)?;
         }
 
@@ -644,9 +221,9 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
         let curr_pos = self.writer.offset();
 
         self.writer.goto_offset(self.ifd_pointer_pos)?;
-        self.writer.write_u32(u32::try_from(ifd_pointer)?)?;
+        K::write_offset(&mut self.writer, ifd_pointer)?;
         self.writer.goto_offset(curr_pos)?;
-        self.writer.write_u32(0)?;
+        K::write_offset(&mut self.writer, 0)?;
 
         self.dropped = true;
 
@@ -659,7 +236,7 @@ impl<'a, W: 'a + Write + Seek> DirectoryEncoder<'a, W> {
     }
 }
 
-impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
+impl<'a, W: Write + Seek, K: TiffKind> Drop for DirectoryEncoder<'a, W, K> {
     fn drop(&mut self) {
         if !self.dropped {
             let _ = self.finish_internal();
@@ -700,26 +277,22 @@ impl<'a, W: Write + Seek> Drop for DirectoryEncoder<'a, W> {
 /// # }
 /// ```
 /// You can also call write_data function wich will encode by strip and finish
-pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType> {
-    encoder: DirectoryEncoder<'a, W>,
+pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
+    encoder: DirectoryEncoder<'a, W, K>,
     strip_idx: u64,
     strip_count: u64,
     row_samples: u64,
     width: u32,
     height: u32,
     rows_per_strip: u64,
-    strip_offsets: Vec<u32>,
-    strip_byte_count: Vec<u32>,
+    strip_offsets: Vec<K::OffsetType>,
+    strip_byte_count: Vec<K::OffsetType>,
     dropped: bool,
     _phantom: ::std::marker::PhantomData<C>,
 }
 
-impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
-    fn new(
-        mut encoder: DirectoryEncoder<'a, W>,
-        width: u32,
-        height: u32,
-    ) -> TiffResult<ImageEncoder<'a, W, T>> {
+impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T, K> {
+    fn new(mut encoder: DirectoryEncoder<'a, W, K>, width: u32, height: u32) -> TiffResult<Self> {
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
@@ -792,8 +365,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
         }
 
         let offset = self.encoder.write_data(value)?;
-        self.strip_offsets.push(u32::try_from(offset)?);
-        self.strip_byte_count.push(value.bytes());
+        self.strip_offsets.push(K::convert_offset(offset)?);
+        self.strip_byte_count.push(value.bytes().try_into()?);
 
         self.strip_idx += 1;
         Ok(())
@@ -881,16 +454,18 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
 
     fn finish_internal(&mut self) -> TiffResult<()> {
         self.encoder
-            .write_tag(Tag::StripOffsets, &*self.strip_offsets)?;
-        self.encoder
-            .write_tag(Tag::StripByteCounts, &*self.strip_byte_count)?;
+            .write_tag(Tag::StripOffsets, K::convert_slice(&self.strip_offsets))?;
+        self.encoder.write_tag(
+            Tag::StripByteCounts,
+            K::convert_slice(&self.strip_byte_count),
+        )?;
         self.dropped = true;
 
         self.encoder.finish_internal()
     }
 
     /// Get a reference of the underlying `DirectoryEncoder`
-    pub fn encoder(&mut self) -> &mut DirectoryEncoder<'a, W> {
+    pub fn encoder(&mut self) -> &mut DirectoryEncoder<'a, W, K> {
         &mut self.encoder
     }
 
@@ -900,10 +475,127 @@ impl<'a, W: 'a + Write + Seek, T: ColorType> ImageEncoder<'a, W, T> {
     }
 }
 
-impl<'a, W: Write + Seek, C: ColorType> Drop for ImageEncoder<'a, W, C> {
+impl<'a, W: Write + Seek, C: ColorType, K: TiffKind> Drop for ImageEncoder<'a, W, C, K> {
     fn drop(&mut self) {
         if !self.dropped {
             let _ = self.finish_internal();
         }
+    }
+}
+
+struct DirectoryEntry<S> {
+    data_type: u16,
+    count: S,
+    data: Vec<u8>,
+}
+
+/// Trait to abstract over Tiff/BigTiff differences.
+///
+/// Implemented for [`TiffKindStandard`] and [`TiffKindBig`].
+pub trait TiffKind {
+    /// The type of offset fields, `u32` for normal Tiff, `u64` for BigTiff.
+    type OffsetType: TryFrom<usize, Error = TryFromIntError> + Into<u64> + TiffValue;
+
+    /// Needed for the `convert_slice` method.
+    type OffsetArrayType: ?Sized + TiffValue;
+
+    /// Write the (Big)Tiff header.
+    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()>;
+
+    /// Convert a file offset to `Self::OffsetType`.
+    ///
+    /// This returns an error for normal Tiff if the offset is larger than `u32::MAX`.
+    fn convert_offset(offset: u64) -> TiffResult<Self::OffsetType>;
+
+    /// Write an offset value to the given writer.
+    ///
+    /// Like `convert_offset`, this errors if `offset > u32::MAX` for normal Tiff.
+    fn write_offset<W: Write>(writer: &mut TiffWriter<W>, offset: u64) -> TiffResult<()>;
+
+    /// Write the IFD entry count field with the given `count` value.
+    ///
+    /// The entry count field is an `u16` for normal Tiff and `u64` for BigTiff. Errors
+    /// if the given `usize` is larger than the representable values.
+    fn write_entry_count<W: Write>(writer: &mut TiffWriter<W>, count: usize) -> TiffResult<()>;
+
+    /// Internal helper method for satisfying Rust's type checker.
+    ///
+    /// The `TiffValue` trait is implemented for both primitive values (e.g. `u8`, `u32`) and
+    /// slices of primitive values (e.g. `[u8]`, `[u32]`). However, this is not represented in
+    /// the type system, so there is no guarantee that that for all `T: TiffValue` there is also
+    /// an implementation of `TiffValue` for `[T]`. This method works around that problem by
+    /// providing a conversion from `[T]` to some value that implements `TiffValue`, thereby
+    /// making all slices of `OffsetType` usable with `write_tag` and similar methods.
+    ///
+    /// Implementations of this trait should always set `OffsetArrayType` to `[OffsetType]`.
+    fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType;
+}
+
+/// Create a standard Tiff file.
+pub struct TiffKindStandard;
+
+impl TiffKind for TiffKindStandard {
+    type OffsetType = u32;
+    type OffsetArrayType = [u32];
+
+    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        write_tiff_header(writer)?;
+        // blank the IFD offset location
+        writer.write_u32(0)?;
+
+        Ok(())
+    }
+
+    fn convert_offset(offset: u64) -> TiffResult<Self::OffsetType> {
+        Ok(Self::OffsetType::try_from(offset)?)
+    }
+
+    fn write_offset<W: Write>(writer: &mut TiffWriter<W>, offset: u64) -> TiffResult<()> {
+        writer.write_u32(u32::try_from(offset)?)?;
+        Ok(())
+    }
+
+    fn write_entry_count<W: Write>(writer: &mut TiffWriter<W>, count: usize) -> TiffResult<()> {
+        writer.write_u16(u16::try_from(count)?)?;
+
+        Ok(())
+    }
+
+    fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType {
+        slice
+    }
+}
+
+/// Create a BigTiff file.
+pub struct TiffKindBig;
+
+impl TiffKind for TiffKindBig {
+    type OffsetType = u64;
+    type OffsetArrayType = [u64];
+
+    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        write_bigtiff_header(writer)?;
+        // blank the IFD offset location
+        writer.write_u64(0)?;
+
+        Ok(())
+    }
+
+    fn convert_offset(offset: u64) -> TiffResult<Self::OffsetType> {
+        Ok(offset)
+    }
+
+    fn write_offset<W: Write>(writer: &mut TiffWriter<W>, offset: u64) -> TiffResult<()> {
+        writer.write_u64(offset)?;
+        Ok(())
+    }
+
+    fn write_entry_count<W: Write>(writer: &mut TiffWriter<W>, count: usize) -> TiffResult<()> {
+        writer.write_u64(u64::try_from(count)?)?;
+        Ok(())
+    }
+
+    fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType {
+        slice
     }
 }
