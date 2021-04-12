@@ -106,6 +106,13 @@ impl<W: Write> TiffWriter<W> {
         Ok(())
     }
 
+    pub fn write_i64(&mut self, n: i64) -> Result<(), io::Error> {
+        self.writer.write_all(&n.to_ne_bytes())?;
+        self.offset += 8;
+
+        Ok(())
+    }
+
     pub fn write_f32(&mut self, n: f32) -> Result<(), io::Error> {
         self.writer.write_all(&u32::to_ne_bytes(n.to_bits()))?;
         self.offset += 4;

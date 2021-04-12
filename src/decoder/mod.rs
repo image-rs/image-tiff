@@ -38,6 +38,8 @@ pub enum DecodingResult {
     I16(Vec<i16>),
     /// A vector of 32 bit signed ints
     I32(Vec<i32>),
+    /// A vector of 64 bit signed ints
+    I64(Vec<i64>),
 }
 
 impl DecodingResult {
@@ -113,6 +115,14 @@ impl DecodingResult {
         }
     }
 
+    fn new_i64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / 8 {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::I64(vec![0; size]))
+        }
+    }
+
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
@@ -124,6 +134,7 @@ impl DecodingResult {
             DecodingResult::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[start..]),
             DecodingResult::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[start..]),
             DecodingResult::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[start..]),
+            DecodingResult::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[start..]),
         }
     }
 }
@@ -146,8 +157,10 @@ pub enum DecodingBuffer<'a> {
     I8(&'a mut [i8]),
     /// A slice of 16 bits signed ints
     I16(&'a mut [i16]),
-    /// A slice of 16 bits signed ints
+    /// A slice of 32 bits signed ints
     I32(&'a mut [i32]),
+    /// A slice of 64 bits signed ints
+    I64(&'a mut [i64]),
 }
 
 impl<'a> DecodingBuffer<'a> {
@@ -162,6 +175,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I8(ref buf) => buf.len(),
             DecodingBuffer::I16(ref buf) => buf.len(),
             DecodingBuffer::I32(ref buf) => buf.len(),
+            DecodingBuffer::I64(ref buf) => buf.len(),
         }
     }
 
@@ -176,6 +190,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I8(_) => 1,
             DecodingBuffer::I16(_) => 2,
             DecodingBuffer::I32(_) => 4,
+            DecodingBuffer::I64(_) => 8,
         }
     }
 
@@ -193,6 +208,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(buf),
             DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(buf),
             DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(buf),
+            DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(buf),
         }
     }
 }
@@ -323,6 +339,12 @@ impl Wrapping for i32 {
     }
 }
 
+impl Wrapping for i64 {
+    fn wrapping_add(&self, other: Self) -> Self {
+        i64::wrapping_add(*self, other)
+    }
+}
+
 fn rev_hpredict_nsamp<T>(image: &mut [T], size: (u32, u32), samples: usize) -> TiffResult<()>
 where
     T: Copy + Wrapping,
@@ -393,6 +415,9 @@ fn rev_hpredict(image: DecodingBuffer, size: (u32, u32), color_type: ColorType) 
             rev_hpredict_nsamp(buf, size, samples)?;
         }
         DecodingBuffer::I32(buf) => {
+            rev_hpredict_nsamp(buf, size, samples)?;
+        }
+        DecodingBuffer::I64(buf) => {
             rev_hpredict_nsamp(buf, size, samples)?;
         }
     }
@@ -640,6 +665,11 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_long8(&mut self) -> Result<u64, io::Error> {
         self.reader.read_u64()
+    }
+
+    #[inline]
+    pub fn read_slong8(&mut self) -> Result<i64, io::Error> {
+        self.reader.read_i64()
     }
 
     /// Reads a string
@@ -969,6 +999,10 @@ impl<R: Read + Seek> Decoder<R> {
                 }
                 bytes / 8
             }
+            (ColorType::Gray(64), DecodingBuffer::I64(ref mut buffer)) => {
+                reader.read_i64_into(&mut buffer[..bytes / 8])?;
+                bytes / 8
+            }
             (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
                 reader.read_u32_into(&mut buffer[..bytes / 4])?;
                 if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1222,8 +1256,9 @@ impl<R: Read + Seek> Decoder<R> {
             },
             SampleFormat::Int => match max_sample_bits {
                 n if n <= 8 => DecodingResult::new_i8(buffer_size, &self.limits),
-                n if n == 16 => DecodingResult::new_i16(buffer_size, &self.limits),
-                n if (n > 16) & (n <= 32) => DecodingResult::new_i32(buffer_size, &self.limits),
+                n if n <= 16 => DecodingResult::new_i16(buffer_size, &self.limits),
+                n if n <= 32 => DecodingResult::new_i32(buffer_size, &self.limits),
+                n if n <= 64 => DecodingResult::new_i64(buffer_size, &self.limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),

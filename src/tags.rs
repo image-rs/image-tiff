@@ -111,15 +111,18 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     Threshholding = 263, // TODO add support
     XResolution = 282,
     YResolution = 283,
-    // JPEG
-    JPEGTables = 347,
     // Advanced tags
     Predictor = 317,
     TileWidth = 322,
     TileLength = 323,
     TileOffsets = 324,
     TileByteCounts = 325,
+    // Data Sample Format
     SampleFormat = 339,
+    SMinSampleValue = 340, // TODO add support
+    SMaxSampleValue = 341, // TODO add support
+    // JPEG
+    JPEGTables = 347,
     // GeoTIFF
     ModelPixelScaleTag = 33550, // (SoftDesk)
     ModelTransformationTag = 34264, // (JPL Carto Group)
@@ -134,20 +137,38 @@ pub enum Tag(u16) unknown("A private or extension tag") {
 tags! {
 /// The type of an IFD entry (a 2 byte field).
 pub enum Type(u16) {
+    /// 8-bit unsigned integer
     BYTE = 1,
+    /// 8-bit byte that contains a 7-bit ASCII code; the last byte must be zero
     ASCII = 2,
+    /// 16-bit unsigned integer
     SHORT = 3,
+    /// 32-bit unsigned integer
     LONG = 4,
+    /// Fraction stored as two 32-bit unsigned integers
     RATIONAL = 5,
+    /// 8-bit signed integer
     SBYTE = 6,
+    /// 8-bit byte that may contain anything, depending on the field
     UNDEFINED = 7,
+    /// 16-bit signed integer
     SSHORT = 8,
+    /// 32-bit signed integer
     SLONG = 9,
+    /// Fraction stored as two 32-bit signed integers
     SRATIONAL = 10,
+    /// 32-bit IEEE floating point
     FLOAT = 11,
+    /// 64-bit IEEE floating point
     DOUBLE = 12,
+    /// 32-bit unsigned integer (offset)
+    IFD = 13,
     /// BigTIFF 64-bit unsigned integer
     LONG8 = 16,
+    /// BigTIFF 64-bit signed integer
+    SLONG8 = 17,
+    /// BigTIFF 64-bit unsigned integer (offset)
+    IFD8 = 18,
 }
 }
 

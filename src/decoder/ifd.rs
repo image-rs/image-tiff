@@ -11,8 +11,8 @@ use crate::tags::{Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
 use self::Value::{
-    Ascii, Byte, Double, Float, List, Rational, RationalBig, SRational, SRationalBig, Short,
-    Signed, SignedBig, Unsigned, UnsignedBig,
+    Ascii, Byte, Double, Float, Ifd, IfdBig, List, Rational, RationalBig, SRational, SRationalBig,
+    Short, Signed, SignedBig, Unsigned, UnsignedBig,
 };
 
 #[allow(unused_qualifications)]
@@ -32,6 +32,8 @@ pub enum Value {
     SRational(i32, i32),
     SRationalBig(i64, i64),
     Ascii(String),
+    Ifd(u32),
+    IfdBig(u64),
     #[doc(hidden)] // Do not match against this.
     __NonExhaustive,
 }
@@ -60,6 +62,8 @@ impl Value {
             Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val),
             UnsignedBig(val) => Ok(u32::try_from(val)?),
+            Ifd(val) => Ok(val),
+            IfdBig(val) => Ok(u32::try_from(val)?),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),
@@ -81,6 +85,8 @@ impl Value {
             Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val.into()),
             UnsignedBig(val) => Ok(val),
+            Ifd(val) => Ok(val.into()),
+            IfdBig(val) => Ok(val),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
             )),
@@ -139,6 +145,8 @@ impl Value {
             RationalBig(numerator, denominator) => {
                 Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?])
             }
+            Ifd(val) => Ok(vec![val]),
+            IfdBig(val) => Ok(vec![u32::try_from(val)?]),
             Ascii(val) => Ok(val.chars().map(u32::from).collect()),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
@@ -255,6 +263,8 @@ impl Value {
             UnsignedBig(val) => Ok(vec![val]),
             Rational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
             RationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
+            Ifd(val) => Ok(vec![val.into()]),
+            IfdBig(val) => Ok(vec![val]),
             Ascii(val) => Ok(val.chars().map(u32::from).map(u64::from).collect()),
             val => Err(TiffError::FormatError(
                 TiffFormatError::UnsignedIntegerExpected(val),
@@ -343,8 +353,13 @@ impl Entry {
             * match self.type_ {
                 Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
                 Type::SHORT | Type::SSHORT => 2,
-                Type::LONG | Type::SLONG | Type::FLOAT => 4,
-                Type::LONG8 | Type::DOUBLE | Type::RATIONAL | Type::SRATIONAL => 8,
+                Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+                Type::LONG8
+                | Type::SLONG8
+                | Type::DOUBLE
+                | Type::RATIONAL
+                | Type::SRATIONAL
+                | Type::IFD8 => 8,
                 Type::__NonExhaustive => unreachable!(),
             };
 
@@ -354,6 +369,7 @@ impl Entry {
             if decoder.bigtiff && value_bytes > 4 && value_bytes <= 8 {
                 return Ok(match self.type_ {
                     Type::LONG8 => UnsignedBig(self.r(bo).read_u64()?),
+                    Type::SLONG8 => SignedBig(self.r(bo).read_i64()?),
                     Type::DOUBLE => Double(self.r(bo).read_f64()?),
                     Type::RATIONAL => {
                         let mut r = self.r(bo);
@@ -363,6 +379,7 @@ impl Entry {
                         let mut r = self.r(bo);
                         SRational(r.read_i32()?, r.read_i32()?)
                     }
+                    Type::IFD8 => IfdBig(self.r(bo).read_u64()?),
                     Type::BYTE
                     | Type::SBYTE
                     | Type::ASCII
@@ -371,7 +388,8 @@ impl Entry {
                     | Type::SSHORT
                     | Type::LONG
                     | Type::SLONG
-                    | Type::FLOAT => unreachable!(),
+                    | Type::FLOAT
+                    | Type::IFD => unreachable!(),
                     Type::__NonExhaustive => unreachable!(),
                 });
             }
@@ -397,6 +415,10 @@ impl Entry {
                     decoder.goto_offset(self.r(bo).read_u32()?)?;
                     UnsignedBig(decoder.read_long8()?)
                 }
+                Type::SLONG8 => {
+                    decoder.goto_offset(self.r(bo).read_u32()?)?;
+                    SignedBig(decoder.read_slong8()?)
+                }
                 Type::DOUBLE => {
                     decoder.goto_offset(self.r(bo).read_u32()?)?;
                     Double(decoder.read_double()?)
@@ -408,6 +430,11 @@ impl Entry {
                 Type::SRATIONAL => {
                     decoder.goto_offset(self.r(bo).read_u32()?)?;
                     SRational(decoder.read_slong()?, decoder.read_slong()?)
+                }
+                Type::IFD => Ifd(self.r(bo).read_u32()?),
+                Type::IFD8 => {
+                    decoder.goto_offset(self.r(bo).read_u32()?)?;
+                    IfdBig(decoder.read_long8()?)
                 }
                 Type::__NonExhaustive => unreachable!(),
             });
@@ -477,7 +504,22 @@ impl Entry {
                     }
                     return Ok(List(v));
                 }
-                Type::LONG8 | Type::RATIONAL | Type::SRATIONAL | Type::DOUBLE => unreachable!(),
+                Type::IFD => {
+                    let mut r = self.r(bo);
+                    let mut v = Vec::new();
+                    for _ in 0..self.count {
+                        v.push(Ifd(r.read_u32()?));
+                    }
+                    return Ok(List(v));
+                }
+                Type::LONG8
+                | Type::SLONG8
+                | Type::RATIONAL
+                | Type::SRATIONAL
+                | Type::DOUBLE
+                | Type::IFD8 => {
+                    unreachable!()
+                }
                 Type::__NonExhaustive => unreachable!(),
             }
         }
@@ -518,6 +560,15 @@ impl Entry {
             }),
             Type::LONG8 => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
                 Ok(UnsignedBig(decoder.read_long8()?))
+            }),
+            Type::SLONG8 => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(SignedBig(decoder.read_slong8()?))
+            }),
+            Type::IFD => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(Ifd(decoder.read_long()?))
+            }),
+            Type::IFD8 => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
+                Ok(IfdBig(decoder.read_long8()?))
             }),
             Type::UNDEFINED => self.decode_offset(self.count, bo, limits, decoder, |decoder| {
                 Ok(Byte(u8::from(decoder.read_byte()?)))
