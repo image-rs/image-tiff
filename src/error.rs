@@ -4,7 +4,7 @@ use std::io;
 use std::str;
 use std::string;
 
-use crate::decoder::ifd::Value;
+use crate::decoder::{ifd::Value, ChunkType};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
@@ -29,6 +29,9 @@ pub enum TiffError {
     /// An integer conversion to or from a platform size failed, either due to
     /// limits of the platform size or limits of the format.
     IntSizeError,
+
+    /// The image does not support the requested operation
+    UsageError(UsageError),
 }
 
 /// The image is not formatted properly.
@@ -205,6 +208,29 @@ impl fmt::Display for TiffUnsupportedError {
     }
 }
 
+/// User attempted to use the Decoder in a way that is incompatible with a specific image.
+///
+/// For example: attempting to read a tile from a stripped image.
+#[derive(Debug)]
+pub enum UsageError {
+    InvalidChunkType(ChunkType, ChunkType),
+}
+
+impl fmt::Display for UsageError {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use self::UsageError::*;
+        match *self {
+            InvalidChunkType(expected, actual) => {
+                write!(
+                    fmt,
+                    "Requested operation is only valid for images with chunk encoding of type: {:?}, got {:?}.",
+                    expected, actual
+                )
+            }
+        }
+    }
+}
+
 impl fmt::Display for TiffError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
@@ -218,6 +244,7 @@ impl fmt::Display for TiffError {
             TiffError::IoError(ref e) => e.fmt(fmt),
             TiffError::LimitsExceeded => write!(fmt, "The Decoder limits are exceeded"),
             TiffError::IntSizeError => write!(fmt, "Platform or format size limits exceeded"),
+            TiffError::UsageError(ref e) => write!(fmt, "Usage error: {}", e),
         }
     }
 }
@@ -230,6 +257,7 @@ impl Error for TiffError {
             TiffError::IoError(..) => "IO error",
             TiffError::LimitsExceeded => "Decoder limits exceeded",
             TiffError::IntSizeError => "Platform or format size limits exceeded",
+            TiffError::UsageError(..) => "Invalid usage",
         }
     }
 

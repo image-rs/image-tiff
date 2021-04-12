@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 
 use self::ifd::Directory;
 use crate::tags::{
@@ -221,10 +221,8 @@ struct StripDecodeState {
 }
 
 #[derive(Debug)]
+/// Computed values useful for tile decoding
 struct TileAttributes {
-    // current_tile: usize, // TODO(Tomáš Král): incremental tile decoding
-    tile_offsets: Vec<u64>,
-    tile_bytes: Vec<u64>,
     tile_width: usize,
     tile_length: usize,
     tiles_down: usize,
@@ -234,18 +232,57 @@ struct TileAttributes {
     /// length of padding for bottommost tile in pixels
     padding_down: usize,
     /// A simple buffer right paddding is read into
-    padding_buffer: Vec<u8>,
     tile_samples: usize,
-    /// Sample count of one row of the image
-    line_samples: usize,
     /// Sample count of one row of one tile
     row_samples: usize,
     /// Sample count of one row of tiles
     tile_strip_samples: usize,
 }
 
-#[derive(Debug, Copy, Clone)]
-enum ChunkType {
+impl TileAttributes {
+    /// Returns the tile offset in the result buffer, counted in samples
+    fn get_offset(&self, tile: usize) -> usize {
+        let row = tile / self.tiles_across;
+        let column = tile % self.tiles_across;
+
+        (row * self.tile_strip_samples) + (column * self.row_samples)
+    }
+
+    fn get_padding(&self, tile: usize) -> (usize, usize) {
+        let row = tile / self.tiles_across;
+        let column = tile % self.tiles_across;
+
+        let padding_right = if column == self.tiles_across - 1 {
+            self.padding_right
+        } else {
+            0
+        };
+
+        let padding_down = if row == self.tiles_down - 1 {
+            self.padding_down
+        } else {
+            0
+        };
+
+        (padding_right, padding_down)
+    }
+}
+
+#[derive(Debug)]
+/// Stateful variables for tile decoding
+struct TileDecodeState {
+    current_tile: usize,
+    tile_offsets: Vec<u64>,
+    tile_bytes: Vec<u64>,
+    /// Buffer used for skipping horizontal padding
+    padding_buffer: Vec<u8>,
+    /// Pixel width of one row of the decoding result (tile / whole image)
+    result_width: usize,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+/// Chunk type of the internal representation
+pub enum ChunkType {
     Strip,
     Tile,
 }
@@ -322,6 +359,7 @@ where
     compression_method: CompressionMethod,
     chunk_type: ChunkType,
     strip_decoder: Option<StripDecodeState>,
+    tile_decoder: Option<TileDecodeState>,
     tile_attributes: Option<TileAttributes>,
 }
 
@@ -404,6 +442,7 @@ fn rev_hpredict(
     img_width: usize,
     color_type: ColorType,
 ) -> TiffResult<()> {
+    // TODO: use bits_per_sample.len() after implementing type 3 predictor
     let samples = match color_type {
         ColorType::Gray(8) | ColorType::Gray(16) | ColorType::Gray(32) | ColorType::Gray(64) => 1,
         ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) | ColorType::RGB(64) => 3,
@@ -421,6 +460,7 @@ fn rev_hpredict(
             ))
         }
     };
+
     match image {
         DecodingBuffer::U8(buf) => {
             rev_hpredict_nsamp(buf, size, img_width, samples)?;
@@ -535,6 +575,7 @@ impl<R: Read + Seek> Decoder<R> {
             compression_method: CompressionMethod::None,
             chunk_type: ChunkType::Strip,
             strip_decoder: None,
+            tile_decoder: None,
             tile_attributes: None,
         }
         .init()
@@ -698,12 +739,11 @@ impl<R: Read + Seek> Decoder<R> {
             ) {
                 (Ok(_), Err(_), Err(_)) => ChunkType::Strip,
                 (Err(_), Ok(_), Ok(_)) => ChunkType::Tile,
-                // TODO(Tomáš Král) - Should it be a hard error if both are used ?
-                // The spec says not to use both strip-oriented fields and tile-oriented fields.
-                // ...and other things like tiles not being x * 16 wide ?
+                // TODO: The spec says not to use both strip-oriented fields and tile-oriented fields.
+                // We can relax this later if it becomes a problem
                 _ => return Err(TiffError::FormatError(TiffFormatError::Format(
                     String::from(
-                        "Either no strips or tiles were found or both were used in the same file",
+                        "Neither strips nor tiles were found or both were used in the same file",
                     ),
                 ))),
             };
@@ -1008,49 +1048,14 @@ impl<R: Read + Seek> Decoder<R> {
     ) -> TiffResult<usize> {
         let color_type = self.colortype()?;
         self.goto_offset_u64(offset)?;
-        let (bytes, mut reader): (usize, Box<dyn EndianReader>) = match self.compression_method {
-            CompressionMethod::None => {
-                let order = self.reader.byte_order;
-                (
-                    usize::try_from(length)?,
-                    Box::new(SmartReader::wrap(&mut self.reader, order)),
-                )
-            }
-            CompressionMethod::LZW => {
-                let (bytes, reader) = LZWReader::new(
-                    &mut self.reader,
-                    usize::try_from(length)?,
-                    strip_sample_count * buffer.byte_len(),
-                )?;
-                (bytes, Box::new(reader))
-            }
-            CompressionMethod::PackBits => {
-                let order = self.reader.byte_order;
-                let (bytes, reader) =
-                    PackBitsReader::new(&mut self.reader, order, usize::try_from(length)?)?;
-                (bytes, Box::new(reader))
-            }
-            CompressionMethod::OldDeflate => {
-                let (bytes, reader) = DeflateReader::new(&mut self.reader, strip_sample_count)?;
-                (bytes, Box::new(reader))
-            }
-            method => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedCompressionMethod(method),
-                ))
-            }
-        };
 
-        // FIXME: this might be suboptimal. We might default remaining bits to ´0`, which some
-        // other decoders might do.
-        if bytes / buffer.byte_len() > strip_sample_count {
-            return Err(TiffError::FormatError(
-                TiffFormatError::UnexpectedCompressedData {
-                    actual_bytes: bytes,
-                    required_bytes: strip_sample_count * buffer.byte_len(),
-                },
-            ));
-        }
+        let (bytes, mut reader) = Self::create_reader(
+            &mut self.reader,
+            self.compression_method,
+            length,
+            strip_sample_count,
+            buffer.byte_len(),
+        )?;
 
         Ok(match (color_type, buffer) {
             (ColorType::RGB(8), DecodingBuffer::U8(ref mut buffer))
@@ -1188,61 +1193,24 @@ impl<R: Read + Seek> Decoder<R> {
         let color_type = self.colortype()?;
         self.goto_offset_u64(offset)?;
 
-        let (padding_right, padding_down) = self.get_tile_padding(tile);
-        let tile_attributes = self.tile_attributes.as_mut().unwrap();
-        let tile_samples = tile_attributes.tile_samples;
-        let tile_length = tile_attributes.tile_length;
-        let line_samples = tile_attributes.line_samples;
-        let row_samples = tile_attributes.row_samples;
-        let padding_buffer = &mut tile_attributes.padding_buffer;
+        let tile_attrs = self.tile_attributes.as_mut().unwrap();
+        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
+        let tile_samples = tile_attrs.tile_samples;
+        let tile_length = tile_attrs.tile_length;
+        let row_samples = tile_attrs.row_samples;
         let padding_right_samples = padding_right * self.bits_per_sample.len();
 
-        let (bytes, mut reader): (usize, Box<dyn EndianReader>) = match self.compression_method {
-            CompressionMethod::None => {
-                let order = self.reader.byte_order;
-                (
-                    usize::try_from(compressed_length)?,
-                    Box::new(SmartReader::wrap(&mut self.reader, order)),
-                )
-            }
-            CompressionMethod::LZW => {
-                let (bytes, reader) = LZWReader::new(
-                    &mut self.reader,
-                    usize::try_from(compressed_length)?,
-                    tile_samples * buffer.byte_len(),
-                )?;
-                (bytes, Box::new(reader))
-            }
-            CompressionMethod::PackBits => {
-                let order = self.reader.byte_order;
-                let (bytes, reader) = PackBitsReader::new(
-                    &mut self.reader,
-                    order,
-                    usize::try_from(compressed_length)?,
-                )?;
-                (bytes, Box::new(reader))
-            }
-            CompressionMethod::OldDeflate => {
-                let (bytes, reader) = DeflateReader::new(&mut self.reader, tile_samples)?;
-                (bytes, Box::new(reader))
-            }
-            method => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedCompressionMethod(method),
-                ))
-            }
-        };
+        let (bytes, mut reader) = Self::create_reader(
+            &mut self.reader,
+            self.compression_method,
+            compressed_length,
+            tile_samples,
+            buffer.byte_len(),
+        )?;
 
-        // FIXME: this might be suboptimal. We might default remaining bits to ´0`, which some
-        // other decoders might do.
-        if bytes / buffer.byte_len() > tile_samples {
-            return Err(TiffError::FormatError(
-                TiffFormatError::UnexpectedCompressedData {
-                    actual_bytes: bytes,
-                    required_bytes: tile_samples * buffer.byte_len(),
-                },
-            ));
-        }
+        let tile_decoder = self.tile_decoder.as_mut().unwrap();
+        let line_samples = tile_decoder.result_width * self.bits_per_sample.len();
+        let padding_buffer = &mut tile_decoder.padding_buffer;
 
         macro_rules! fill_tile_buffer {
             ($img_buf:ident, $byte_len:expr, $read_fn:ident) => {{
@@ -1253,7 +1221,7 @@ impl<R: Read + Seek> Decoder<R> {
                     let src = &mut $img_buf[(row_start / $byte_len)..(row_end / $byte_len)];
                     reader.$read_fn(src)?;
                     // Skip horizontal padding
-                    // TODO(Tomáš Král): is there a better way of skipping the padding ?
+                    // TODO: is there a better way of skipping the padding ?
                     if padding_right > 0 {
                         reader.read_exact(padding_buffer)?
                     }
@@ -1376,8 +1344,79 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
+    fn create_reader<'r>(
+        reader: &'r mut SmartReader<R>,
+        compression_method: CompressionMethod,
+        compressed_length: u64,
+        tile_samples: usize,
+        byte_len: usize,
+    ) -> TiffResult<(usize, Box<dyn EndianReader + 'r>)> {
+        let (bytes, reader): (usize, Box<dyn EndianReader>) = match compression_method {
+            CompressionMethod::None => {
+                let order = reader.byte_order;
+                (
+                    usize::try_from(compressed_length)?,
+                    Box::new(SmartReader::wrap(reader, order)),
+                )
+            }
+            CompressionMethod::LZW => {
+                let (bytes, reader) = LZWReader::new(
+                    reader,
+                    usize::try_from(compressed_length)?,
+                    tile_samples * byte_len,
+                )?;
+                (bytes, Box::new(reader))
+            }
+            CompressionMethod::PackBits => {
+                let order = reader.byte_order;
+                let (bytes, reader) =
+                    PackBitsReader::new(reader, order, usize::try_from(compressed_length)?)?;
+                (bytes, Box::new(reader))
+            }
+            CompressionMethod::OldDeflate => {
+                let (bytes, reader) = DeflateReader::new(reader, tile_samples)?;
+                (bytes, Box::new(reader))
+            }
+            method => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedCompressionMethod(method),
+                ))
+            }
+        };
+
+        // FIXME: this might be suboptimal. We might default remaining bits to ´0`, which some
+        // other decoders might do.
+        if bytes / byte_len > tile_samples {
+            return Err(TiffError::FormatError(
+                TiffFormatError::UnexpectedCompressedData {
+                    actual_bytes: bytes,
+                    required_bytes: tile_samples * byte_len,
+                },
+            ));
+        }
+
+        Ok((bytes, reader))
+    }
+
+    fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
+        if expected != self.chunk_type {
+            return Err(TiffError::UsageError(UsageError::InvalidChunkType(
+                expected,
+                self.chunk_type,
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// The chunk type (Strips / Tiles) of the image
+    pub fn get_chunk_type(&self) -> ChunkType {
+        self.chunk_type
+    }
+
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
+        self.check_chunk_type(ChunkType::Strip)?;
         let rows_per_strip = self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height);
 
         if rows_per_strip == 0 {
@@ -1385,6 +1424,16 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         Ok((self.height + rows_per_strip - 1) / rows_per_strip)
+    }
+
+    /// Number of tiles in image
+    pub fn tile_count(&mut self) -> TiffResult<u32> {
+        self.check_chunk_type(ChunkType::Tile)?;
+        self.init_tile_attributes()?;
+        let tile_attrs = self.tile_attributes.as_ref().unwrap();
+        Ok(u32::try_from(
+            tile_attrs.tiles_across * tile_attrs.tiles_down,
+        )?)
     }
 
     fn initialize_strip_decoder(&mut self) -> TiffResult<()> {
@@ -1401,7 +1450,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn init_tile_attributes(&mut self, buffer_byte_len: usize) -> TiffResult<()> {
+    fn init_tile_attributes(&mut self) -> TiffResult<()> {
         if self.tile_attributes.is_none() {
             let tile_width = usize::try_from(self.get_tag_u32(Tag::TileWidth)?)?;
             let tile_length = usize::try_from(self.get_tag_u32(Tag::TileLength)?)?;
@@ -1411,32 +1460,53 @@ impl<R: Read + Seek> Decoder<R> {
 
             let samples_per_pixel = self.bits_per_sample.len();
 
-            let tile_sample_count = tile_length * tile_width * samples_per_pixel;
+            let tile_samples = tile_length * tile_width * samples_per_pixel;
             let padding_right = (tiles_across * tile_width) - usize::try_from(self.width)?;
-            let tile_strip_sample_count = (tile_sample_count * tiles_across)
-                - (padding_right * tile_length * samples_per_pixel);
-
-            let padding_buffer_size = padding_right * samples_per_pixel * buffer_byte_len;
-            if padding_buffer_size > self.limits.intermediate_buffer_size {
-                return Err(TiffError::LimitsExceeded);
-            }
+            let tile_strip_samples =
+                (tile_samples * tiles_across) - (padding_right * tile_length * samples_per_pixel);
 
             self.tile_attributes = Some(TileAttributes {
-                tile_offsets: self.get_tag_u64_vec(Tag::TileOffsets)?,
-                tile_bytes: self.get_tag_u64_vec(Tag::TileByteCounts)?,
                 tile_width,
                 tile_length,
                 tiles_across,
                 tiles_down,
-                tile_samples: tile_sample_count,
+                tile_samples,
                 padding_right,
                 padding_down: (tiles_down * tile_length) - usize::try_from(self.height)?,
-                padding_buffer: vec![0; padding_buffer_size],
-                line_samples: usize::try_from(self.width)? * samples_per_pixel,
                 row_samples: (tile_width * samples_per_pixel),
-                tile_strip_samples: tile_strip_sample_count,
+                tile_strip_samples,
             });
         }
+
+        Ok(())
+    }
+
+    fn update_tile_decoder(
+        &mut self,
+        result_width: usize,
+        buffer_byte_len: usize,
+    ) -> TiffResult<()> {
+        let samples_per_pixel = self.bits_per_sample.len();
+
+        if self.tile_decoder.is_none() {
+            let tile_attrs = self.tile_attributes.as_ref().unwrap();
+
+            let padding_buffer_size =
+                tile_attrs.padding_right * samples_per_pixel * buffer_byte_len;
+            if padding_buffer_size > self.limits.intermediate_buffer_size {
+                return Err(TiffError::LimitsExceeded);
+            }
+
+            self.tile_decoder = Some(TileDecodeState {
+                current_tile: 0,
+                tile_offsets: self.get_tag_u64_vec(Tag::TileOffsets)?,
+                tile_bytes: self.get_tag_u64_vec(Tag::TileByteCounts)?,
+                padding_buffer: vec![0; padding_buffer_size],
+                result_width: 0, // needs to be updated for differently padded_tiles, see below
+            })
+        }
+
+        self.tile_decoder.as_mut().unwrap().result_width = result_width;
 
         Ok(())
     }
@@ -1565,8 +1635,72 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn result_buffer(&self, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = usize::try_from(self.width)? * height * self.bits_per_sample.len();
+    fn read_tile_to_buffer(&mut self, result: &mut DecodingBuffer, tile: usize) -> TiffResult<()> {
+        let file_offset = *self
+            .tile_decoder
+            .as_ref()
+            .unwrap()
+            .tile_offsets
+            .get(tile)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
+
+        let compressed_bytes = *self
+            .tile_decoder
+            .as_ref()
+            .unwrap()
+            .tile_bytes
+            .get(tile)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
+
+        let tile_attrs = self.tile_attributes.as_ref().unwrap();
+        let tile_samples = tile_attrs.tile_samples;
+        let tile_width = tile_attrs.tile_width;
+        let tile_length = tile_attrs.tile_length;
+
+        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
+
+        let units_read = self.expand_tile(result.copy(), file_offset, compressed_bytes, tile)?;
+
+        if units_read < tile_samples {
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentStripSamples {
+                    actual_samples: units_read,
+                    required_samples: tile_samples,
+                },
+            ));
+        }
+
+        if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
+            match Predictor::from_u16(predictor) {
+                Some(Predictor::None) => (),
+                Some(Predictor::Horizontal) => {
+                    rev_hpredict(
+                        result.copy(),
+                        (
+                            u32::try_from(tile_width - padding_right)?,
+                            u32::try_from(tile_length - padding_down)?,
+                        ),
+                        self.tile_decoder.as_ref().unwrap().result_width,
+                        self.colortype()?,
+                    )?;
+                }
+                None => {
+                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
+                        predictor,
+                    )))
+                }
+                Some(Predictor::__NonExhaustive) => unreachable!(),
+            }
+        }
+        Ok(())
+    }
+
+    fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
+        let buffer_size = width * height * self.bits_per_sample.len();
 
         let max_sample_bits = self.bits_per_sample.iter().cloned().max().unwrap_or(8);
         match self.sample_format.first().unwrap_or(&SampleFormat::Uint) {
@@ -1603,6 +1737,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Read a single strip from the image and return it as a Vector
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
+        self.check_chunk_type(ChunkType::Strip)?;
         self.initialize_strip_decoder()?;
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
 
@@ -1614,123 +1749,49 @@ impl<R: Read + Seek> Decoder<R> {
             usize::try_from(self.height)? - index * rows_per_strip,
         );
 
-        let mut result = self.result_buffer(strip_height)?;
+        let mut result = self.result_buffer(usize::try_from(self.width)?, strip_height)?;
         self.read_strip_to_buffer(result.as_buffer(0))?;
 
         Ok(result)
     }
 
-    // Tile offset in the result buffer, counted in samples
-    fn get_tile_offset(&self, tile: usize) -> usize {
-        let tile_attrs = self.tile_attributes.as_ref().unwrap();
+    /// Read a single tile from the image and return it as a Vector
+    pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
+        self.check_chunk_type(ChunkType::Tile)?;
+        self.init_tile_attributes()?;
 
-        let row = tile / tile_attrs.tiles_across;
-        let column = tile % tile_attrs.tiles_across;
-
-        (row * tile_attrs.tile_strip_samples) + (column * tile_attrs.row_samples)
-    }
-
-    fn get_tile_padding(&self, tile: usize) -> (usize, usize) {
-        let tile_attrs = self.tile_attributes.as_ref().unwrap();
-
-        let row = tile / tile_attrs.tiles_across;
-        let column = tile % tile_attrs.tiles_across;
-
-        let padding_right = if column == tile_attrs.tiles_across - 1 {
-            tile_attrs.padding_right
-        } else {
-            0
-        };
-
-        let padding_down = if row == tile_attrs.tiles_down - 1 {
-            tile_attrs.padding_down
-        } else {
-            0
-        };
-
-        (padding_right, padding_down)
-    }
-
-    fn read_tile_to_buffer(&mut self, result: &mut DecodingResult, tile: usize) -> TiffResult<()> {
-        let file_offset = *self
-            .tile_attributes
-            .as_ref()
-            .unwrap()
-            .tile_offsets
-            .get(tile)
-            .ok_or(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ))?;
-
-        let compressed_bytes = *self
-            .tile_attributes
-            .as_ref()
-            .unwrap()
-            .tile_bytes
-            .get(tile)
-            .ok_or(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ))?;
+        let tile = self.tile_decoder.as_ref().map_or(0, |d| d.current_tile);
 
         let tile_attrs = self.tile_attributes.as_ref().unwrap();
-        let tile_samples = tile_attrs.tile_samples;
-        let tile_width = tile_attrs.tile_width;
-        let tile_length = tile_attrs.tile_length;
+        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
 
-        let buffer_offset = self.get_tile_offset(tile);
-        let (padding_right, padding_down) = self.get_tile_padding(tile);
+        let tile_width = tile_attrs.tile_width - padding_right;
+        let tile_length = tile_attrs.tile_length - padding_down;
 
-        let units_read = self.expand_tile(
-            result.as_buffer(buffer_offset),
-            file_offset,
-            compressed_bytes,
-            tile,
-        )?;
+        let mut result = self.result_buffer(tile_width, tile_length)?;
+        self.update_tile_decoder(tile_width, result.as_buffer(0).byte_len())?;
 
-        if units_read < tile_samples {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentStripSamples {
-                    actual_samples: units_read,
-                    required_samples: tile_samples,
-                },
-            ));
-        }
+        self.read_tile_to_buffer(&mut result.as_buffer(0), tile)?;
 
-        if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
-            match Predictor::from_u16(predictor) {
-                Some(Predictor::None) => (),
-                Some(Predictor::Horizontal) => {
-                    rev_hpredict(
-                        result.as_buffer(buffer_offset).copy(),
-                        (
-                            u32::try_from(tile_width - padding_right)?,
-                            u32::try_from(tile_length - padding_down)?,
-                        ),
-                        usize::try_from(self.width)?,
-                        self.colortype()?,
-                    )?;
-                }
-                None => {
-                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
-                        predictor,
-                    )))
-                }
-                Some(Predictor::__NonExhaustive) => unreachable!(),
-            }
-        }
-        Ok(())
+        self.tile_decoder.as_mut().unwrap().current_tile += 1;
+
+        Ok(result)
     }
 
     fn read_tiled_image(&mut self) -> TiffResult<DecodingResult> {
-        let mut result = self.result_buffer(usize::try_from(self.height)?)?;
+        let width = usize::try_from(self.width)?;
+        let mut result = self.result_buffer(width, usize::try_from(self.height)?)?;
 
-        self.init_tile_attributes(result.as_buffer(0).byte_len())?;
+        self.init_tile_attributes()?;
+        self.update_tile_decoder(width, result.as_buffer(0).byte_len())?;
 
-        let tiles_across = self.tile_attributes.as_ref().unwrap().tiles_across;
-        let tiles_down = self.tile_attributes.as_ref().unwrap().tiles_down;
+        let tile_attrs = self.tile_attributes.as_ref().unwrap();
+        let tiles_across = tile_attrs.tiles_across;
+        let tiles_down = tile_attrs.tiles_down;
 
         for tile in 0..(tiles_across * tiles_down) {
-            self.read_tile_to_buffer(&mut result, tile)?;
+            let buffer_offset = self.tile_attributes.as_ref().unwrap().get_offset(tile);
+            self.read_tile_to_buffer(&mut result.as_buffer(buffer_offset), tile)?;
         }
 
         Ok(result)
@@ -1744,7 +1805,8 @@ impl<R: Read + Seek> Decoder<R> {
         let samples_per_strip =
             usize::try_from(self.width)? * rows_per_strip * self.bits_per_sample.len();
 
-        let mut result = self.result_buffer(usize::try_from(self.height)?)?;
+        let mut result =
+            self.result_buffer(usize::try_from(self.width)?, usize::try_from(self.height)?)?;
 
         for i in 0..usize::try_from(self.strip_count()?)? {
             let r = result.as_buffer(samples_per_strip * i);

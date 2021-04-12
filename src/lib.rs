@@ -16,7 +16,9 @@ pub mod encoder;
 mod error;
 pub mod tags;
 
-pub use self::error::{InflateError, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+pub use self::error::{
+    InflateError, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
+};
 
 /// An enumeration over supported color types and their bit depths
 #[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]
