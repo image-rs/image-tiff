@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
+use crate::{
+    bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
+};
 
 use self::ifd::Directory;
 use crate::tags::{
@@ -209,6 +211,24 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(buf),
             DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(buf),
             DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(buf),
+        }
+    }
+
+    fn prefix<'b>(&'b mut self, new_length: usize) -> DecodingBuffer<'b>
+    where
+        'a: 'b,
+    {
+        match *self {
+            DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[..new_length]),
+            DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[..new_length]),
+            DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[..new_length]),
+            DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[..new_length]),
+            DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[..new_length]),
+            DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[..new_length]),
+            DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[..new_length]),
+            DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[..new_length]),
+            DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[..new_length]),
+            DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[..new_length]),
         }
     }
 }
@@ -506,51 +526,51 @@ fn rev_hpredict(
     Ok(())
 }
 
-fn process_photometry_u64(buffer: &mut [u64], bytes: usize) {
-    for datum in buffer[..bytes / 8].iter_mut() {
+fn process_photometry_u64(buffer: &mut [u64]) {
+    for datum in buffer.iter_mut() {
         *datum = 0xffff_ffff_ffff_ffff - *datum
     }
 }
 
-fn process_photometry_u32(buffer: &mut [u32], bytes: usize) {
-    for datum in buffer[..bytes / 4].iter_mut() {
+fn process_photometry_u32(buffer: &mut [u32]) {
+    for datum in buffer.iter_mut() {
         *datum = 0xffff_ffff - *datum
     }
 }
 
-fn process_photometry_u16(buffer: &mut [u16], bytes: usize) {
-    for datum in buffer[..bytes / 2].iter_mut() {
+fn process_photometry_u16(buffer: &mut [u16]) {
+    for datum in buffer.iter_mut() {
         *datum = 0xffff - *datum
     }
 }
 
-fn process_photometry_i16(buffer: &mut [i16], bytes: usize) {
-    for datum in buffer[..bytes / 2].iter_mut() {
+fn process_photometry_i16(buffer: &mut [i16]) {
+    for datum in buffer.iter_mut() {
         *datum = !*datum;
     }
 }
 
-fn process_photometry_i8(buffer: &mut [i8], bytes: usize) {
-    for datum in buffer[..bytes].iter_mut() {
+fn process_photometry_i8(buffer: &mut [i8]) {
+    for datum in buffer.iter_mut() {
         *datum = !*datum;
     }
 }
 
-fn process_photometry_u8(buffer: &mut [u8], bytes: usize) {
-    for byte in buffer[..bytes].iter_mut() {
-        *byte = !*byte;
+fn process_photometry_u8(buffer: &mut [u8]) {
+    for byte in buffer.iter_mut() {
+        *byte = 0xff - *byte
     }
 }
 
-fn process_photometry_f64(buffer: &mut [f64], bytes: usize) {
-    for datum in buffer[..bytes / 8].iter_mut() {
+fn process_photometry_f64(buffer: &mut [f64]) {
+    for datum in buffer.iter_mut() {
         // FIXME: assumes [0, 1) range for floats
         *datum = 1.0 - *datum
     }
 }
 
-fn process_photometry_f32(buffer: &mut [f32], bytes: usize) {
-    for datum in buffer[..bytes / 4].iter_mut() {
+fn process_photometry_f32(buffer: &mut [f32]) {
+    for datum in buffer.iter_mut() {
         // FIXME: assumes [0, 1) range for floats
         *datum = 1.0 - *datum
     }
@@ -1041,341 +1061,44 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns the number of bytes read.
     fn expand_strip<'a>(
         &mut self,
-        buffer: DecodingBuffer<'a>,
+        mut buffer: DecodingBuffer<'a>,
         offset: u64,
         length: u64,
-        strip_sample_count: usize,
-    ) -> TiffResult<usize> {
+    ) -> TiffResult<()> {
+        // Validate that the provided buffer is of the expected type.
         let color_type = self.colortype()?;
-        self.goto_offset_u64(offset)?;
-
-        let (bytes, mut reader) = Self::create_reader(
-            &mut self.reader,
-            self.compression_method,
-            length,
-            strip_sample_count,
-            buffer.byte_len(),
-        )?;
-
-        Ok(match (color_type, buffer) {
-            (ColorType::RGB(8), DecodingBuffer::U8(ref mut buffer))
-            | (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer))
-            | (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
-                reader.read_exact(&mut buffer[..bytes])?;
-                bytes
-            }
-            (ColorType::RGBA(16), DecodingBuffer::U16(ref mut buffer))
-            | (ColorType::RGB(16), DecodingBuffer::U16(ref mut buffer))
-            | (ColorType::CMYK(16), DecodingBuffer::U16(ref mut buffer)) => {
-                reader.read_u16_into(&mut buffer[..bytes / 2])?;
-                bytes / 2
-            }
-            (ColorType::RGBA(32), DecodingBuffer::U32(ref mut buffer))
-            | (ColorType::RGB(32), DecodingBuffer::U32(ref mut buffer))
-            | (ColorType::CMYK(32), DecodingBuffer::U32(ref mut buffer)) => {
-                reader.read_u32_into(&mut buffer[..bytes / 4])?;
-                bytes / 4
-            }
-            (ColorType::RGBA(32), DecodingBuffer::F32(ref mut buffer))
-            | (ColorType::RGB(32), DecodingBuffer::F32(ref mut buffer))
-            | (ColorType::CMYK(32), DecodingBuffer::F32(ref mut buffer)) => {
-                reader.read_f32_into(&mut buffer[..bytes / 4])?;
-                bytes / 4
-            }
-            (ColorType::RGBA(64), DecodingBuffer::F64(ref mut buffer))
-            | (ColorType::RGB(64), DecodingBuffer::F64(ref mut buffer))
-            | (ColorType::CMYK(64), DecodingBuffer::F64(ref mut buffer)) => {
-                reader.read_f64_into(&mut buffer[..bytes / 8])?;
-                bytes / 8
-            }
-            (ColorType::RGBA(64), DecodingBuffer::U64(ref mut buffer))
-            | (ColorType::RGB(64), DecodingBuffer::U64(ref mut buffer))
-            | (ColorType::CMYK(64), DecodingBuffer::U64(ref mut buffer)) => {
-                reader.read_u64_into(&mut buffer[..bytes / 8])?;
-                bytes / 8
-            }
-            (ColorType::RGBA(8), DecodingBuffer::I8(ref mut buffer))
-            | (ColorType::RGB(8), DecodingBuffer::I8(ref mut buffer))
-            | (ColorType::CMYK(8), DecodingBuffer::I8(ref mut buffer)) => {
-                reader.read_i8_into(&mut buffer[..bytes])?;
-                bytes
-            }
-            (ColorType::RGBA(16), DecodingBuffer::I16(ref mut buffer))
-            | (ColorType::RGB(16), DecodingBuffer::I16(ref mut buffer))
-            | (ColorType::CMYK(16), DecodingBuffer::I16(ref mut buffer)) => {
-                reader.read_i16_into(&mut buffer[..bytes / 2])?;
-                bytes / 2
-            }
-
-            (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
-                reader.read_u64_into(&mut buffer[..bytes / 8])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_u64(buffer, bytes)
-                }
-                bytes / 8
-            }
-            (ColorType::Gray(64), DecodingBuffer::I64(ref mut buffer)) => {
-                reader.read_i64_into(&mut buffer[..bytes / 8])?;
-                bytes / 8
-            }
-            (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
-                reader.read_u32_into(&mut buffer[..bytes / 4])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_u32(buffer, bytes)
-                }
-                bytes / 4
-            }
-            (ColorType::Gray(32), DecodingBuffer::I32(ref mut buffer)) => {
-                reader.read_i32_into(&mut buffer[..bytes / 4])?;
-                bytes / 4
-            }
-            (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                reader.read_u16_into(&mut buffer[..bytes / 2])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_u16(buffer, bytes)
-                }
-                bytes / 2
-            }
-            (ColorType::Gray(8), DecodingBuffer::I8(ref mut buffer)) => {
-                reader.read_i8_into(&mut buffer[..bytes])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_i8(buffer, bytes)
-                }
-                bytes
-            }
-            // The following conversions interpret the image as in libtiff.
-            // In particular, MIN is white and MAX is black and not Zero as the name would imply.
-            (ColorType::Gray(16), DecodingBuffer::I16(ref mut buffer)) => {
-                reader.read_i16_into(&mut buffer[..bytes / 2])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_i16(buffer, bytes)
-                }
-                bytes / 2
-            }
-            (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
-                reader.read_exact(&mut buffer[..bytes])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_u8(buffer, bytes)
-                }
-                bytes
-            }
-            (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
-                reader.read_f32_into(&mut buffer[..bytes / 4])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_f32(buffer, bytes)
-                }
-                bytes / 4
-            }
-            (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
-                reader.read_f64_into(&mut buffer[..bytes / 8])?;
-                if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    process_photometry_f64(buffer, bytes)
-                }
-                bytes / 8
-            }
-            (type_, _) => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedColorType(type_),
-                ))
-            }
-        })
-    }
-
-    /// Decompresses the tile into the supplied buffer.
-    /// Returns the number of bytes read.
-    fn expand_tile<'a>(
-        &mut self,
-        buffer: DecodingBuffer<'a>,
-        offset: u64,
-        compressed_length: u64,
-        tile: usize,
-    ) -> TiffResult<usize> {
-        let color_type = self.colortype()?;
-        self.goto_offset_u64(offset)?;
-
-        let tile_attrs = self.tile_attributes.as_mut().unwrap();
-        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-        let tile_samples = tile_attrs.tile_samples;
-        let tile_length = tile_attrs.tile_length;
-        let row_samples = tile_attrs.row_samples;
-        let padding_right_samples = padding_right * self.bits_per_sample.len();
-
-        let (bytes, mut reader) = Self::create_reader(
-            &mut self.reader,
-            self.compression_method,
-            compressed_length,
-            tile_samples,
-            buffer.byte_len(),
-        )?;
-
-        let tile_decoder = self.tile_decoder.as_mut().unwrap();
-        let line_samples = tile_decoder.result_width * self.bits_per_sample.len();
-        let padding_buffer = &mut tile_decoder.padding_buffer;
-
-        macro_rules! fill_tile_buffer {
-            ($img_buf:ident, $byte_len:expr, $read_fn:ident) => {{
-                for row in 0..(tile_length - padding_down) {
-                    let row_start = row * line_samples;
-                    let row_end = row_start + row_samples - padding_right_samples;
-
-                    let src = &mut $img_buf[(row_start / $byte_len)..(row_end / $byte_len)];
-                    reader.$read_fn(src)?;
-                    // Skip horizontal padding
-                    // TODO: is there a better way of skipping the padding ?
-                    if padding_right > 0 {
-                        reader.read_exact(padding_buffer)?
-                    }
-                }
-                Ok((bytes / $byte_len))
-            }};
-        }
-
-        macro_rules! tile_photometry {
-            ($img_buf:ident, $byte_len:expr, $photometry_fn:ident) => {{
-                for row in 0..(tile_length - padding_down) {
-                    let row_start = row * line_samples;
-                    let row_end = row_start + row_samples - padding_right_samples;
-
-                    let buf = &mut $img_buf[row_start..row_end];
-                    if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                        $photometry_fn(
-                            buf,
-                            (row_samples - padding_right_samples) * self.bits_per_sample.len(),
-                        )
-                    };
-                }
-            }};
-        }
-
-        match (color_type, buffer) {
-            (ColorType::RGB(8), DecodingBuffer::U8(ref mut buffer))
-            | (ColorType::RGBA(8), DecodingBuffer::U8(ref mut buffer))
-            | (ColorType::CMYK(8), DecodingBuffer::U8(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 1, read_exact}
-            }
-            (ColorType::RGBA(16), DecodingBuffer::U16(ref mut buffer))
-            | (ColorType::RGB(16), DecodingBuffer::U16(ref mut buffer))
-            | (ColorType::CMYK(16), DecodingBuffer::U16(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 2, read_u16_into}
-            }
-            (ColorType::RGBA(32), DecodingBuffer::U32(ref mut buffer))
-            | (ColorType::RGB(32), DecodingBuffer::U32(ref mut buffer))
-            | (ColorType::CMYK(32), DecodingBuffer::U32(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 4, read_u32_into}
-            }
-            (ColorType::RGBA(32), DecodingBuffer::F32(ref mut buffer))
-            | (ColorType::RGB(32), DecodingBuffer::F32(ref mut buffer))
-            | (ColorType::CMYK(32), DecodingBuffer::F32(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 4, read_f32_into}
-            }
-            (ColorType::RGBA(64), DecodingBuffer::F64(ref mut buffer))
-            | (ColorType::RGB(64), DecodingBuffer::F64(ref mut buffer))
-            | (ColorType::CMYK(64), DecodingBuffer::F64(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 8, read_f64_into}
-            }
-            (ColorType::RGBA(64), DecodingBuffer::U64(ref mut buffer))
-            | (ColorType::RGB(64), DecodingBuffer::U64(ref mut buffer))
-            | (ColorType::CMYK(64), DecodingBuffer::U64(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 8, read_u64_into}
-            }
-            (ColorType::RGBA(8), DecodingBuffer::I8(ref mut buffer))
-            | (ColorType::RGB(8), DecodingBuffer::I8(ref mut buffer))
-            | (ColorType::CMYK(8), DecodingBuffer::I8(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 1, read_i8_into}
-            }
-            (ColorType::RGBA(16), DecodingBuffer::I16(ref mut buffer))
-            | (ColorType::RGB(16), DecodingBuffer::I16(ref mut buffer))
-            | (ColorType::CMYK(16), DecodingBuffer::I16(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 2, read_i16_into}
-            }
-            (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
-                let units_read = fill_tile_buffer! {buffer, 8, read_u64_into};
-                tile_photometry!(buffer, 8, process_photometry_u64);
-                units_read
-            }
-            (ColorType::Gray(64), DecodingBuffer::I64(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 8, read_i64_into}
-            }
-            (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
-                let units_read = fill_tile_buffer!(buffer, 4, read_u32_into);
-                tile_photometry!(buffer, 4, process_photometry_u32);
-                units_read
-            }
-            (ColorType::Gray(32), DecodingBuffer::I32(ref mut buffer)) => {
-                fill_tile_buffer! {buffer, 4, read_i32_into}
-            }
-            (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                let units_read = fill_tile_buffer!(buffer, 2, read_u16_into);
-                tile_photometry!(buffer, 2, process_photometry_u16);
-                units_read
-            }
-            (ColorType::Gray(8), DecodingBuffer::I8(ref mut buffer)) => {
-                let units_read = fill_tile_buffer!(buffer, 1, read_i8_into);
-                tile_photometry!(buffer, 1, process_photometry_i8);
-                units_read
-            }
-            // The following conversions interpret the image as in libtiff.
-            // In particular, MIN is white and MAX is black and not Zero as the name would imply.
-            (ColorType::Gray(16), DecodingBuffer::I16(ref mut buffer)) => {
-                let units_read = fill_tile_buffer!(buffer, 2, read_i16_into);
-                tile_photometry!(buffer, 2, process_photometry_i16);
-                units_read
-            }
-            (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
-                let units_read = fill_tile_buffer!(buffer, 1, read_exact);
-                tile_photometry!(buffer, 1, process_photometry_u8);
-                units_read
-            }
-            (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
-                let units_read = fill_tile_buffer!(buffer, 4, read_f32_into);
-                tile_photometry!(buffer, 4, process_photometry_f32);
-                units_read
-            }
-            (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
-                let units_read = fill_tile_buffer!(buffer, 8, read_f64_into);
-                tile_photometry!(buffer, 8, process_photometry_f64);
-                units_read
-            }
+        match (color_type, &buffer) {
+            (ColorType::RGB(n), _)
+            | (ColorType::RGBA(n), _)
+            | (ColorType::CMYK(n), _)
+            | (ColorType::Gray(n), _)
+                if usize::from(n) == buffer.byte_len() * 8 => {}
+            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n <= 8 => {}
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
                 ))
             }
         }
-    }
 
-    fn create_reader<'r>(
-        reader: &'r mut SmartReader<R>,
-        compression_method: CompressionMethod,
-        compressed_length: u64,
-        tile_samples: usize,
-        byte_len: usize,
-    ) -> TiffResult<(usize, Box<dyn EndianReader + 'r>)> {
-        let (bytes, reader): (usize, Box<dyn EndianReader>) = match compression_method {
-            CompressionMethod::None => {
-                let order = reader.byte_order;
-                (
-                    usize::try_from(compressed_length)?,
-                    Box::new(SmartReader::wrap(reader, order)),
-                )
-            }
-            CompressionMethod::LZW => {
-                let (bytes, reader) = LZWReader::new(
-                    reader,
-                    usize::try_from(compressed_length)?,
-                    tile_samples * byte_len,
-                )?;
-                (bytes, Box::new(reader))
-            }
+        // Construct necessary reader to perform decompression.
+        self.goto_offset_u64(offset)?;
+        let byte_order = self.reader.byte_order;
+        let mut reader: Box<dyn Read> = match self.compression_method {
+            CompressionMethod::None => Box::new(&mut self.reader),
+            CompressionMethod::LZW => Box::new(
+                LZWReader::new(
+                    &mut self.reader,
+                    usize::try_from(length)?,
+                    buffer.len() * buffer.byte_len(),
+                )?
+                .1,
+            ),
             CompressionMethod::PackBits => {
-                let order = reader.byte_order;
-                let (bytes, reader) =
-                    PackBitsReader::new(reader, order, usize::try_from(compressed_length)?)?;
-                (bytes, Box::new(reader))
+                Box::new(PackBitsReader::new(&mut self.reader, usize::try_from(length)?)?.1)
             }
             CompressionMethod::OldDeflate => {
-                let (bytes, reader) = DeflateReader::new(reader, tile_samples)?;
-                (bytes, Box::new(reader))
+                Box::new(DeflateReader::new(&mut self.reader, buffer.len() * buffer.byte_len())?.1)
             }
             method => {
                 return Err(TiffError::UnsupportedError(
@@ -1384,18 +1107,291 @@ impl<R: Read + Seek> Decoder<R> {
             }
         };
 
-        // FIXME: this might be suboptimal. We might default remaining bits to ´0`, which some
-        // other decoders might do.
-        if bytes / byte_len > tile_samples {
-            return Err(TiffError::FormatError(
-                TiffFormatError::UnexpectedCompressedData {
-                    actual_bytes: bytes,
-                    required_bytes: tile_samples * byte_len,
-                },
-            ));
+        // Read into output buffer.
+        {
+            let buffer = match &mut buffer {
+                DecodingBuffer::U8(buf) => &mut *buf,
+                DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
+                DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
+                DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
+                DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
+                DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
+                DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
+                DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
+                DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
+                DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
+            };
+
+            let mut bytes_written = 0;
+            while bytes_written < buffer.len() {
+                match reader.read(&mut buffer[bytes_written..]) {
+                    Ok(0) => break,
+                    Ok(n) => bytes_written += n,
+                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => Err(e)?,
+                }
+            }
+            for b in &mut buffer[bytes_written..] {
+                *b = 0;
+            }
         }
 
-        Ok((bytes, reader))
+        // Fix endianness. If `byte_order` matches the host, then conversion is a no-op.
+        match byte_order {
+            ByteOrder::LittleEndian => match &mut buffer {
+                DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+                DecodingBuffer::U16(buf) => buf.iter_mut().for_each(|v| *v = u16::from_le(*v)),
+                DecodingBuffer::I16(buf) => buf.iter_mut().for_each(|v| *v = i16::from_le(*v)),
+                DecodingBuffer::U32(buf) => buf.iter_mut().for_each(|v| *v = u32::from_le(*v)),
+                DecodingBuffer::I32(buf) => buf.iter_mut().for_each(|v| *v = i32::from_le(*v)),
+                DecodingBuffer::U64(buf) => buf.iter_mut().for_each(|v| *v = u64::from_le(*v)),
+                DecodingBuffer::I64(buf) => buf.iter_mut().for_each(|v| *v = i64::from_le(*v)),
+                DecodingBuffer::F32(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f32::from_bits(u32::from_le(v.to_bits()))),
+                DecodingBuffer::F64(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f64::from_bits(u64::from_le(v.to_bits()))),
+            },
+            ByteOrder::BigEndian => match &mut buffer {
+                DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+                DecodingBuffer::U16(buf) => buf.iter_mut().for_each(|v| *v = u16::from_be(*v)),
+                DecodingBuffer::I16(buf) => buf.iter_mut().for_each(|v| *v = i16::from_be(*v)),
+                DecodingBuffer::U32(buf) => buf.iter_mut().for_each(|v| *v = u32::from_be(*v)),
+                DecodingBuffer::I32(buf) => buf.iter_mut().for_each(|v| *v = i32::from_be(*v)),
+                DecodingBuffer::U64(buf) => buf.iter_mut().for_each(|v| *v = u64::from_be(*v)),
+                DecodingBuffer::I64(buf) => buf.iter_mut().for_each(|v| *v = i64::from_be(*v)),
+                DecodingBuffer::F32(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f32::from_bits(u32::from_be(v.to_bits()))),
+                DecodingBuffer::F64(buf) => buf
+                    .iter_mut()
+                    .for_each(|v| *v = f64::from_bits(u64::from_be(v.to_bits()))),
+            },
+        }
+
+        // Invert colors if necessary.
+        if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+            match (color_type, &mut buffer) {
+                (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
+                    for datum in buffer.iter_mut() {
+                        *datum = 0xffff_ffff_ffff_ffff - *datum
+                    }
+                }
+                (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
+                    for datum in buffer.iter_mut() {
+                        *datum = 0xffff_ffff - *datum
+                    }
+                }
+                (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
+                    for datum in buffer.iter_mut() {
+                        *datum = 0xffff - *datum
+                    }
+                }
+                (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
+                    for byte in buffer.iter_mut() {
+                        *byte = 0xff - *byte
+                    }
+                }
+                (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
+                    for datum in buffer.iter_mut() {
+                        // FIXME: assumes [0, 1) range for floats
+                        *datum = 1.0 - *datum
+                    }
+                }
+                (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
+                    for datum in buffer.iter_mut() {
+                        // FIXME: assumes [0, 1) range for floats
+                        *datum = 1.0 - *datum
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Decompresses the tile into the supplied buffer.
+    /// Returns the number of bytes read.
+    fn expand_tile<'a>(
+        &mut self,
+        mut buffer: DecodingBuffer<'a>,
+        offset: u64,
+        compressed_length: u64,
+        tile: usize,
+    ) -> TiffResult<()> {
+        let color_type = self.colortype()?;
+        let byte_len = buffer.byte_len();
+
+        let tile_attrs = self.tile_attributes.as_mut().unwrap();
+        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
+        let tile_samples = tile_attrs.tile_samples;
+        let tile_length = tile_attrs.tile_length;
+        let row_samples = tile_attrs.row_samples;
+        let padding_right_samples = padding_right * self.bits_per_sample.len();
+
+        self.goto_offset_u64(offset)?;
+
+        let tile_decoder = self.tile_decoder.as_mut().unwrap();
+        let line_samples = tile_decoder.result_width * self.bits_per_sample.len();
+        let padding_buffer = &mut tile_decoder.padding_buffer;
+
+        let mut reader = Self::create_reader(
+            &mut self.reader,
+            self.compression_method,
+            compressed_length,
+            tile_samples,
+            byte_len,
+        )?;
+
+        for row in 0..(tile_length - padding_down) {
+            let buf = match &mut buffer {
+                DecodingBuffer::U8(buf) => &mut *buf,
+                DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
+                DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
+                DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
+                DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
+                DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
+                DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
+                DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
+                DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
+                DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
+            };
+
+            let row_start = row * line_samples;
+            let row_end = row_start + row_samples - padding_right_samples;
+
+            let row = &mut buf[(row_start * byte_len)..(row_end * byte_len)];
+            reader.read_exact(row)?;
+            // Skip horizontal padding
+            // TODO: find a better way of skipping the padding
+            if padding_right > 0 {
+                reader.read_exact(padding_buffer)?
+            }
+
+            // Fix byte order if necessary
+            match self.byte_order {
+                ByteOrder::LittleEndian => match &mut buffer {
+                    DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+                    DecodingBuffer::U16(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = u16::from_le(*v)),
+                    DecodingBuffer::I16(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = i16::from_le(*v)),
+                    DecodingBuffer::U32(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = u32::from_le(*v)),
+                    DecodingBuffer::I32(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = i32::from_le(*v)),
+                    DecodingBuffer::U64(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = u64::from_le(*v)),
+                    DecodingBuffer::I64(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = i64::from_le(*v)),
+                    DecodingBuffer::F32(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = f32::from_bits(u32::from_le(v.to_bits()))),
+                    DecodingBuffer::F64(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = f64::from_bits(u64::from_le(v.to_bits()))),
+                },
+                ByteOrder::BigEndian => match &mut buffer {
+                    DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+                    DecodingBuffer::U16(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = u16::from_be(*v)),
+                    DecodingBuffer::I16(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = i16::from_be(*v)),
+                    DecodingBuffer::U32(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = u32::from_be(*v)),
+                    DecodingBuffer::I32(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = i32::from_be(*v)),
+                    DecodingBuffer::U64(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = u64::from_be(*v)),
+                    DecodingBuffer::I64(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = i64::from_be(*v)),
+                    DecodingBuffer::F32(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = f32::from_bits(u32::from_be(v.to_bits()))),
+                    DecodingBuffer::F64(b) => b[row_start..row_end]
+                        .iter_mut()
+                        .for_each(|v| *v = f64::from_bits(u64::from_be(v.to_bits()))),
+                },
+            };
+
+            // Invert colors if necessary.
+            if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                match (color_type, &mut buffer) {
+                    (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
+                        process_photometry_u64(&mut buffer[row_start..row_end]);
+                    }
+                    (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
+                        process_photometry_u32(&mut buffer[row_start..row_end]);
+                    }
+                    (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
+                        process_photometry_u16(&mut buffer[row_start..row_end]);
+                    }
+                    (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
+                        process_photometry_u8(&mut buffer[row_start..row_end]);
+                    }
+                    (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
+                        process_photometry_f32(&mut buffer[row_start..row_end]);
+                    }
+                    (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
+                        process_photometry_f64(&mut buffer[row_start..row_end]);
+                    }
+                    (ColorType::Gray(n), DecodingBuffer::I8(ref mut buffer)) if n <= 8 => {
+                        process_photometry_i8(&mut buffer[row_start..row_end]);
+                    }
+                    (ColorType::Gray(16), DecodingBuffer::I16(ref mut buffer)) => {
+                        process_photometry_i16(&mut buffer[row_start..row_end]);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn create_reader<'r>(
+        reader: &'r mut SmartReader<R>,
+        compression_method: CompressionMethod,
+        compressed_length: u64,
+        samples: usize,  // Expected chunk length in samples
+        byte_len: usize, // Byte length of the result buffer
+    ) -> TiffResult<Box<dyn Read + 'r>> {
+        Ok(match compression_method {
+            CompressionMethod::None => Box::new(reader),
+            CompressionMethod::LZW => Box::new(
+                LZWReader::new(
+                    reader,
+                    usize::try_from(compressed_length)?,
+                    samples * byte_len,
+                )?
+                .1,
+            ),
+            CompressionMethod::PackBits => {
+                Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)
+            }
+            CompressionMethod::OldDeflate => {
+                Box::new(DeflateReader::new(reader, samples * byte_len)?.1)
+            }
+            method => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedCompressionMethod(method),
+                ))
+            }
+        })
     }
 
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
@@ -1599,19 +1595,11 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let units_read = self.expand_strip(buffer.copy(), offset, byte_count, buffer_size)?;
+        self.expand_strip(buffer.prefix(buffer_size), offset, byte_count)?;
         self.strip_decoder.as_mut().unwrap().strip_index += 1;
 
         if u32::try_from(index)? == self.strip_count()? {
             self.strip_decoder = None;
-        }
-        if units_read < buffer_size {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentStripSamples {
-                    actual_samples: units_read,
-                    required_samples: buffer_size,
-                },
-            ));
         }
         if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
             match Predictor::from_u16(predictor) {
@@ -1657,22 +1645,12 @@ impl<R: Read + Seek> Decoder<R> {
             ))?;
 
         let tile_attrs = self.tile_attributes.as_ref().unwrap();
-        let tile_samples = tile_attrs.tile_samples;
         let tile_width = tile_attrs.tile_width;
         let tile_length = tile_attrs.tile_length;
 
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
 
-        let units_read = self.expand_tile(result.copy(), file_offset, compressed_bytes, tile)?;
-
-        if units_read < tile_samples {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentStripSamples {
-                    actual_samples: units_read,
-                    required_samples: tile_samples,
-                },
-            ));
-        }
+        self.expand_tile(result.copy(), file_offset, compressed_bytes, tile)?;
 
         if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
             match Predictor::from_u16(predictor) {
