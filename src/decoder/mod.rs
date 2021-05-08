@@ -1084,7 +1084,7 @@ impl<R: Read + Seek> Decoder<R> {
         // Construct necessary reader to perform decompression.
         self.goto_offset_u64(offset)?;
         let byte_order = self.reader.byte_order;
-        let mut reader: Box<dyn Read> = match self.compression_method {
+        let reader: Box<dyn Read> = match self.compression_method {
             CompressionMethod::None => Box::new(&mut self.reader),
             CompressionMethod::LZW => Box::new(
                 LZWReader::new(
@@ -1097,8 +1097,8 @@ impl<R: Read + Seek> Decoder<R> {
             CompressionMethod::PackBits => {
                 Box::new(PackBitsReader::new(&mut self.reader, usize::try_from(length)?)?.1)
             }
-            CompressionMethod::OldDeflate => {
-                Box::new(DeflateReader::new(&mut self.reader, buffer.len() * buffer.byte_len())?.1)
+            CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
+                Box::new(DeflateReader::new(&mut self.reader))
             }
             method => {
                 return Err(TiffError::UnsupportedError(
@@ -1109,7 +1109,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         // Read into output buffer.
         {
-            let buffer = match &mut buffer {
+            let mut buffer = match &mut buffer {
                 DecodingBuffer::U8(buf) => &mut *buf,
                 DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
                 DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
@@ -1122,16 +1122,8 @@ impl<R: Read + Seek> Decoder<R> {
                 DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
             };
 
-            let mut bytes_written = 0;
-            while bytes_written < buffer.len() {
-                match reader.read(&mut buffer[bytes_written..]) {
-                    Ok(0) => break,
-                    Ok(n) => bytes_written += n,
-                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Err(e) => Err(e)?,
-                }
-            }
-            for b in &mut buffer[bytes_written..] {
+            std::io::copy(&mut reader.take(buffer.len() as u64), &mut buffer)?;
+            for b in buffer {
                 *b = 0;
             }
         }
@@ -1383,8 +1375,8 @@ impl<R: Read + Seek> Decoder<R> {
             CompressionMethod::PackBits => {
                 Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)
             }
-            CompressionMethod::OldDeflate => {
-                Box::new(DeflateReader::new(reader, samples * byte_len)?.1)
+            CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
+                Box::new(DeflateReader::new(reader))
             }
             method => {
                 return Err(TiffError::UnsupportedError(
