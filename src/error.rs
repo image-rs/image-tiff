@@ -9,7 +9,6 @@ use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
 use crate::ColorType;
-use miniz_oxide::inflate::TINFLStatus;
 
 /// Tiff error kinds.
 #[derive(Debug)]
@@ -62,6 +61,7 @@ pub enum TiffFormatError {
     ByteExpected(Value),
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
+    #[allow(deprecated)]
     InflateError(InflateError),
     Format(String),
     RequiredTagEmpty(Tag),
@@ -123,21 +123,9 @@ impl fmt::Display for TiffFormatError {
 
 /// Decompression failed due to faulty compressed data.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct InflateError {
-    status: TINFLStatus,
-}
-
-impl InflateError {
-    pub(crate) fn new(status: TINFLStatus) -> Self {
-        Self { status }
-    }
-}
-
-impl TiffError {
-    pub(crate) fn from_inflate_status(status: TINFLStatus) -> Self {
-        TiffError::FormatError(TiffFormatError::InflateError(InflateError::new(status)))
-    }
-}
+#[allow(deprecated)]
+#[deprecated = "This type is not used anymore: deflate errors are now propagated as regular `io::Error`s"]
+pub struct InflateError(());
 
 /// The Decoder does not support features required by the image.
 ///

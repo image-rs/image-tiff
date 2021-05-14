@@ -20,10 +20,7 @@ edition = "2018"
 [dependencies]
 weezl = "0.1.0"
 jpeg = { package = "jpeg-decoder", version = "0.1.17", default-features = false }
-
-[dependencies.miniz_oxide]
-version = "0.4.1"
-features = ["no_extern_crate_alloc"]
+flate2 = "1.0.20"
 
 [dev-dependencies]
 criterion = "0.3.1"

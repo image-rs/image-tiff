@@ -7,7 +7,6 @@
 //! * <https://www.adobe.io/open/standards/TIFF.html> - The TIFF specification
 
 extern crate jpeg;
-extern crate miniz_oxide;
 extern crate weezl;
 
 mod bytecast;
@@ -16,9 +15,10 @@ pub mod encoder;
 mod error;
 pub mod tags;
 
-pub use self::error::{
-    InflateError, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
-};
+pub use self::error::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
+
+#[allow(deprecated)]
+pub use self::error::InflateError;
 
 /// An enumeration over supported color types and their bit depths
 #[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]

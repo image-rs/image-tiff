@@ -1,7 +1,5 @@
 //! All IO functionality needed for TIFF decoding
 
-use crate::error::{TiffError, TiffResult};
-use miniz_oxide::inflate;
 use std::io::{self, Read, Seek};
 
 /// Byte order of the TIFF file.
@@ -126,42 +124,7 @@ pub trait EndianReader: Read {
 /// ## Deflate Reader
 ///
 
-/// Reader that decompresses DEFLATE streams
-pub struct DeflateReader {
-    buffer: io::Cursor<Vec<u8>>,
-}
-
-impl DeflateReader {
-    pub fn new<R: Read + Seek>(
-        reader: &mut SmartReader<R>,
-        max_uncompressed_length: usize,
-    ) -> TiffResult<(usize, Self)> {
-        let mut compressed = Vec::new();
-        reader.read_to_end(&mut compressed)?;
-
-        // TODO: Implement streaming compression, and remove this (temporary) and somewhat
-        // misleading workaround.
-        if compressed.len() > max_uncompressed_length {
-            return Err(TiffError::LimitsExceeded);
-        }
-
-        let uncompressed =
-            inflate::decompress_to_vec_zlib(&compressed).map_err(TiffError::from_inflate_status)?;
-
-        Ok((
-            uncompressed.len(),
-            Self {
-                buffer: io::Cursor::new(uncompressed),
-            },
-        ))
-    }
-}
-
-impl Read for DeflateReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.buffer.read(buf)
-    }
-}
+pub type DeflateReader<'r, R> = flate2::read::ZlibDecoder<&'r mut SmartReader<R>>;
 
 ///
 /// ## LZW Reader
