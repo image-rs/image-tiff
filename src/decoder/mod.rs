@@ -1029,16 +1029,16 @@ impl<R: Read + Seek> Decoder<R> {
     fn invert_colors(buf: &mut DecodingBuffer, color_type: ColorType) {
         match (color_type, buf) {
             (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
-                Self::invert_colors_unsigned(buffer, u64::MAX);
+                Self::invert_colors_unsigned(buffer, 0xffff_ffff_ffff_ffff);
             }
             (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
-                Self::invert_colors_unsigned(buffer, u32::MAX);
+                Self::invert_colors_unsigned(buffer, 0xffff_ffff);
             }
             (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                Self::invert_colors_unsigned(buffer, u16::MAX);
+                Self::invert_colors_unsigned(buffer, 0xffff);
             }
             (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
-                Self::invert_colors_unsigned(buffer, u8::MAX);
+                Self::invert_colors_unsigned(buffer, 0xff);
             }
             (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
                 Self::invert_colors_fp(buffer, 1.0);
