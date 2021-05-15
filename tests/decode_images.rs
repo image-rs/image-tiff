@@ -237,11 +237,6 @@ fn test_tiled_oversize_gray_i8() {
 }
 
 #[test]
-fn test_tiled_whiteiszero_gray_i8() {
-    test_image_sum_i8("tiled-whiteiszero-gray-i8.tif", ColorType::Gray(8), 1214996);
-}
-
-#[test]
 fn test_tiled_cmyk_i8() {
     test_image_sum_i8("tiled-cmyk-i8.tif", ColorType::CMYK(8), 1759101);
 }
