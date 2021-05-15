@@ -61,8 +61,6 @@ pub enum TiffFormatError {
     ByteExpected(Value),
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
-    #[allow(deprecated)]
-    InflateError(InflateError),
     Format(String),
     RequiredTagEmpty(Tag),
     #[doc(hidden)]
@@ -113,19 +111,12 @@ impl fmt::Display for TiffFormatError {
             SignedIntegerExpected(ref val) => {
                 write!(fmt, "Expected signed integer, {:?} found.", val)
             }
-            InflateError(_) => write!(fmt, "Failed to decode inflate data."),
             Format(ref val) => write!(fmt, "Invalid format: {:?}.", val),
             RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
             __NonExhaustive => unreachable!(),
         }
     }
 }
-
-/// Decompression failed due to faulty compressed data.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[allow(deprecated)]
-#[deprecated = "This type is not used anymore: deflate errors are now propagated as regular `io::Error`s"]
-pub struct InflateError(());
 
 /// The Decoder does not support features required by the image.
 ///

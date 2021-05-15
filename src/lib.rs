@@ -17,9 +17,6 @@ pub mod tags;
 
 pub use self::error::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 
-#[allow(deprecated)]
-pub use self::error::InflateError;
-
 /// An enumeration over supported color types and their bit depths
 #[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]
 pub enum ColorType {
