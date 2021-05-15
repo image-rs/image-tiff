@@ -1115,7 +1115,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.goto_offset_u64(offset)?;
         let byte_order = self.reader.byte_order;
 
-        let mut reader = Self::create_reader(
+        let reader = Self::create_reader(
             &mut self.reader,
             self.compression_method,
             length,
