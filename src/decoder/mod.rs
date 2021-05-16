@@ -1087,7 +1087,6 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Decompresses the strip into the supplied buffer.
-    /// Returns the number of bytes read.
     fn expand_strip<'a>(
         &mut self,
         mut buffer: DecodingBuffer<'a>,
@@ -1143,19 +1142,16 @@ impl<R: Read + Seek> Decoder<R> {
             }
         }
 
-        let len = buffer.len();
-        Self::fix_endianness(&mut buffer.subrange(0..len), byte_order);
+        Self::fix_endianness(&mut buffer, byte_order);
 
-        // Invert colors if necessary.
         if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-            Self::invert_colors(&mut buffer.subrange(0..len), color_type);
+            Self::invert_colors(&mut buffer, color_type);
         }
 
         Ok(())
     }
 
     /// Decompresses the tile into the supplied buffer.
-    /// Returns the number of bytes read.
     fn expand_tile<'a>(
         &mut self,
         mut buffer: DecodingBuffer<'a>,
@@ -1214,7 +1210,6 @@ impl<R: Read + Seek> Decoder<R> {
 
             Self::fix_endianness(&mut buffer.subrange(row_start..row_end), self.byte_order);
 
-            // Invert colors if necessary.
             if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 Self::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
             }
