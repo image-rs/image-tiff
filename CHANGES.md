@@ -13,6 +13,12 @@ New features:
   * _Breaking:_ `DecodingResult` and `DecodingBuffer` have a new `I64` variant.
 * Add `SMinSampleValue` and `SMaxSampleValue` ([#123](https://github.com/image-rs/image-tiff/pull/123))
 
+Changes:
+* Improve deflate support ([#132](https://github.com/image-rs/image-tiff/pull/132))
+  * Switch to streaming decompression via `flate2`. Aside from performance improvements and lower RAM consumption, this fixes a bug where `max_uncompressed_length` was precalculated for a single tile but then used as a hard limit on the whole data, failing to decompress any tiled images.
+  * Add support for new `Deflate` tag in addition to `OldDeflate`.
+* _Breaking:_ Remove `InflateError`, which is no longer needed with `flate2` ([#134](https://github.com/image-rs/image-tiff/pull/134))
+
 Fixes:
 * Validate that ASCII tags are valid ASCII and end with a null byte ([#121](https://github.com/image-rs/image-tiff/pull/121))
 
