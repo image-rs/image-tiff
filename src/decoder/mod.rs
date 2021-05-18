@@ -1136,7 +1136,10 @@ impl<R: Read + Seek> Decoder<R> {
                 DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
             };
 
+            // Note that writing updates the slice to point to the yet unwritten part.
             std::io::copy(&mut reader.take(buffer.len() as u64), &mut buffer)?;
+
+            // If less than the expected amount of bytes was read, set the remaining data to 0.
             for b in buffer {
                 *b = 0;
             }
