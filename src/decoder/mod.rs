@@ -16,7 +16,10 @@ use self::stream::{
     ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,
 };
 
+use self::predictor::{fp_predict, rev_hpredict_nsamp};
+
 pub mod ifd;
+mod predictor;
 mod stream;
 
 /// Result of a decoding process
@@ -377,153 +380,12 @@ where
     sample_format: Vec<SampleFormat>,
     photometric_interpretation: PhotometricInterpretation,
     compression_method: CompressionMethod,
+    predictor: Predictor,
     chunk_type: ChunkType,
     strip_decoder: Option<StripDecodeState>,
     tile_decoder: Option<TileDecodeState>,
     tile_attributes: Option<TileAttributes>,
-}
-
-trait Wrapping {
-    fn wrapping_add(&self, other: Self) -> Self;
-}
-
-impl Wrapping for u8 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        u8::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for u16 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        u16::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for u32 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        u32::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for u64 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        u64::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for i8 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        i8::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for i16 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        i16::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for i32 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        i32::wrapping_add(*self, other)
-    }
-}
-
-impl Wrapping for i64 {
-    fn wrapping_add(&self, other: Self) -> Self {
-        i64::wrapping_add(*self, other)
-    }
-}
-
-fn rev_hpredict_nsamp<T>(
-    image: &mut [T],
-    size: (u32, u32), // Size of the block
-    img_width: usize, // Width of the image (this distinction is needed for tiles)
-    samples: usize,
-) -> TiffResult<()>
-where
-    T: Copy + Wrapping,
-{
-    let width = usize::try_from(size.0)?;
-    let height = usize::try_from(size.1)?;
-    for row in 0..height {
-        for col in samples..width * samples {
-            let prev_pixel = image[(row * img_width * samples + col - samples)];
-            let pixel = &mut image[(row * img_width * samples + col)];
-            *pixel = pixel.wrapping_add(prev_pixel);
-        }
-    }
-    Ok(())
-}
-
-fn rev_hpredict(
-    image: DecodingBuffer,
-    size: (u32, u32),
-    img_width: usize,
-    color_type: ColorType,
-) -> TiffResult<()> {
-    // TODO: use bits_per_sample.len() after implementing type 3 predictor
-    let samples = match color_type {
-        ColorType::Gray(8) | ColorType::Gray(16) | ColorType::Gray(32) | ColorType::Gray(64) => 1,
-        ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) | ColorType::RGB(64) => 3,
-        ColorType::RGBA(8)
-        | ColorType::RGBA(16)
-        | ColorType::RGBA(32)
-        | ColorType::RGBA(64)
-        | ColorType::CMYK(8)
-        | ColorType::CMYK(16)
-        | ColorType::CMYK(32)
-        | ColorType::CMYK(64) => 4,
-        _ => {
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::HorizontalPredictor(color_type),
-            ))
-        }
-    };
-
-    match image {
-        DecodingBuffer::U8(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::U16(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::U32(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::U64(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::F32(_buf) => {
-            // FIXME: check how this is defined.
-            // See issue #89.
-            // rev_hpredict_nsamp(buf, size, img_width,samples)?;
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::HorizontalPredictor(color_type),
-            ));
-        }
-        DecodingBuffer::F64(_buf) => {
-            //FIXME: check how this is defined.
-            // See issue #89.
-            // rev_hpredict_nsamp(buf, size, img_width,samples)?;
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::HorizontalPredictor(color_type),
-            ));
-        }
-        DecodingBuffer::I8(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::I16(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::I32(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::I64(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-    }
-    Ok(())
+    intermediate_buffer: Option<Vec<u8>>,
 }
 
 impl<R: Read + Seek> Decoder<R> {
@@ -543,10 +405,12 @@ impl<R: Read + Seek> Decoder<R> {
             sample_format: vec![SampleFormat::Uint],
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
+            predictor: Predictor::None,
             chunk_type: ChunkType::Strip,
             strip_decoder: None,
             tile_decoder: None,
             tile_attributes: None,
+            intermediate_buffer: None,
         }
         .init()
     }
@@ -717,6 +581,14 @@ impl<R: Read + Seek> Decoder<R> {
                     ),
                 ))),
             };
+
+        self.predictor = match self.get_tag_unsigned(Tag::Predictor) {
+            Ok(p) => match Predictor::from_u16(p) {
+                Some(predictor) => predictor,
+                None => return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(p))),
+            },
+            Err(_) => Predictor::None,
+        };
 
         Ok(())
     }
@@ -1007,6 +879,100 @@ impl<R: Read + Seek> Decoder<R> {
         self.get_tag(tag)?.into_string()
     }
 
+    fn apply_predictor(
+        &mut self,
+        image: DecodingBuffer,
+        size: (usize, usize), // Chunk size in pixels
+        res_width: usize,     // Width of the decoding result in pixels
+    ) -> TiffResult<()> {
+        let color_type = self.colortype()?;
+        let samples = match color_type {
+            ColorType::Gray(8)
+            | ColorType::Gray(16)
+            | ColorType::Gray(32)
+            | ColorType::Gray(64) => 1,
+            ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) | ColorType::RGB(64) => 3,
+            ColorType::RGBA(8)
+            | ColorType::RGBA(16)
+            | ColorType::RGBA(32)
+            | ColorType::RGBA(64)
+            | ColorType::CMYK(8)
+            | ColorType::CMYK(16)
+            | ColorType::CMYK(32)
+            | ColorType::CMYK(64) => 4,
+            _ => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::HorizontalPredictor(color_type),
+                ))
+            }
+        };
+
+        match self.predictor {
+            Predictor::Horizontal => match image {
+                DecodingBuffer::U8(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::U16(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::U32(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::U64(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::I8(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::I16(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::I32(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::I64(buf) => rev_hpredict_nsamp(buf, size, res_width, samples),
+                DecodingBuffer::F32(_buf) => {
+                    // FIXME: check how this is defined.
+                    // See issue #89.
+                    // rev_hpredict_nsamp(buf, size, img_width,samples)?;
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::HorizontalPredictor(color_type),
+                    ));
+                }
+                DecodingBuffer::F64(_buf) => {
+                    //FIXME: check how this is defined.
+                    // See issue #89.
+                    // rev_hpredict_nsamp(buf, size, img_width,samples)?;
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::HorizontalPredictor(color_type),
+                    ));
+                }
+            },
+            Predictor::FloatingPoint => {
+                let byte_len = image.byte_len();
+
+                let copy_buf = match &mut self.intermediate_buffer {
+                    None => {
+                        let len = size.0 * samples * byte_len;
+                        if len > self.limits.intermediate_buffer_size {
+                            return Err(TiffError::LimitsExceeded);
+                        } else {
+                            self.intermediate_buffer.get_or_insert(vec![0; len])
+                        }
+                    }
+                    Some(ref mut buf) => buf,
+                };
+
+                match image {
+                    DecodingBuffer::F32(buf) => {
+                        fp_predict(buf, copy_buf, size, res_width, samples, byte_len)
+                    }
+                    DecodingBuffer::F64(buf) => {
+                        // TODO: provide tests for 64-bit floating-point samples
+                        fp_predict(buf, copy_buf, size, res_width, samples, byte_len)
+                    }
+                    _ => {
+                        return Err(TiffError::FormatError(
+                            TiffFormatError::FLoatingPointPredictor(
+                                *self.sample_format.first().unwrap_or(&SampleFormat::Uint),
+                            ),
+                        ))
+                    }
+                }
+            }
+            Predictor::None => {}
+            Predictor::__NonExhaustive => unreachable!(),
+        }
+
+        Ok(())
+    }
+
     fn invert_colors_unsigned<T>(buffer: &mut [T], max: T)
     where
         T: std::ops::Sub<T> + std::ops::Sub<Output = T> + Copy,
@@ -1145,7 +1111,10 @@ impl<R: Read + Seek> Decoder<R> {
             }
         }
 
-        Self::fix_endianness(&mut buffer, byte_order);
+        // The floating-point predictor handles endianness independently
+        if self.predictor != Predictor::FloatingPoint {
+            Self::fix_endianness(&mut buffer, byte_order);
+        }
 
         if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
             Self::invert_colors(&mut buffer, color_type);
@@ -1211,7 +1180,10 @@ impl<R: Read + Seek> Decoder<R> {
                 reader.read_exact(padding_buffer)?
             }
 
-            Self::fix_endianness(&mut buffer.subrange(row_start..row_end), self.byte_order);
+            // The floating-point predictor handles endianness independently
+            if self.predictor != Predictor::FloatingPoint {
+                Self::fix_endianness(&mut buffer.subrange(row_start..row_end), self.byte_order);
+            }
 
             if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 Self::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
@@ -1459,25 +1431,9 @@ impl<R: Read + Seek> Decoder<R> {
         if u32::try_from(index)? == self.strip_count()? {
             self.strip_decoder = None;
         }
-        if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
-            match Predictor::from_u16(predictor) {
-                Some(Predictor::None) => (),
-                Some(Predictor::Horizontal) => {
-                    rev_hpredict(
-                        buffer.copy(),
-                        (self.width, u32::try_from(strip_height)?),
-                        usize::try_from(self.width)?,
-                        self.colortype()?,
-                    )?;
-                }
-                None => {
-                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
-                        predictor,
-                    )))
-                }
-                Some(Predictor::__NonExhaustive) => unreachable!(),
-            }
-        }
+
+        let width = usize::try_from(self.width)?;
+        self.apply_predictor(buffer, (width, strip_height), width)?;
         Ok(())
     }
 
@@ -1510,28 +1466,12 @@ impl<R: Read + Seek> Decoder<R> {
 
         self.expand_tile(result.copy(), file_offset, compressed_bytes, tile)?;
 
-        if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
-            match Predictor::from_u16(predictor) {
-                Some(Predictor::None) => (),
-                Some(Predictor::Horizontal) => {
-                    rev_hpredict(
-                        result.copy(),
-                        (
-                            u32::try_from(tile_width - padding_right)?,
-                            u32::try_from(tile_length - padding_down)?,
-                        ),
-                        self.tile_decoder.as_ref().unwrap().result_width,
-                        self.colortype()?,
-                    )?;
-                }
-                None => {
-                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
-                        predictor,
-                    )))
-                }
-                Some(Predictor::__NonExhaustive) => unreachable!(),
-            }
-        }
+        self.apply_predictor(
+            result.copy(),
+            (tile_width - padding_right, tile_length - padding_down),
+            self.tile_decoder.as_ref().unwrap().result_width,
+        )?;
+
         Ok(())
     }
 

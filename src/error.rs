@@ -63,6 +63,7 @@ pub enum TiffFormatError {
     SignedIntegerExpected(Value),
     Format(String),
     RequiredTagEmpty(Tag),
+    FLoatingPointPredictor(SampleFormat),
     #[doc(hidden)]
     /// Do not match against this variant. It may get removed.
     __NonExhaustive,
@@ -113,6 +114,11 @@ impl fmt::Display for TiffFormatError {
             }
             Format(ref val) => write!(fmt, "Invalid format: {:?}.", val),
             RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
+            FLoatingPointPredictor(ref val) => write!(
+                fmt,
+                "Floating-point predictor is incompatible with {:?} sample format.",
+                val
+            ),
             __NonExhaustive => unreachable!(),
         }
     }

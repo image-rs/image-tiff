@@ -284,3 +284,13 @@ fn test_tiled_incremental() {
         }
     }
 }
+
+#[test]
+fn test_predictor_3_rgb_f32() {
+    test_image_sum_f32("predictor-3-rgb-f32.tif", ColorType::RGB(32), 54004.33);
+}
+
+#[test]
+fn test_predictor_3_gray_f32() {
+    test_image_sum_f32("predictor-3-gray-f32.tif", ColorType::Gray(32), 20008.275);
+}
