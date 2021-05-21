@@ -251,7 +251,6 @@ struct TileAttributes {
     padding_right: usize,
     /// length of padding for bottommost tile in pixels
     padding_down: usize,
-    /// A simple buffer right paddding is read into
     tile_samples: usize,
     /// Sample count of one row of one tile
     row_samples: usize,
@@ -294,8 +293,6 @@ struct TileDecodeState {
     current_tile: usize,
     tile_offsets: Vec<u64>,
     tile_bytes: Vec<u64>,
-    /// Buffer used for skipping horizontal padding
-    padding_buffer: Vec<u8>,
     /// Pixel width of one row of the decoding result (tile / whole image)
     result_width: usize,
 }
@@ -1176,7 +1173,6 @@ impl<R: Read + Seek> Decoder<R> {
 
         let tile_decoder = self.tile_decoder.as_mut().unwrap();
         let line_samples = tile_decoder.result_width * self.bits_per_sample.len();
-        let padding_buffer = &mut tile_decoder.padding_buffer;
 
         let mut reader = Self::create_reader(
             &mut self.reader,
@@ -1205,10 +1201,11 @@ impl<R: Read + Seek> Decoder<R> {
 
             let row = &mut buf[(row_start * byte_len)..(row_end * byte_len)];
             reader.read_exact(row)?;
+
             // Skip horizontal padding
-            // TODO: find a better way of skipping the padding
             if padding_right > 0 {
-                reader.read_exact(padding_buffer)?
+                let len = u64::try_from(padding_right_samples * byte_len)?;
+                io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
             }
 
             Self::fix_endianness(&mut buffer.subrange(row_start..row_end), self.byte_order);
@@ -1335,27 +1332,12 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn update_tile_decoder(
-        &mut self,
-        result_width: usize,
-        buffer_byte_len: usize,
-    ) -> TiffResult<()> {
-        let samples_per_pixel = self.bits_per_sample.len();
-
+    fn update_tile_decoder(&mut self, result_width: usize) -> TiffResult<()> {
         if self.tile_decoder.is_none() {
-            let tile_attrs = self.tile_attributes.as_ref().unwrap();
-
-            let padding_buffer_size =
-                tile_attrs.padding_right * samples_per_pixel * buffer_byte_len;
-            if padding_buffer_size > self.limits.intermediate_buffer_size {
-                return Err(TiffError::LimitsExceeded);
-            }
-
             self.tile_decoder = Some(TileDecodeState {
                 current_tile: 0,
                 tile_offsets: self.get_tag_u64_vec(Tag::TileOffsets)?,
                 tile_bytes: self.get_tag_u64_vec(Tag::TileByteCounts)?,
-                padding_buffer: vec![0; padding_buffer_size],
                 result_width: 0, // needs to be updated for differently padded_tiles, see below
             })
         }
@@ -1605,7 +1587,7 @@ impl<R: Read + Seek> Decoder<R> {
         let tile_length = tile_attrs.tile_length - padding_down;
 
         let mut result = self.result_buffer(tile_width, tile_length)?;
-        self.update_tile_decoder(tile_width, result.as_buffer(0).byte_len())?;
+        self.update_tile_decoder(tile_width)?;
 
         self.read_tile_to_buffer(&mut result.as_buffer(0), tile)?;
 
@@ -1619,7 +1601,7 @@ impl<R: Read + Seek> Decoder<R> {
         let mut result = self.result_buffer(width, usize::try_from(self.height)?)?;
 
         self.init_tile_attributes()?;
-        self.update_tile_decoder(width, result.as_buffer(0).byte_len())?;
+        self.update_tile_decoder(width)?;
 
         let tile_attrs = self.tile_attributes.as_ref().unwrap();
         let tiles_across = tile_attrs.tiles_across;
