@@ -1,3 +1,34 @@
+# Version 0.7.0
+
+New features:
+* Support for encoding BigTiff ([#122](https://github.com/image-rs/image-tiff/pull/122))
+  * _Breaking:_ Encoder types now have a generic parameter to differentiate BigTiff and standard Tiff encoding. Defaults to standard Tiff.
+* Basic tile decoding ([#125](https://github.com/image-rs/image-tiff/pull/125))
+  * _Breaking:_ There is a new `TiffError::UsageError` variant.
+* Support for datatypes `Int8` and `Int16` ([#114](https://github.com/image-rs/image-tiff/pull/114))
+  * _Breaking:_ `DecodingResult` and `DecodingBuffer` have the two new variants `I8` and `I16`.
+* Support for `i32` arrays ([#118](https://github.com/image-rs/image-tiff/pull/118/files))
+  * _Breaking:_ `DecodingResult` and `DecodingBuffer` have a new `I32` variant.
+* Support for `Ifd` and `IfdBig` tag types and `I64` data type ([#119](https://github.com/image-rs/image-tiff/pull/119))
+  * _Breaking:_ `DecodingResult` and `DecodingBuffer` have a new `I64` variant.
+* Add `SMinSampleValue` and `SMaxSampleValue` ([#123](https://github.com/image-rs/image-tiff/pull/123))
+
+Changes:
+* Improve deflate support ([#132](https://github.com/image-rs/image-tiff/pull/132))
+  * Switch to streaming decompression via `flate2`. Aside from performance improvements and lower RAM consumption, this fixes a bug where `max_uncompressed_length` was precalculated for a single tile but then used as a hard limit on the whole data, failing to decompress any tiled images.
+  * Add support for new `Deflate` tag in addition to `OldDeflate`.
+* _Breaking:_ Remove `InflateError`, which is no longer needed with `flate2` ([#134](https://github.com/image-rs/image-tiff/pull/134))
+* _Breaking:_ Support for `MinIsWhite` is restricted to unsigned and floating
+  point values. This is expected to be be re-added once some contradictory
+  interpretation regarding semantics for signed values is resolved.
+
+Fixes:
+* Validate that ASCII tags are valid ASCII and end with a null byte ([#121](https://github.com/image-rs/image-tiff/pull/121))
+
+Internal:
+* Simplify decompression logic ([#126](https://github.com/image-rs/image-tiff/pull/126))
+* Simplify `expand_strip` ([#128](https://github.com/image-rs/image-tiff/pull/128))
+
 # Version 0.6.1
 
 New features:
