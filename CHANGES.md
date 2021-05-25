@@ -18,6 +18,9 @@ Changes:
   * Switch to streaming decompression via `flate2`. Aside from performance improvements and lower RAM consumption, this fixes a bug where `max_uncompressed_length` was precalculated for a single tile but then used as a hard limit on the whole data, failing to decompress any tiled images.
   * Add support for new `Deflate` tag in addition to `OldDeflate`.
 * _Breaking:_ Remove `InflateError`, which is no longer needed with `flate2` ([#134](https://github.com/image-rs/image-tiff/pull/134))
+* _Breaking:_ Support for `MinIsWhite` is restricted to unsigned and floating
+  point values. This is expected to be be re-added once some contradictory
+  interpretation regarding semantics for signed values is resolved.
 
 Fixes:
 * Validate that ASCII tags are valid ASCII and end with a null byte ([#121](https://github.com/image-rs/image-tiff/pull/121))
