@@ -349,19 +349,26 @@ impl Entry {
         }
 
         let bo = decoder.byte_order();
-        let value_bytes = self.count
-            * match self.type_ {
-                Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
-                Type::SHORT | Type::SSHORT => 2,
-                Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
-                Type::LONG8
-                | Type::SLONG8
-                | Type::DOUBLE
-                | Type::RATIONAL
-                | Type::SRATIONAL
-                | Type::IFD8 => 8,
-                Type::__NonExhaustive => unreachable!(),
-            };
+
+        let tag_size = match self.type_ {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
+            Type::SHORT | Type::SSHORT => 2,
+            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+            Type::LONG8
+            | Type::SLONG8
+            | Type::DOUBLE
+            | Type::RATIONAL
+            | Type::SRATIONAL
+            | Type::IFD8 => 8,
+            Type::__NonExhaustive => unreachable!(),
+        };
+
+        let value_bytes = match self.count.checked_mul(tag_size) {
+            Some(n) => n,
+            None => {
+                return Err(TiffError::LimitsExceeded);
+            }
+        };
 
         // Case 2: there is one value.
         if self.count == 1 {

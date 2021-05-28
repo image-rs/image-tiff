@@ -307,3 +307,21 @@ fn test_div_zero() {
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
+
+#[test]
+fn test_too_many_value_bytes() {
+    let image = [
+        73, 73, 43, 0, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 8, 0, 0, 0,
+        23, 0, 12, 0, 0, 65, 4, 0, 1, 6, 0, 0, 1, 16, 0, 1, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0,
+        0, 0, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0, 59, 73, 84, 186, 202, 83, 240, 66, 1, 53, 22, 56, 47,
+        0, 0, 0, 0, 0, 0, 1, 222, 4, 0, 58, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 4, 0, 0, 100, 0,
+        0, 89, 89, 89, 89, 89, 89, 89, 89, 96, 1, 20, 89, 89, 89, 89, 18,
+    ];
+
+    let error = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+
+    match error {
+        tiff::TiffError::LimitsExceeded => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}
