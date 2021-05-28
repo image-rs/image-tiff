@@ -1309,6 +1309,14 @@ impl<R: Read + Seek> Decoder<R> {
             let tile_width = usize::try_from(self.get_tag_u32(Tag::TileWidth)?)?;
             let tile_length = usize::try_from(self.get_tag_u32(Tag::TileLength)?)?;
 
+            if tile_width == 0 {
+                return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
+            }
+
+            if tile_length == 0 {
+                return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
+            }
+
             let tiles_across = (usize::try_from(self.width)? + tile_width - 1) / tile_width;
             let tiles_down = (usize::try_from(self.height)? + tile_length - 1) / tile_length;
 
