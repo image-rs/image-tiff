@@ -287,6 +287,9 @@ fn test_tiled_incremental() {
 
 #[test]
 fn test_div_zero() {
+    use tiff::tags;
+    use tiff::{TiffError, TiffFormatError};
+
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 40, 1, 0, 0,
         0, 158, 0, 0, 251, 3, 1, 3, 0, 1, 0, 0, 0, 1, 0, 0, 39, 6, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0,
@@ -297,5 +300,10 @@ fn test_div_zero() {
 
     let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
 
-    let _ = decoder.read_image();
+    let err = decoder.read_image().unwrap_err();
+
+    match err {
+        TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::TileWidth)) => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
 }
