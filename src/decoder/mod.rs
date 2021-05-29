@@ -1658,8 +1658,13 @@ impl<R: Read + Seek> Decoder<R> {
         let rows_per_strip =
             usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
 
-        let samples_per_strip =
-            usize::try_from(self.width)? * rows_per_strip * self.bits_per_sample.len();
+        let samples_per_strip = match usize::try_from(self.width)?
+            .checked_mul(rows_per_strip)
+            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+        {
+            Some(s) => s,
+            None => return Err(TiffError::LimitsExceeded),
+        };
 
         let mut result =
             self.result_buffer(usize::try_from(self.width)?, usize::try_from(self.height)?)?;
