@@ -1372,7 +1372,17 @@ impl<R: Read + Seek> Decoder<R> {
 
         let jpeg_tables: Option<Vec<u8>> = match self.find_tag(Tag::JPEGTables) {
             Ok(None) => None,
-            Ok(_) => Some(self.get_tag_u8_vec(Tag::JPEGTables)?),
+            Ok(_) => {
+                let vec = self.get_tag_u8_vec(Tag::JPEGTables)?;
+
+                if vec.len() < 2 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                    ));
+                }
+
+                Some(vec)
+            }
             Err(e) => return Err(e),
         };
 
