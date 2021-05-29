@@ -449,3 +449,29 @@ fn invalid_jpeg_tag() {
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
+
+#[test]
+fn invalid_jpeg_tag_2() {
+    use tiff::tags;
+    use tiff::{TiffError, TiffFormatError};
+
+    let image = [
+        73, 73, 42, 0, 8, 0, 0, 0, 16, 0, 254, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 242, 0, 1, 4, 0, 1, 0,
+        0, 0, 0, 129, 16, 0, 1, 1, 4, 0, 1, 0, 0, 0, 214, 0, 0, 248, 253, 1, 3, 0, 1, 0, 0, 0, 64,
+        0, 0, 0, 3, 1, 3, 0, 1, 0, 0, 0, 7, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0, 0, 1, 0, 0, 64, 14, 1, 0,
+        2, 0, 0, 148, 0, 206, 0, 0, 0, 17, 1, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+        1, 0, 0, 0, 22, 1, 4, 0, 17, 0, 0, 201, 1, 0, 0, 0, 23, 1, 2, 0, 20, 0, 0, 0, 194, 0, 0, 0,
+        91, 1, 7, 0, 5, 0, 0, 0, 64, 0, 0, 0, 237, 254, 65, 255, 255, 255, 255, 255, 1, 0, 0, 0,
+        22, 1, 4, 0, 1, 0, 0, 0, 42, 0, 0, 0, 23, 1, 255, 255, 255, 255, 255, 36, 36, 0, 0, 0, 0,
+        0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 36, 73, 73, 0, 42, 36, 36, 36, 36, 0, 0, 8, 0,
+    ];
+
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
+
+    let err = decoder.read_image().unwrap_err();
+
+    match err {
+        TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::JPEGTables)) => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}

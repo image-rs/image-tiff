@@ -231,6 +231,12 @@ impl JpegReader {
                     tables
                 );
 
+                assert!(
+                    length >= 2,
+                    "if jpeg_tables is given, length must be at least 2 bytes long, got {}",
+                    length
+                );
+
                 let mut jpeg_data = tables.clone();
                 let truncated_length = jpeg_data.len() - 2;
                 jpeg_data.truncate(truncated_length);

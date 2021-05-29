@@ -1409,7 +1409,14 @@ impl<R: Read + Seek> Decoder<R> {
 
         for (idx, offset) in offsets.iter().enumerate() {
             self.goto_offset(*offset)?;
-            let jpeg_reader = JpegReader::new(&mut self.reader, bytes[idx], &jpeg_tables)?;
+            let length = bytes[idx];
+
+            if jpeg_tables.is_some() && length < 2 {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                ));
+            }
+            let jpeg_reader = JpegReader::new(&mut self.reader, length, &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
