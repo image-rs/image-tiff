@@ -1550,7 +1550,13 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = width * height * self.bits_per_sample.len();
+        let buffer_size = match width
+            .checked_mul(height)
+            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+        {
+            Some(s) => s,
+            None => return Err(TiffError::LimitsExceeded),
+        };
 
         let max_sample_bits = self.bits_per_sample.iter().cloned().max().unwrap_or(8);
         match self.sample_format.first().unwrap_or(&SampleFormat::Uint) {
