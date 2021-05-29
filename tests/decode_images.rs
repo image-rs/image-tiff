@@ -307,3 +307,81 @@ fn test_div_zero() {
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
+
+#[test]
+fn test_too_many_value_bytes() {
+    let image = [
+        73, 73, 43, 0, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 8, 0, 0, 0,
+        23, 0, 12, 0, 0, 65, 4, 0, 1, 6, 0, 0, 1, 16, 0, 1, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0,
+        0, 0, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0, 59, 73, 84, 186, 202, 83, 240, 66, 1, 53, 22, 56, 47,
+        0, 0, 0, 0, 0, 0, 1, 222, 4, 0, 58, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 4, 0, 0, 100, 0,
+        0, 89, 89, 89, 89, 89, 89, 89, 89, 96, 1, 20, 89, 89, 89, 89, 18,
+    ];
+
+    let error = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+
+    match error {
+        tiff::TiffError::LimitsExceeded => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}
+
+#[test]
+fn test_bad_strip_count() {
+    let image = [
+        73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 100, 0, 0, 0, 1, 1, 4, 0, 1, 0, 0,
+        0, 158, 0, 0, 251, 3, 1, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+        17, 1, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 0, 0, 0, 0, 0, 246, 16, 0, 0, 22, 1, 4, 0, 1,
+        0, 0, 0, 40, 0, 251, 255, 23, 1, 4, 0, 1, 0, 0, 0, 48, 178, 178, 178, 178, 178, 178, 178,
+        178, 178, 178,
+    ];
+
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
+
+    let err = decoder.read_image().unwrap_err();
+
+    match err {
+        tiff::TiffError::IntSizeError => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}
+
+#[test]
+fn test_too_big_buffer_size() {
+    let image = [
+        73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 99, 255, 255, 254, 1, 1, 4, 0, 1,
+        0, 0, 0, 158, 0, 0, 251, 3, 1, 3, 255, 254, 255, 255, 0, 1, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0,
+        0, 0, 0, 0, 0, 17, 1, 4, 0, 9, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 0, 2, 0, 0, 0, 63, 0, 0, 0,
+        22, 1, 4, 0, 1, 0, 0, 0, 44, 0, 0, 0, 23, 1, 4, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 1, 0, 178,
+        178,
+    ];
+
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
+
+    let err = decoder.read_image().unwrap_err();
+
+    match err {
+        tiff::TiffError::LimitsExceeded => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}
+
+#[test]
+fn test_stripped_image_overflow() {
+    let image = [
+        73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 100, 0, 0, 148, 1, 1, 4, 0, 1, 0,
+        0, 0, 158, 0, 0, 251, 3, 1, 3, 255, 254, 255, 255, 0, 1, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 17, 1, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 0, 2, 0, 0, 0, 63, 0, 0, 0, 22,
+        1, 4, 0, 1, 0, 0, 0, 44, 0, 248, 255, 23, 1, 4, 0, 1, 0, 0, 0, 178, 178, 178, 0, 1, 178,
+        178, 178,
+    ];
+
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
+
+    let err = decoder.read_image().unwrap_err();
+
+    match err {
+        tiff::TiffError::LimitsExceeded => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}

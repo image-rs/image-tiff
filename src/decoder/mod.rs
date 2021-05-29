@@ -1277,7 +1277,13 @@ impl<R: Read + Seek> Decoder<R> {
             return Ok(0);
         }
 
-        Ok((self.height + rows_per_strip - 1) / rows_per_strip)
+        // rows_per_strip - 1 can never fail since we know it's at least 1
+        let height = match self.height.checked_add(rows_per_strip - 1) {
+            Some(h) => h,
+            None => return Err(TiffError::IntSizeError),
+        };
+
+        Ok(height / rows_per_strip)
     }
 
     /// Number of tiles in image
@@ -1544,7 +1550,13 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = width * height * self.bits_per_sample.len();
+        let buffer_size = match width
+            .checked_mul(height)
+            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+        {
+            Some(s) => s,
+            None => return Err(TiffError::LimitsExceeded),
+        };
 
         let max_sample_bits = self.bits_per_sample.iter().cloned().max().unwrap_or(8);
         match self.sample_format.first().unwrap_or(&SampleFormat::Uint) {
@@ -1646,8 +1658,13 @@ impl<R: Read + Seek> Decoder<R> {
         let rows_per_strip =
             usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
 
-        let samples_per_strip =
-            usize::try_from(self.width)? * rows_per_strip * self.bits_per_sample.len();
+        let samples_per_strip = match usize::try_from(self.width)?
+            .checked_mul(rows_per_strip)
+            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+        {
+            Some(s) => s,
+            None => return Err(TiffError::LimitsExceeded),
+        };
 
         let mut result =
             self.result_buffer(usize::try_from(self.width)?, usize::try_from(self.height)?)?;
