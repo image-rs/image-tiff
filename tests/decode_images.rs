@@ -475,3 +475,26 @@ fn invalid_jpeg_tag_2() {
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
+
+#[test]
+fn multiple_images_strip_height() {
+    use tiff::TiffError;
+
+    let image = [
+        73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 2, 0, 0, 0, 61, 1, 9, 0, 46, 22,
+        128, 0, 0, 0, 0, 1, 6, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 17, 1, 4, 0, 27, 0, 0, 0, 0, 0, 0,
+        0, 1, 1, 3, 0, 1, 0, 0, 0, 17, 1, 0, 231, 22, 1, 1, 0, 1, 0, 0, 0, 130, 0, 0, 0, 23, 1, 4,
+        0, 14, 0, 0, 0, 0, 0, 0, 0, 133, 133, 133, 77, 77, 77, 0, 0, 22, 128, 0, 255, 255, 255,
+        255, 255,
+    ];
+
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
+
+    let _ = decoder.read_image().unwrap();
+    let err = decoder.read_image().unwrap_err();
+
+    match err {
+        TiffError::IntSizeError => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}

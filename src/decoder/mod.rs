@@ -1468,10 +1468,18 @@ impl<R: Read + Seek> Decoder<R> {
         let sized_width = usize::try_from(self.width)?;
         let sized_height = usize::try_from(self.height)?;
 
-        // Ignore potential vertical padding on the bottommost strip
-        let strip_height = cmp::min(rows_per_strip, sized_height - index * rows_per_strip);
+        let strip_height_without_padding = index
+            .checked_mul(rows_per_strip)
+            .and_then(|x| sized_height.checked_sub(x))
+            .ok_or(TiffError::IntSizeError)?;
 
-        let buffer_size = sized_width * strip_height * self.bits_per_sample.len();
+        // Ignore potential vertical padding on the bottommost strip
+        let strip_height = rows_per_strip.min(strip_height_without_padding);
+
+        let buffer_size = sized_width
+            .checked_mul(strip_height)
+            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+            .ok_or(TiffError::LimitsExceeded)?;
 
         if buffer.len() < buffer_size {
             return Err(TiffError::FormatError(
