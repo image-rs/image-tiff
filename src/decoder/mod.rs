@@ -1382,6 +1382,14 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
+        if offsets[0] as usize > self.limits.intermediate_buffer_size
+            || bytes
+                .iter()
+                .any(|&x| x as usize > self.limits.intermediate_buffer_size)
+        {
+            return Err(TiffError::LimitsExceeded);
+        }
+
         let mut res_img = Vec::with_capacity(offsets[0] as usize);
 
         for (idx, offset) in offsets.iter().enumerate() {
