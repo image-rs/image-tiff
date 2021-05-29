@@ -1277,7 +1277,13 @@ impl<R: Read + Seek> Decoder<R> {
             return Ok(0);
         }
 
-        Ok((self.height + rows_per_strip - 1) / rows_per_strip)
+        // rows_per_strip - 1 can never fail since we know it's at least 1
+        let height = match self.height.checked_add(rows_per_strip - 1) {
+            Some(h) => h,
+            None => return Err(TiffError::IntSizeError),
+        };
+
+        Ok(height / rows_per_strip)
     }
 
     /// Number of tiles in image
