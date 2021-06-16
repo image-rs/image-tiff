@@ -662,6 +662,8 @@ impl<R: Read + Seek> Decoder<R> {
         self.width = self.get_tag_u32(Tag::ImageWidth)?;
         self.height = self.get_tag_u32(Tag::ImageLength)?;
         self.strip_decoder = None;
+        self.tile_decoder = None;
+        self.tile_attributes = None;
 
         self.photometric_interpretation = self
             .find_tag_unsigned(Tag::PhotometricInterpretation)?
@@ -699,20 +701,20 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         self.chunk_type =
+            // TODO: This needlessly allocates a vector and then discards it. Maybe init decoders here.
             match (
-                self.get_tag_u32(Tag::RowsPerStrip),
-                self.get_tag_u32(Tag::TileWidth),
-                self.get_tag_u32(Tag::TileLength),
+                self.get_tag_u64_vec(Tag::StripByteCounts),
+                self.get_tag_u64_vec(Tag::StripOffsets),
+                self.get_tag_u64_vec(Tag::TileByteCounts),
+                self.get_tag_u64_vec(Tag::TileOffsets),
             ) {
-                (Ok(_), Err(_), Err(_)) => ChunkType::Strip,
-                (Err(_), Ok(_), Ok(_)) => ChunkType::Tile,
-                // TODO: The spec says not to use both strip-oriented fields and tile-oriented fields.
-                // We can relax this later if it becomes a problem
-                _ => return Err(TiffError::FormatError(TiffFormatError::Format(
-                    String::from(
-                        "Neither strips nor tiles were found or both were used in the same file",
-                    ),
-                ))),
+                (Ok(_), Ok(_), Err(_), Err(_)) => ChunkType::Strip,
+                (Err(_), Err(_), Ok(_), Ok(_)) => ChunkType::Tile,
+                (_, _, _, _) => return Err(TiffError::FormatError(TiffFormatError::Format(
+                        String::from(
+                            "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found.",
+                        ),
+                )))
             };
 
         Ok(())
