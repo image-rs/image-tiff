@@ -286,6 +286,26 @@ fn test_tiled_incremental() {
 }
 
 #[test]
+fn test_div_zero() {
+    use tiff::{TiffError, TiffFormatError};
+
+    let image = [
+        73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 40, 1, 0, 0,
+        0, 158, 0, 0, 251, 3, 1, 3, 0, 1, 0, 0, 0, 1, 0, 0, 39, 6, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+        17, 1, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 3, 0, 1, 0, 0, 0, 158, 0, 0, 251, 67, 1, 3, 0,
+        1, 0, 0, 0, 40, 0, 0, 0, 66, 1, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 48, 178, 178, 178, 178,
+        178, 178, 178,
+    ];
+
+    let err = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+
+    match err {
+        TiffError::FormatError(TiffFormatError::StripTileTagConflict) => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+}
+
+#[test]
 fn test_too_many_value_bytes() {
     let image = [
         73, 73, 43, 0, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 8, 0, 0, 0,
@@ -361,4 +381,9 @@ fn test_stripped_image_overflow() {
         tiff::TiffError::LimitsExceeded => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
+}
+
+#[test]
+fn test_no_rows_per_strip() {
+    test_image_sum_u8("no_rows_per_strip.tiff", ColorType::RGB(8), 99448840);
 }
