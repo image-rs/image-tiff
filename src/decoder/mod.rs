@@ -700,22 +700,21 @@ impl<R: Read + Seek> Decoder<R> {
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
         }
 
-        self.chunk_type =
-            // TODO: This needlessly allocates a vector and then discards it. Maybe init decoders here.
-            match (
-                self.get_tag_u64_vec(Tag::StripByteCounts),
-                self.get_tag_u64_vec(Tag::StripOffsets),
-                self.get_tag_u64_vec(Tag::TileByteCounts),
-                self.get_tag_u64_vec(Tag::TileOffsets),
-            ) {
-                (Ok(_), Ok(_), Err(_), Err(_)) => ChunkType::Strip,
-                (Err(_), Err(_), Ok(_), Ok(_)) => ChunkType::Tile,
-                (_, _, _, _) => return Err(TiffError::FormatError(TiffFormatError::Format(
-                        String::from(
-                            "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found.",
-                        ),
-                )))
-            };
+        let ifd = self.ifd.as_ref().unwrap();
+        self.chunk_type = match (
+            ifd.contains_key(&Tag::StripByteCounts),
+            ifd.contains_key(&Tag::StripOffsets),
+            ifd.contains_key(&Tag::TileByteCounts),
+            ifd.contains_key(&Tag::TileOffsets),
+        ) {
+            (true, true, false, false) => ChunkType::Strip,
+            (false, false, true, true) => ChunkType::Tile,
+            (_, _, _, _) => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::StripTileTagConflict,
+                ))
+            }
+        };
 
         Ok(())
     }
