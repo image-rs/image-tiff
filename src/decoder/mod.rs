@@ -662,6 +662,8 @@ impl<R: Read + Seek> Decoder<R> {
         self.width = self.get_tag_u32(Tag::ImageWidth)?;
         self.height = self.get_tag_u32(Tag::ImageLength)?;
         self.strip_decoder = None;
+        self.tile_decoder = None;
+        self.tile_attributes = None;
 
         self.photometric_interpretation = self
             .find_tag_unsigned(Tag::PhotometricInterpretation)?
@@ -698,22 +700,21 @@ impl<R: Read + Seek> Decoder<R> {
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
         }
 
-        self.chunk_type =
-            match (
-                self.get_tag_u32(Tag::RowsPerStrip),
-                self.get_tag_u32(Tag::TileWidth),
-                self.get_tag_u32(Tag::TileLength),
-            ) {
-                (Ok(_), Err(_), Err(_)) => ChunkType::Strip,
-                (Err(_), Ok(_), Ok(_)) => ChunkType::Tile,
-                // TODO: The spec says not to use both strip-oriented fields and tile-oriented fields.
-                // We can relax this later if it becomes a problem
-                _ => return Err(TiffError::FormatError(TiffFormatError::Format(
-                    String::from(
-                        "Neither strips nor tiles were found or both were used in the same file",
-                    ),
-                ))),
-            };
+        let ifd = self.ifd.as_ref().unwrap();
+        self.chunk_type = match (
+            ifd.contains_key(&Tag::StripByteCounts),
+            ifd.contains_key(&Tag::StripOffsets),
+            ifd.contains_key(&Tag::TileByteCounts),
+            ifd.contains_key(&Tag::TileOffsets),
+        ) {
+            (true, true, false, false) => ChunkType::Strip,
+            (false, false, true, true) => ChunkType::Tile,
+            (_, _, _, _) => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::StripTileTagConflict,
+                ))
+            }
+        };
 
         Ok(())
     }

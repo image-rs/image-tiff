@@ -287,7 +287,6 @@ fn test_tiled_incremental() {
 
 #[test]
 fn test_div_zero() {
-    use tiff::tags;
     use tiff::{TiffError, TiffFormatError};
 
     let image = [
@@ -298,12 +297,10 @@ fn test_div_zero() {
         178, 178, 178,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
+    let err = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 
     match err {
-        TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::TileWidth)) => {}
+        TiffError::FormatError(TiffFormatError::StripTileTagConflict) => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
@@ -384,4 +381,9 @@ fn test_stripped_image_overflow() {
         tiff::TiffError::LimitsExceeded => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
+}
+
+#[test]
+fn test_no_rows_per_strip() {
+    test_image_sum_u8("no_rows_per_strip.tiff", ColorType::RGB(8), 99448840);
 }
