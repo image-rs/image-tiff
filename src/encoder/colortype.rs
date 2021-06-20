@@ -20,6 +20,14 @@ impl ColorType for Gray8 {
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint];
 }
 
+pub struct GrayI8;
+impl ColorType for GrayI8 {
+    type Inner = i8;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::BlackIsZero;
+    const BITS_PER_SAMPLE: &'static [u16] = &[8];
+    const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Int];
+}
+
 pub struct Gray16;
 impl ColorType for Gray16 {
     type Inner = u16;
@@ -28,12 +36,28 @@ impl ColorType for Gray16 {
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint];
 }
 
+pub struct GrayI16;
+impl ColorType for GrayI16 {
+    type Inner = i16;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::BlackIsZero;
+    const BITS_PER_SAMPLE: &'static [u16] = &[16];
+    const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Int];
+}
+
 pub struct Gray32;
 impl ColorType for Gray32 {
     type Inner = u32;
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::BlackIsZero;
     const BITS_PER_SAMPLE: &'static [u16] = &[32];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint];
+}
+
+pub struct GrayI32;
+impl ColorType for GrayI32 {
+    type Inner = i32;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::BlackIsZero;
+    const BITS_PER_SAMPLE: &'static [u16] = &[32];
+    const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Int];
 }
 
 pub struct Gray32Float;
@@ -50,6 +74,14 @@ impl ColorType for Gray64 {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::BlackIsZero;
     const BITS_PER_SAMPLE: &'static [u16] = &[64];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint];
+}
+
+pub struct GrayI64;
+impl ColorType for GrayI64 {
+    type Inner = i64;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::BlackIsZero;
+    const BITS_PER_SAMPLE: &'static [u16] = &[64];
+    const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Int];
 }
 
 pub struct Gray64Float;
