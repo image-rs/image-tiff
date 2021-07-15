@@ -15,12 +15,16 @@ fuzz_target!(|data: &[u8]| {
 
     decoder = decoder.with_limits(limits);
     
-    loop {
+    for _ in 0..128 {
         if let Err(_) = decoder.read_image() {
             break;
         }
 
         if !decoder.more_images() {
+            break;
+        }
+
+        if let Err(_) = decoder.next_image() {
             break;
         }
     }

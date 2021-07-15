@@ -498,3 +498,35 @@ fn multiple_images_strip_height() {
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
+
+#[test]
+fn timeout() {
+    use tiff::TiffError;
+
+    let image = [
+        73, 73, 42, 0, 8, 0, 0, 0, 16, 0, 254, 0, 4, 0, 1, 68, 0, 0, 0, 2, 0, 32, 254, 252, 0, 109,
+        0, 129, 0, 0, 0, 32, 0, 58, 0, 1, 4, 0, 1, 0, 6, 0, 0, 0, 8, 0, 0, 1, 73, 73, 42, 0, 8, 0,
+        0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 21, 0, 0, 0, 61, 1, 255, 128, 9, 0, 0, 8, 0, 1, 113, 2,
+        3, 1, 3, 0, 1, 0, 0, 0, 5, 0, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 112, 0, 0, 36, 0, 0,
+        0, 112, 56, 200, 0, 5, 0, 0, 64, 0, 0, 1, 0, 4, 0, 0, 0, 2, 0, 6, 1, 3, 0, 1, 0, 0, 0, 0,
+        0, 0, 4, 17, 1, 1, 0, 93, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 3, 6, 0, 231, 22, 1,
+        1, 0, 1, 0, 0, 0, 2, 64, 118, 36, 23, 1, 1, 0, 43, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4, 0, 8,
+        0, 0, 73, 73, 42, 0, 8, 0, 0, 0, 0, 0, 32,
+    ];
+
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
+
+    loop {
+        decoder.next_image().unwrap();
+        assert!(decoder.more_images());
+    }
+
+    /*
+    let err = decoder.read_image().unwrap_err();
+
+    match err {
+        TiffError::IntSizeError => {}
+        unexpected => panic!("Unexpected error {}", unexpected),
+    }
+    */
+}

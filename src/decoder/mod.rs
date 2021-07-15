@@ -728,6 +728,11 @@ impl<R: Read + Seek> Decoder<R> {
         self.byte_order
     }
 
+    fn read_ifd_offset_nonrepeating(&mut self) -> TiffResult<u64> {
+        let result = self.read_ifd_offset()?;
+        Ok(result)
+    }
+
     #[inline]
     pub fn read_ifd_offset(&mut self) -> Result<u64, io::Error> {
         if self.bigtiff {
