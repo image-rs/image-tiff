@@ -670,35 +670,42 @@ impl<R: Read + Seek> Decoder<R> {
             .and_then(PhotometricInterpretation::from_u16)
             .ok_or(TiffUnsupportedError::UnknownInterpretation)?;
 
-        if let Some(val) = self.find_tag_unsigned(Tag::Compression)? {
-            self.compression_method = CompressionMethod::from_u16(val)
-                .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?;
-        }
-        if let Some(val) = self.find_tag_unsigned(Tag::SamplesPerPixel)? {
-            self.samples = val;
-        }
-        if let Some(vals) = self.find_tag_unsigned_vec(Tag::SampleFormat)? {
-            self.sample_format = vals
-                .into_iter()
-                .map(SampleFormat::from_u16_exhaustive)
-                .collect();
+        // Try to parse both the compression method and the number, format, and bits of the included samples.
+        // If they are not explicitly specified, those tags are reset to their default values and not carried from previous images.
+        self.compression_method = match self.find_tag_unsigned(Tag::Compression)? {
+            Some(val) => CompressionMethod::from_u16(val)
+                .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?,
+            None => CompressionMethod::None,
+        };
 
-            // TODO: for now, only homogenous formats across samples are supported.
-            if !self.sample_format.windows(2).all(|s| s[0] == s[1]) {
-                return Err(TiffUnsupportedError::UnsupportedSampleFormat(
-                    self.sample_format.clone(),
-                )
-                .into());
-            }
-        }
-        match self.samples {
-            1 | 3 | 4 => {
-                if let Some(val) = self.find_tag_unsigned_vec(Tag::BitsPerSample)? {
-                    self.bits_per_sample = val;
+        self.samples = self.find_tag_unsigned(Tag::SamplesPerPixel)?.unwrap_or(1);
+
+        self.sample_format = match self.find_tag_unsigned_vec(Tag::SampleFormat)? {
+            Some(vals) => {
+                let sample_format: Vec<_> = vals
+                    .into_iter()
+                    .map(SampleFormat::from_u16_exhaustive)
+                    .collect();
+
+                // TODO: for now, only homogenous formats across samples are supported.
+                if !sample_format.windows(2).all(|s| s[0] == s[1]) {
+                    return Err(TiffUnsupportedError::UnsupportedSampleFormat(
+                        self.sample_format.clone(),
+                    )
+                    .into());
                 }
+
+                sample_format
             }
+            None => vec![SampleFormat::Uint],
+        };
+
+        self.bits_per_sample = match self.samples {
+            1 | 3 | 4 => self
+                .find_tag_unsigned_vec(Tag::BitsPerSample)?
+                .unwrap_or_else(|| vec![1]),
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
-        }
+        };
 
         let ifd = self.ifd.as_ref().unwrap();
         self.chunk_type = match (
