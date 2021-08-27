@@ -268,11 +268,12 @@ fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform)
     // color-space of image as RGB(3 channels) or CMYK(4).
     let mut app14_offset = None;
     let mut dht_offset = None;
-    for offset in 0..jpeg_tables.len() - 1 {
-        if jpeg_tables[offset..offset + 2] == [0xff, 0xee] {
+    for (offset, window) in jpeg_tables.windows(2).enumerate() {
+        if window == [0xff, 0xee] {
             app14_offset = Some(offset);
+            break
         }
-        if jpeg_tables[offset..offset + 2] == [0xff, 0xc4] {
+        if window == [0xff, 0xc4] {
             dht_offset = Some(offset);
         }
     }
@@ -299,9 +300,7 @@ fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform)
                 0x00,
                 transform as u8,
             ];
-            for (i, v) in app14segment.iter().enumerate() {
-                jpeg_tables.insert(sos_offset + i, *v);
-            }
+            jpeg_tables.splice(sos_offset..sos_offset, app14segment.iter().copied());
         }
         (None, None) => {}
     }
