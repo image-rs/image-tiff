@@ -1,5 +1,6 @@
 //! All IO functionality needed for TIFF decoding
 
+use crate::tags::PhotometricInterpretation;
 use std::io::{self, Read, Seek};
 
 /// Byte order of the TIFF file.
@@ -210,11 +211,16 @@ impl JpegReader {
     /// bytes of the remaining JPEG data is removed because it follows `jpeg_tables`.
     /// Similary, `jpeg_tables` ends with a `EOI` (HEX: `0xFFD9`) or __end of image__ marker,
     /// this has to be removed as well (last two bytes of `jpeg_tables`).
+    /// `photometric_interpretation` is used to feed color-space information to the JPEG decoder.
+    /// When this value is RGB the actual data stored is formatted as RGB, however, the decoder
+    /// handled it as a YCbCr. To avoid this, APP14 "Adobe" tag is embedded to `jpeg_tables` to
+    /// explicitly show the color-space is RGB.
 
     pub fn new<R>(
         reader: &mut SmartReader<R>,
         length: u32,
         jpeg_tables: &Option<Vec<u8>>,
+        photometric_interpretation: &PhotometricInterpretation,
     ) -> io::Result<JpegReader>
     where
         R: Read + Seek,
@@ -226,6 +232,13 @@ impl JpegReader {
         match jpeg_tables {
             Some(tables) => {
                 let mut jpeg_data = tables.clone();
+                match photometric_interpretation {
+                    PhotometricInterpretation::RGB => add_app14segment(
+                        &mut jpeg_data,
+                        JpegTagApp14Transform::App14TransformUnknown,
+                    ),
+                    _ => {}
+                }
                 let truncated_length = jpeg_data.len() - 2;
                 jpeg_data.truncate(truncated_length);
                 jpeg_data.extend_from_slice(&segment[2..]);
@@ -238,6 +251,59 @@ impl JpegReader {
                 buffer: io::Cursor::new(segment),
             }),
         }
+    }
+}
+
+#[repr(u8)]
+enum JpegTagApp14Transform {
+    // App14TransformYCCK = 2,
+    // App14TransformYCbCr = 1,
+    App14TransformUnknown = 0,
+}
+
+fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform) {
+    // Add JPEG Tag APP14 Adobe segment to jpeg_tables.
+    // This segment stores image encoding information for DCT filters.
+    // When `transform` value is 0 which is defined as Unknown, jpeg-decoder interpret the
+    // color-space of image as RGB(3 channels) or CMYK(4).
+    let mut app14_offset = None;
+    let mut dht_offset = None;
+    for offset in 0..jpeg_tables.len() - 1 {
+        if jpeg_tables[offset..offset + 2] == [0xff, 0xee] {
+            app14_offset = Some(offset);
+        }
+        if jpeg_tables[offset..offset + 2] == [0xff, 0xc4] {
+            dht_offset = Some(offset);
+        }
+    }
+    match (app14_offset, dht_offset) {
+        (Some(i), _) => {
+            jpeg_tables[i + 16] = transform as u8;
+        }
+        (None, Some(sos_offset)) => {
+            let app14segment: [u8; 16] = [
+                0xff,
+                0xee,
+                0x00,
+                0x0e,
+                0x41,
+                0x64,
+                0x6f,
+                0x62,
+                0x65,
+                0x00,
+                0x64,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                transform as u8,
+            ];
+            for (i, v) in app14segment.iter().enumerate() {
+                jpeg_tables.insert(sos_offset + i, *v);
+            }
+        }
+        (None, None) => {}
     }
 }
 

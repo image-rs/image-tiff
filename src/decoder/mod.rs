@@ -1394,7 +1394,12 @@ impl<R: Read + Seek> Decoder<R> {
 
         for (idx, offset) in offsets.iter().enumerate() {
             self.goto_offset(*offset)?;
-            let jpeg_reader = JpegReader::new(&mut self.reader, bytes[idx], &jpeg_tables)?;
+            let jpeg_reader = JpegReader::new(
+                &mut self.reader,
+                bytes[idx],
+                &jpeg_tables,
+                &self.photometric_interpretation,
+            )?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
