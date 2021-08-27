@@ -271,7 +271,7 @@ fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform)
     for (offset, window) in jpeg_tables.windows(2).enumerate() {
         if window == [0xff, 0xee] {
             app14_offset = Some(offset);
-            break
+            break;
         }
         if window == [0xff, 0xc4] {
             dht_offset = Some(offset);
