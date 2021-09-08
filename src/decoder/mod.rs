@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 use std::{cmp, ops::Range};
@@ -378,6 +378,7 @@ where
     strip_decoder: Option<StripDecodeState>,
     tile_decoder: Option<TileDecodeState>,
     tile_attributes: Option<TileAttributes>,
+    seen_ifds: HashSet<u64>,
 }
 
 trait Wrapping {
@@ -544,6 +545,7 @@ impl<R: Read + Seek> Decoder<R> {
             strip_decoder: None,
             tile_decoder: None,
             tile_attributes: None,
+            seen_ifds: HashSet::new(),
         }
         .init()
     }
@@ -640,7 +642,7 @@ impl<R: Read + Seek> Decoder<R> {
                 ))
             }
         }
-        self.next_ifd = match self.read_ifd_offset()? {
+        self.next_ifd = match self.read_ifd_offset_nonrepeating()? {
             0 => None,
             n => Some(n),
         };
@@ -738,7 +740,11 @@ impl<R: Read + Seek> Decoder<R> {
 
     fn read_ifd_offset_nonrepeating(&mut self) -> TiffResult<u64> {
         let result = self.read_ifd_offset()?;
-        Ok(result)
+        if self.seen_ifds.insert(result) {
+            Ok(result)
+        } else {
+            Err(TiffError::FormatError(TiffFormatError::CycleInOffsets))
+        }
     }
 
     #[inline]
@@ -899,7 +905,7 @@ impl<R: Read + Seek> Decoder<R> {
             };
             dir.insert(tag, entry);
         }
-        self.next_ifd = match self.read_ifd_offset()? {
+        self.next_ifd = match self.read_ifd_offset_nonrepeating()? {
             0 => None,
             n => Some(n),
         };

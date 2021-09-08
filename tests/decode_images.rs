@@ -498,7 +498,7 @@ fn multiple_images_strip_height() {
 
 #[test]
 fn timeout() {
-    use tiff::TiffError;
+    use tiff::{TiffError, TiffFormatError};
 
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 16, 0, 254, 0, 4, 0, 1, 68, 0, 0, 0, 2, 0, 32, 254, 252, 0, 109,
@@ -511,21 +511,12 @@ fn timeout() {
         0, 0, 73, 73, 42, 0, 8, 0, 0, 0, 0, 0, 32,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
+    let error = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 
-    loop {
-        decoder.next_image().unwrap();
-        assert!(decoder.more_images());
+    match error {
+        TiffError::FormatError(TiffFormatError::CycleInOffsets) => {}
+        e => panic!("Unexpected error {:?}", e),
     }
-
-    /*
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        TiffError::IntSizeError => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
-    */
 }
 
 #[test]
