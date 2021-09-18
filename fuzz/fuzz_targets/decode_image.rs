@@ -15,7 +15,7 @@ fuzz_target!(|data: &[u8]| {
 
     decoder = decoder.with_limits(limits);
     
-    for _ in 0..128 {
+    loop {
         if let Err(_) = decoder.read_image() {
             break;
         }
