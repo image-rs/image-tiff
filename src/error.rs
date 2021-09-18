@@ -64,6 +64,7 @@ pub enum TiffFormatError {
     Format(String),
     RequiredTagEmpty(Tag),
     StripTileTagConflict,
+    CycleInOffsets,
     #[doc(hidden)]
     /// Do not match against this variant. It may get removed.
     __NonExhaustive,
@@ -115,6 +116,7 @@ impl fmt::Display for TiffFormatError {
             Format(ref val) => write!(fmt, "Invalid format: {:?}.", val),
             RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
             StripTileTagConflict => write!(fmt, "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found."),
+            CycleInOffsets => write!(fmt, "File contained a cycle in the list of IFDs"),
             __NonExhaustive => unreachable!(),
         }
     }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 use std::{cmp, ops::Range};
@@ -378,6 +378,7 @@ where
     strip_decoder: Option<StripDecodeState>,
     tile_decoder: Option<TileDecodeState>,
     tile_attributes: Option<TileAttributes>,
+    seen_ifds: HashSet<u64>,
 }
 
 trait Wrapping {
@@ -544,6 +545,7 @@ impl<R: Read + Seek> Decoder<R> {
             strip_decoder: None,
             tile_decoder: None,
             tile_attributes: None,
+            seen_ifds: HashSet::new(),
         }
         .init()
     }
@@ -640,7 +642,7 @@ impl<R: Read + Seek> Decoder<R> {
                 ))
             }
         }
-        self.next_ifd = match self.read_ifd_offset()? {
+        self.next_ifd = match self.read_ifd_offset_nonrepeating()? {
             0 => None,
             n => Some(n),
         };
@@ -734,6 +736,15 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns the byte_order
     pub fn byte_order(&self) -> ByteOrder {
         self.byte_order
+    }
+
+    fn read_ifd_offset_nonrepeating(&mut self) -> TiffResult<u64> {
+        let result = self.read_ifd_offset()?;
+        if self.seen_ifds.insert(result) {
+            Ok(result)
+        } else {
+            Err(TiffError::FormatError(TiffFormatError::CycleInOffsets))
+        }
     }
 
     #[inline]
@@ -894,7 +905,7 @@ impl<R: Read + Seek> Decoder<R> {
             };
             dir.insert(tag, entry);
         }
-        self.next_ifd = match self.read_ifd_offset()? {
+        self.next_ifd = match self.read_ifd_offset_nonrepeating()? {
             0 => None,
             n => Some(n),
         };
@@ -1124,6 +1135,7 @@ impl<R: Read + Seek> Decoder<R> {
             length,
             buffer.len(),
             buffer.byte_len(),
+            self.limits.intermediate_buffer_size,
         )?;
 
         // Read into output buffer.
@@ -1188,6 +1200,7 @@ impl<R: Read + Seek> Decoder<R> {
             compressed_length,
             tile_samples,
             byte_len,
+            self.limits.intermediate_buffer_size,
         )?;
 
         for row in 0..(tile_length - padding_down) {
@@ -1232,17 +1245,20 @@ impl<R: Read + Seek> Decoder<R> {
         compressed_length: u64,
         samples: usize,  // Expected chunk length in samples
         byte_len: usize, // Byte length of the samples in result buffer
+        intermediate_buffer_size: usize,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
-            CompressionMethod::LZW => Box::new(
-                LZWReader::new(
-                    reader,
-                    usize::try_from(compressed_length)?,
-                    samples * byte_len,
-                )?
-                .1,
-            ),
+            CompressionMethod::LZW => {
+                let clen = usize::try_from(compressed_length)?;
+
+                if samples * byte_len > intermediate_buffer_size || clen > intermediate_buffer_size
+                {
+                    return Err(TiffError::LimitsExceeded);
+                }
+
+                Box::new(LZWReader::new(reader, clen, samples * byte_len)?.1)
+            }
             CompressionMethod::PackBits => {
                 Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)
             }
@@ -1375,7 +1391,17 @@ impl<R: Read + Seek> Decoder<R> {
 
         let jpeg_tables: Option<Vec<u8>> = match self.find_tag(Tag::JPEGTables) {
             Ok(None) => None,
-            Ok(_) => Some(self.get_tag_u8_vec(Tag::JPEGTables)?),
+            Ok(_) => {
+                let vec = self.get_tag_u8_vec(Tag::JPEGTables)?;
+
+                if vec.len() < 2 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                    ));
+                }
+
+                Some(vec)
+            }
             Err(e) => return Err(e),
         };
 
@@ -1390,11 +1416,26 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
+        if offsets[0] as usize > self.limits.intermediate_buffer_size
+            || bytes
+                .iter()
+                .any(|&x| x as usize > self.limits.intermediate_buffer_size)
+        {
+            return Err(TiffError::LimitsExceeded);
+        }
+
         let mut res_img = Vec::with_capacity(offsets[0] as usize);
 
         for (idx, offset) in offsets.iter().enumerate() {
             self.goto_offset(*offset)?;
-            let jpeg_reader = JpegReader::new(&mut self.reader, bytes[idx], &jpeg_tables)?;
+            let length = bytes[idx];
+
+            if jpeg_tables.is_some() && length < 2 {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                ));
+            }
+            let jpeg_reader = JpegReader::new(&mut self.reader, length, &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
@@ -1446,10 +1487,18 @@ impl<R: Read + Seek> Decoder<R> {
         let sized_width = usize::try_from(self.width)?;
         let sized_height = usize::try_from(self.height)?;
 
-        // Ignore potential vertical padding on the bottommost strip
-        let strip_height = cmp::min(rows_per_strip, sized_height - index * rows_per_strip);
+        let strip_height_without_padding = index
+            .checked_mul(rows_per_strip)
+            .and_then(|x| sized_height.checked_sub(x))
+            .ok_or(TiffError::IntSizeError)?;
 
-        let buffer_size = sized_width * strip_height * self.bits_per_sample.len();
+        // Ignore potential vertical padding on the bottommost strip
+        let strip_height = rows_per_strip.min(strip_height_without_padding);
+
+        let buffer_size = sized_width
+            .checked_mul(strip_height)
+            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+            .ok_or(TiffError::LimitsExceeded)?;
 
         if buffer.len() < buffer_size {
             return Err(TiffError::FormatError(

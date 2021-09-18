@@ -23,5 +23,9 @@ fuzz_target!(|data: &[u8]| {
         if !decoder.more_images() {
             break;
         }
+
+        if let Err(_) = decoder.next_image() {
+            break;
+        }
     }
 });
