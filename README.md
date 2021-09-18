@@ -44,3 +44,11 @@ Formats and interpretations not listed above or with empty entries are unsupport
 - Baseline tags
   - `ExtraSamples`
 - Extension tags
+
+## Fuzzing
+
+This crate uses [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) in order to test the image parser.
+
+After installing it with `cargo install cargo-fuzz` on a nightly rustc, the
+fuzzing harness can be run with recommended settings using 
+`cargo fuzz run decode_image -snone -- -timeout=5`.
