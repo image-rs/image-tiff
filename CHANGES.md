@@ -12,6 +12,18 @@ Fixes:
 * Use checked integer arithmetic in limit calculations, fixes overflows.
 * IFD Tags are now always cleared between images.
 
+Notes:
+Our CI has warned that this version no longer builds on `1.34.2` out of the
+box. We're still committed to the MSRV on this major version yet one
+dependency—`flate2`—has already bumped it in a SemVer compatible version of its
+own. This is out-of-our-control (cargo's dependency resolution does not allow
+us to address this in a reasonable manner).
+
+This can be address this by pinning the version of `flate2` to `1.0.21` in your
+own files. However, you should understand that this puts you in considerable
+maintenance debt as you will no longer receive any updates for this dependency
+and any package that _requires_ a new version of the `1.0` series would be
+incompatible with this requirement (cargo might yell at you very loudly).
 
 # Version 0.7.0
 
