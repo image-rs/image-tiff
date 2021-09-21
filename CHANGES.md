@@ -1,3 +1,18 @@
+# Version 0.7.1
+
+New features:
+* Encoding signed integer formats is now supported.
+
+Changes:
+* Tile decoding should be a little faster, requires one less intermediate buffer.
+
+Fixes:
+* Fixed a regression that caused conflict between strips and tile images,
+  causing errors in decoding some images.
+* Use checked integer arithmetic in limit calculations, fixes overflows.
+* IFD Tags are now always cleared between images.
+
+
 # Version 0.7.0
 
 New features:
