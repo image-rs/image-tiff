@@ -2,15 +2,21 @@
 
 New features:
 * Encoding signed integer formats is now supported.
+* Extensive fuzzing with `cargo fuzz`.
 
 Changes:
 * Tile decoding should be a little faster, requires one less intermediate buffer.
+* Images whose IFDs form a cycle due to their offsets will now raise an error
+  when the cycle would be entered (jumping back should still be supported).
 
 Fixes:
 * Fixed a regression that caused conflict between strips and tile images,
   causing errors in decoding some images.
 * Use checked integer arithmetic in limit calculations, fixes overflows.
 * IFD Tags are now always cleared between images.
+* Found by fuzzing: Several memory limit overflows; JPEG now correctly
+  validates offsets and a minimum size of its table; Check upper limit of strip
+  byte size correctly;
 
 Notes:
 Our CI has warned that this version no longer builds on `1.34.2` out of the
