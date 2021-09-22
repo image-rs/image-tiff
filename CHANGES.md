@@ -1,3 +1,36 @@
+# Version 0.7.1
+
+New features:
+* Encoding signed integer formats is now supported.
+* Extensive fuzzing with `cargo fuzz`.
+
+Changes:
+* Tile decoding should be a little faster, requires one less intermediate buffer.
+* Images whose IFDs form a cycle due to their offsets will now raise an error
+  when the cycle would be entered (jumping back should still be supported).
+
+Fixes:
+* Fixed a regression that caused conflict between strips and tile images,
+  causing errors in decoding some images.
+* Use checked integer arithmetic in limit calculations, fixes overflows.
+* IFD Tags are now always cleared between images.
+* Found by fuzzing: Several memory limit overflows; JPEG now correctly
+  validates offsets and a minimum size of its table; Check upper limit of strip
+  byte size correctly;
+
+Notes:
+Our CI has warned that this version no longer builds on `1.34.2` out of the
+box. We're still committed to the MSRV on this major version yet one
+dependency—`flate2`—has already bumped it in a SemVer compatible version of its
+own. This is out-of-our-control (cargo's dependency resolution does not allow
+us to address this in a reasonable manner).
+
+This can be address this by pinning the version of `flate2` to `1.0.21` in your
+own files. However, you should understand that this puts you in considerable
+maintenance debt as you will no longer receive any updates for this dependency
+and any package that _requires_ a new version of the `1.0` series would be
+incompatible with this requirement (cargo might yell at you very loudly).
+
 # Version 0.7.0
 
 New features:
