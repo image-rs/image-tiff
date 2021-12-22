@@ -33,9 +33,6 @@ pub enum TiffError {
 
     /// The image does not support the requested operation
     UsageError(UsageError),
-
-    /// An error has occurred during data compression
-    CompressionError,
 }
 
 /// The image is not formatted properly.
@@ -233,7 +230,6 @@ impl fmt::Display for TiffError {
             TiffError::LimitsExceeded => write!(fmt, "The Decoder limits are exceeded"),
             TiffError::IntSizeError => write!(fmt, "Platform or format size limits exceeded"),
             TiffError::UsageError(ref e) => write!(fmt, "Usage error: {}", e),
-            TiffError::CompressionError => write!(fmt, "Compression failed"),
         }
     }
 }
@@ -247,7 +243,6 @@ impl Error for TiffError {
             TiffError::LimitsExceeded => "Decoder limits exceeded",
             TiffError::IntSizeError => "Platform or format size limits exceeded",
             TiffError::UsageError(..) => "Invalid usage",
-            TiffError::CompressionError => "Compression failed",
         }
     }
 
@@ -296,8 +291,12 @@ impl From<std::num::TryFromIntError> for TiffError {
 }
 
 impl From<LzwError> for TiffError {
-    fn from(_err: LzwError) -> TiffError {
-        TiffError::CompressionError
+    fn from(err: LzwError) -> TiffError {
+        match err {
+            LzwError::InvalidCode => TiffError::FormatError(TiffFormatError::Format(String::from(
+                "LZW compressed data corrupted",
+            ))),
+        }
     }
 }
 
