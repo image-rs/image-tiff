@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io::Write};
+use std::{borrow::Cow, io::Write, slice::from_ref};
 
 use crate::{bytecast, tags::Type, TiffError, TiffFormatError, TiffResult};
 
@@ -172,7 +172,7 @@ impl TiffValue for u8 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(vec![*self])
+        Cow::Borrowed(from_ref(self))
     }
 }
 
@@ -190,7 +190,7 @@ impl TiffValue for i8 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::i8_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -208,7 +208,7 @@ impl TiffValue for u16 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::u16_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -226,7 +226,7 @@ impl TiffValue for i16 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::i16_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -244,7 +244,7 @@ impl TiffValue for u32 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::u32_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -262,7 +262,7 @@ impl TiffValue for i32 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::i32_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -280,7 +280,7 @@ impl TiffValue for u64 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::u64_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -298,7 +298,7 @@ impl TiffValue for i64 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::i64_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -316,7 +316,7 @@ impl TiffValue for f32 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::f32_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -334,7 +334,7 @@ impl TiffValue for f64 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned(self.to_ne_bytes().to_vec())
+        Cow::Borrowed(bytecast::f64_as_ne_bytes(from_ref(self)))
     }
 }
 
@@ -352,10 +352,7 @@ impl TiffValue for Ifd {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned({
-            let dword: [u8; 4] = self.0.to_ne_bytes();
-            dword.to_vec()
-        })
+        Cow::Borrowed(bytecast::u32_as_ne_bytes(from_ref(&self.0)))
     }
 }
 
@@ -373,10 +370,7 @@ impl TiffValue for Ifd8 {
     }
 
     fn data(&self) -> Cow<[u8]> {
-        Cow::Owned({
-            let qword: [u8; 8] = self.0.to_ne_bytes();
-            qword.to_vec()
-        })
+        Cow::Borrowed(bytecast::u64_as_ne_bytes(from_ref(&self.0)))
     }
 }
 
@@ -396,8 +390,8 @@ impl TiffValue for Rational {
 
     fn data(&self) -> Cow<[u8]> {
         Cow::Owned({
-            let first_dword: [u8; 4] = self.n.to_ne_bytes();
-            let second_dword: [u8; 4] = self.d.to_ne_bytes();
+            let first_dword = bytecast::u32_as_ne_bytes(from_ref(&self.n));
+            let second_dword = bytecast::u32_as_ne_bytes(from_ref(&self.d));
             [first_dword, second_dword].concat()
         })
     }
@@ -419,8 +413,8 @@ impl TiffValue for SRational {
 
     fn data(&self) -> Cow<[u8]> {
         Cow::Owned({
-            let first_dword: [u8; 4] = self.n.to_ne_bytes();
-            let second_dword: [u8; 4] = self.d.to_ne_bytes();
+            let first_dword = bytecast::i32_as_ne_bytes(from_ref(&self.n));
+            let second_dword = bytecast::i32_as_ne_bytes(from_ref(&self.d));
             [first_dword, second_dword].concat()
         })
     }
