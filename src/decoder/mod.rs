@@ -744,8 +744,8 @@ impl<R: Read + Seek> Decoder<R> {
 
                 let tile_samples = tile_length * tile_width * samples_per_pixel;
                 let padding_right = (tiles_across * tile_width) - usize::try_from(self.width)?;
-                let tile_strip_samples =
-                    (tile_samples * tiles_across) - (padding_right * tile_length * samples_per_pixel);
+                let tile_strip_samples = (tile_samples * tiles_across)
+                    - (padding_right * tile_length * samples_per_pixel);
 
                 self.tile_attributes = Some(TileAttributes {
                     tile_width,
@@ -1511,7 +1511,12 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn read_tile_to_buffer(&mut self, result: &mut DecodingBuffer, tile: usize, output_width: usize) -> TiffResult<()> {
+    fn read_tile_to_buffer(
+        &mut self,
+        result: &mut DecodingBuffer,
+        tile: usize,
+        output_width: usize,
+    ) -> TiffResult<()> {
         let file_offset = *self
             .tile_decoder
             .as_ref()
@@ -1538,7 +1543,13 @@ impl<R: Read + Seek> Decoder<R> {
 
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
 
-        self.expand_tile(result.copy(), file_offset, compressed_bytes, tile, output_width)?;
+        self.expand_tile(
+            result.copy(),
+            file_offset,
+            compressed_bytes,
+            tile,
+            output_width,
+        )?;
 
         if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
             match Predictor::from_u16(predictor) {
