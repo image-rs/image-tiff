@@ -293,8 +293,6 @@ struct TileDecodeState {
     current_tile: usize,
     tile_offsets: Vec<u64>,
     tile_bytes: Vec<u64>,
-    /// Pixel width of one row of the decoding result (tile / whole image)
-    result_width: usize,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -710,14 +708,62 @@ impl<R: Read + Seek> Decoder<R> {
         };
 
         let ifd = self.ifd.as_ref().unwrap();
-        self.chunk_type = match (
+        match (
             ifd.contains_key(&Tag::StripByteCounts),
             ifd.contains_key(&Tag::StripOffsets),
             ifd.contains_key(&Tag::TileByteCounts),
             ifd.contains_key(&Tag::TileOffsets),
         ) {
-            (true, true, false, false) => ChunkType::Strip,
-            (false, false, true, true) => ChunkType::Tile,
+            (true, true, false, false) => {
+                self.chunk_type = ChunkType::Strip;
+
+                let strip_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
+                let strip_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
+                self.strip_decoder = Some(StripDecodeState {
+                    strip_index: 0,
+                    strip_offsets,
+                    strip_bytes,
+                });
+            }
+            (false, false, true, true) => {
+                self.chunk_type = ChunkType::Tile;
+
+                let tile_width = usize::try_from(self.get_tag_u32(Tag::TileWidth)?)?;
+                let tile_length = usize::try_from(self.get_tag_u32(Tag::TileLength)?)?;
+
+                if tile_width == 0 {
+                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
+                } else if tile_length == 0 {
+                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
+                }
+
+                let tiles_across = (usize::try_from(self.width)? + tile_width - 1) / tile_width;
+                let tiles_down = (usize::try_from(self.height)? + tile_length - 1) / tile_length;
+
+                let samples_per_pixel = self.bits_per_sample.len();
+
+                let tile_samples = tile_length * tile_width * samples_per_pixel;
+                let padding_right = (tiles_across * tile_width) - usize::try_from(self.width)?;
+                let tile_strip_samples =
+                    (tile_samples * tiles_across) - (padding_right * tile_length * samples_per_pixel);
+
+                self.tile_attributes = Some(TileAttributes {
+                    tile_width,
+                    tile_length,
+                    tiles_across,
+                    tiles_down,
+                    tile_samples,
+                    padding_right,
+                    padding_down: (tiles_down * tile_length) - usize::try_from(self.height)?,
+                    row_samples: (tile_width * samples_per_pixel),
+                    tile_strip_samples,
+                });
+                self.tile_decoder = Some(TileDecodeState {
+                    current_tile: 0,
+                    tile_offsets: self.get_tag_u64_vec(Tag::TileOffsets)?,
+                    tile_bytes: self.get_tag_u64_vec(Tag::TileByteCounts)?,
+                });
+            }
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
@@ -1178,6 +1224,7 @@ impl<R: Read + Seek> Decoder<R> {
         offset: u64,
         compressed_length: u64,
         tile: usize,
+        output_width: usize,
     ) -> TiffResult<()> {
         let color_type = self.colortype()?;
         let byte_len = buffer.byte_len();
@@ -1191,8 +1238,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         self.goto_offset_u64(offset)?;
 
-        let tile_decoder = self.tile_decoder.as_mut().unwrap();
-        let line_samples = tile_decoder.result_width * self.bits_per_sample.len();
+        let line_samples = output_width * self.bits_per_sample.len();
 
         let mut reader = Self::create_reader(
             &mut self.reader,
@@ -1310,79 +1356,10 @@ impl<R: Read + Seek> Decoder<R> {
     /// Number of tiles in image
     pub fn tile_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Tile)?;
-        self.init_tile_attributes()?;
         let tile_attrs = self.tile_attributes.as_ref().unwrap();
         Ok(u32::try_from(
             tile_attrs.tiles_across * tile_attrs.tiles_down,
         )?)
-    }
-
-    fn initialize_strip_decoder(&mut self) -> TiffResult<()> {
-        if self.strip_decoder.is_none() {
-            let strip_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
-            let strip_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
-
-            self.strip_decoder = Some(StripDecodeState {
-                strip_index: 0,
-                strip_offsets,
-                strip_bytes,
-            });
-        }
-        Ok(())
-    }
-
-    fn init_tile_attributes(&mut self) -> TiffResult<()> {
-        if self.tile_attributes.is_none() {
-            let tile_width = usize::try_from(self.get_tag_u32(Tag::TileWidth)?)?;
-            let tile_length = usize::try_from(self.get_tag_u32(Tag::TileLength)?)?;
-
-            if tile_width == 0 {
-                return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
-            }
-
-            if tile_length == 0 {
-                return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
-            }
-
-            let tiles_across = (usize::try_from(self.width)? + tile_width - 1) / tile_width;
-            let tiles_down = (usize::try_from(self.height)? + tile_length - 1) / tile_length;
-
-            let samples_per_pixel = self.bits_per_sample.len();
-
-            let tile_samples = tile_length * tile_width * samples_per_pixel;
-            let padding_right = (tiles_across * tile_width) - usize::try_from(self.width)?;
-            let tile_strip_samples =
-                (tile_samples * tiles_across) - (padding_right * tile_length * samples_per_pixel);
-
-            self.tile_attributes = Some(TileAttributes {
-                tile_width,
-                tile_length,
-                tiles_across,
-                tiles_down,
-                tile_samples,
-                padding_right,
-                padding_down: (tiles_down * tile_length) - usize::try_from(self.height)?,
-                row_samples: (tile_width * samples_per_pixel),
-                tile_strip_samples,
-            });
-        }
-
-        Ok(())
-    }
-
-    fn update_tile_decoder(&mut self, result_width: usize) -> TiffResult<()> {
-        if self.tile_decoder.is_none() {
-            self.tile_decoder = Some(TileDecodeState {
-                current_tile: 0,
-                tile_offsets: self.get_tag_u64_vec(Tag::TileOffsets)?,
-                tile_bytes: self.get_tag_u64_vec(Tag::TileByteCounts)?,
-                result_width: 0, // needs to be updated for differently padded_tiles, see below
-            })
-        }
-
-        self.tile_decoder.as_mut().unwrap().result_width = result_width;
-
-        Ok(())
     }
 
     pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
@@ -1461,7 +1438,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
-        self.initialize_strip_decoder()?;
+        self.check_chunk_type(ChunkType::Strip)?;
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
         let offset = *self
             .strip_decoder
@@ -1534,7 +1511,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn read_tile_to_buffer(&mut self, result: &mut DecodingBuffer, tile: usize) -> TiffResult<()> {
+    fn read_tile_to_buffer(&mut self, result: &mut DecodingBuffer, tile: usize, output_width: usize) -> TiffResult<()> {
         let file_offset = *self
             .tile_decoder
             .as_ref()
@@ -1561,7 +1538,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
 
-        self.expand_tile(result.copy(), file_offset, compressed_bytes, tile)?;
+        self.expand_tile(result.copy(), file_offset, compressed_bytes, tile, output_width)?;
 
         if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
             match Predictor::from_u16(predictor) {
@@ -1573,7 +1550,7 @@ impl<R: Read + Seek> Decoder<R> {
                             u32::try_from(tile_width - padding_right)?,
                             u32::try_from(tile_length - padding_down)?,
                         ),
-                        self.tile_decoder.as_ref().unwrap().result_width,
+                        output_width,
                         self.colortype()?,
                     )?;
                 }
@@ -1633,7 +1610,6 @@ impl<R: Read + Seek> Decoder<R> {
     /// Read a single strip from the image and return it as a Vector
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
         self.check_chunk_type(ChunkType::Strip)?;
-        self.initialize_strip_decoder()?;
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
 
         let rows_per_strip =
@@ -1653,7 +1629,6 @@ impl<R: Read + Seek> Decoder<R> {
     /// Read a single tile from the image and return it as a Vector
     pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
         self.check_chunk_type(ChunkType::Tile)?;
-        self.init_tile_attributes()?;
 
         let tile = self.tile_decoder.as_ref().map_or(0, |d| d.current_tile);
 
@@ -1664,9 +1639,8 @@ impl<R: Read + Seek> Decoder<R> {
         let tile_length = tile_attrs.tile_length - padding_down;
 
         let mut result = self.result_buffer(tile_width, tile_length)?;
-        self.update_tile_decoder(tile_width)?;
 
-        self.read_tile_to_buffer(&mut result.as_buffer(0), tile)?;
+        self.read_tile_to_buffer(&mut result.as_buffer(0), tile, tile_width)?;
 
         self.tile_decoder.as_mut().unwrap().current_tile += 1;
 
@@ -1677,23 +1651,19 @@ impl<R: Read + Seek> Decoder<R> {
         let width = usize::try_from(self.width)?;
         let mut result = self.result_buffer(width, usize::try_from(self.height)?)?;
 
-        self.init_tile_attributes()?;
-        self.update_tile_decoder(width)?;
-
         let tile_attrs = self.tile_attributes.as_ref().unwrap();
         let tiles_across = tile_attrs.tiles_across;
         let tiles_down = tile_attrs.tiles_down;
 
         for tile in 0..(tiles_across * tiles_down) {
             let buffer_offset = self.tile_attributes.as_ref().unwrap().get_offset(tile);
-            self.read_tile_to_buffer(&mut result.as_buffer(buffer_offset), tile)?;
+            self.read_tile_to_buffer(&mut result.as_buffer(buffer_offset), tile, width)?;
         }
 
         Ok(result)
     }
 
     fn read_stripped_image(&mut self) -> TiffResult<DecodingResult> {
-        self.initialize_strip_decoder()?;
         let rows_per_strip =
             usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
 
