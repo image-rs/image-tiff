@@ -525,12 +525,58 @@ fn rev_hpredict(
 impl<R: Read + Seek> Decoder<R> {
     /// Create a new decoder that decodes from the stream ```r```
     pub fn new(r: R) -> TiffResult<Decoder<R>> {
-        Decoder {
-            reader: SmartReader::wrap(r, ByteOrder::LittleEndian),
-            byte_order: ByteOrder::LittleEndian,
-            bigtiff: false,
+        let mut endianess = Vec::with_capacity(2);
+        r.take(2).read_to_end(&mut endianess)?;
+        let byte_order = match &*endianess {
+            b"II" => {
+                ByteOrder::LittleEndian
+            }
+            b"MM" => {
+                ByteOrder::BigEndian
+            }
+            _ => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::TiffSignatureNotFound,
+                ))
+            }
+        };
+        let mut reader = SmartReader::wrap(r, byte_order);
+
+        let bigtiff = match reader.read_u16()? {
+            42 => false,
+            43 => {
+                // Read bytesize of offsets (in bigtiff it's alway 8 but provide a way to move to 16 some day)
+                if reader.read_u16()? != 8 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::TiffSignatureNotFound,
+                    ));
+                }
+                // This constant should always be 0
+                if reader.read_u16()? != 0 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::TiffSignatureNotFound,
+                    ));
+                }
+                true
+            }
+            _ => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::TiffSignatureInvalid,
+                ))
+            }
+        };
+        let next_ifd = if bigtiff {
+            Some(reader.read_u64()?)
+        } else {
+            Some(u64::from(reader.read_u32()?))
+        };
+
+        let decoder = Decoder {
+            reader,
+            byte_order,
+            bigtiff,
             limits: Default::default(),
-            next_ifd: None,
+            next_ifd,
             ifd: None,
             width: 0,
             height: 0,
@@ -544,8 +590,9 @@ impl<R: Read + Seek> Decoder<R> {
             tile_decoder: None,
             tile_attributes: None,
             seen_ifds: HashSet::new(),
-        }
-        .init()
+        };
+        decoder.next_image()?;
+        Ok(decoder)
     }
 
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
@@ -599,59 +646,11 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
-    fn read_header(&mut self) -> TiffResult<()> {
-        let mut endianess = Vec::with_capacity(2);
-        self.reader.by_ref().take(2).read_to_end(&mut endianess)?;
-        match &*endianess {
-            b"II" => {
-                self.byte_order = ByteOrder::LittleEndian;
-                self.reader.byte_order = ByteOrder::LittleEndian;
-            }
-            b"MM" => {
-                self.byte_order = ByteOrder::BigEndian;
-                self.reader.byte_order = ByteOrder::BigEndian;
-            }
-            _ => {
-                return Err(TiffError::FormatError(
-                    TiffFormatError::TiffSignatureNotFound,
-                ))
-            }
-        }
-        match self.read_short()? {
-            42 => self.bigtiff = false,
-            43 => {
-                self.bigtiff = true;
-                // Read bytesize of offsets (in bigtiff it's alway 8 but provide a way to move to 16 some day)
-                if self.read_short()? != 8 {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::TiffSignatureNotFound,
-                    ));
-                }
-                // This constant should always be 0
-                if self.read_short()? != 0 {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::TiffSignatureNotFound,
-                    ));
-                }
-            }
-            _ => {
-                return Err(TiffError::FormatError(
-                    TiffFormatError::TiffSignatureInvalid,
-                ))
-            }
-        }
-        self.next_ifd = match self.read_ifd_offset_nonrepeating()? {
-            0 => None,
-            n => Some(n),
-        };
-        Ok(())
-    }
-
-    /// Initializes the decoder.
-    pub fn init(mut self) -> TiffResult<Decoder<R>> {
-        self.read_header()?;
-        self.next_image()?;
-        Ok(self)
+    /// Reset the decoder.
+    #[deprecated = "Never should have been public. Only use Decoder::new()"]
+    pub fn init(self) -> TiffResult<Decoder<R>> {
+        let Self { reader, .. } = self;
+        Self::new(reader.into_inner())
     }
 
     /// Reads in the next image.

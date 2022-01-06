@@ -339,6 +339,9 @@ where
     pub fn wrap(reader: R, byte_order: ByteOrder) -> SmartReader<R> {
         SmartReader { reader, byte_order }
     }
+    pub fn into_inner(self) -> R {
+         self.reader 
+    }
 }
 
 impl<R> EndianReader for SmartReader<R>
