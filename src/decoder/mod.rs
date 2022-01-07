@@ -811,15 +811,6 @@ impl<R: Read + Seek> Decoder<R> {
         self.reader.byte_order
     }
 
-    fn read_ifd_offset_nonrepeating(&mut self) -> TiffResult<u64> {
-        let result = self.read_ifd_offset()?;
-        if self.seen_ifds.insert(result) {
-            Ok(result)
-        } else {
-            Err(TiffError::FormatError(TiffFormatError::CycleInOffsets))
-        }
-    }
-
     #[inline]
     pub fn read_ifd_offset(&mut self) -> Result<u64, io::Error> {
         if self.bigtiff {
@@ -978,9 +969,13 @@ impl<R: Read + Seek> Decoder<R> {
             };
             dir.insert(tag, entry);
         }
-        self.next_ifd = match self.read_ifd_offset_nonrepeating()? {
-            0 => None,
-            n => Some(n),
+
+        self.next_ifd = {
+            let result = self.read_ifd_offset()?;
+            if !self.seen_ifds.insert(result) {
+                return Err(TiffError::FormatError(TiffFormatError::CycleInOffsets));
+            }
+            Some(result)
         };
         Ok(dir)
     }
