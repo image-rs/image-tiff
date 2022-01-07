@@ -340,7 +340,12 @@ where
         SmartReader { reader, byte_order }
     }
     pub fn into_inner(self) -> R {
-         self.reader 
+         self.reader
+    }
+}
+impl<R: Read + Seek> SmartReader<R> {
+    pub fn goto_offset(&mut self, offset: u64) -> io::Result<()> {
+        self.seek(io::SeekFrom::Start(offset)).map(|_| ())
     }
 }
 

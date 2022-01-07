@@ -988,9 +988,7 @@ impl<R: Read + Seek> Decoder<R> {
             Some(entry) => entry.clone(),
         };
 
-        let limits = self.limits.clone();
-
-        Ok(Some(entry.val(&limits, self)?))
+        Ok(Some(entry.val(&self.limits, self.bigtiff, &mut self.reader)?))
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
