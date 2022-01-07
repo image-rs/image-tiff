@@ -361,7 +361,6 @@ where
     R: Read + Seek,
 {
     reader: SmartReader<R>,
-    byte_order: ByteOrder,
     bigtiff: bool,
     limits: Limits,
     next_ifd: Option<u64>,
@@ -575,7 +574,6 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut decoder = Decoder {
             reader,
-            byte_order,
             bigtiff,
             limits: Default::default(),
             next_ifd,
@@ -810,7 +808,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns the byte_order
     pub fn byte_order(&self) -> ByteOrder {
-        self.byte_order
+        self.reader.byte_order
     }
 
     fn read_ifd_offset_nonrepeating(&mut self) -> TiffResult<u64> {
@@ -1257,6 +1255,7 @@ impl<R: Read + Seek> Decoder<R> {
     ) -> TiffResult<()> {
         let color_type = self.colortype()?;
         let byte_len = buffer.byte_len();
+        let byte_order = self.reader.byte_order;
 
         let tile_attrs = self.tile_attributes.as_mut().unwrap();
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
@@ -1304,7 +1303,7 @@ impl<R: Read + Seek> Decoder<R> {
                 io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
             }
 
-            Self::fix_endianness(&mut buffer.subrange(row_start..row_end), self.byte_order);
+            Self::fix_endianness(&mut buffer.subrange(row_start..row_end), byte_order);
 
             if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 Self::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
