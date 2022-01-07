@@ -8,7 +8,7 @@ use crate::{
 };
 
 use self::ifd::Directory;
-use self::image::{Image, StripDecodeState, TileAttributes};
+use self::image::Image;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
 };
@@ -20,6 +20,7 @@ use self::stream::{
 pub mod ifd;
 mod image;
 mod stream;
+mod tag_reader;
 
 /// Result of a decoding process
 #[derive(Debug)]
@@ -594,139 +595,15 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
+        let ifd = self.read_ifd()?;
+
         self.current_chunk = 0;
-
-        self.image.ifd = Some(self.read_ifd()?);
-        self.image.width = self.get_tag_u32(Tag::ImageWidth)?;
-        self.image.height = self.get_tag_u32(Tag::ImageLength)?;
-        self.image.strip_decoder = None;
-        self.image.tile_attributes = None;
-        self.image.chunk_offsets.clear();
-        self.image.chunk_bytes.clear();
-        self.image.jpeg_tables = None;
-
-        self.image.photometric_interpretation = self
-            .find_tag_unsigned(Tag::PhotometricInterpretation)?
-            .and_then(PhotometricInterpretation::from_u16)
-            .ok_or(TiffUnsupportedError::UnknownInterpretation)?;
-
-        // Try to parse both the compression method and the number, format, and bits of the included samples.
-        // If they are not explicitly specified, those tags are reset to their default values and not carried from previous images.
-        self.image.compression_method = match self.find_tag_unsigned(Tag::Compression)? {
-            Some(val) => CompressionMethod::from_u16(val)
-                .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?,
-            None => CompressionMethod::None,
-        };
-
-        if self.image.compression_method == CompressionMethod::ModernJPEG {
-            self.image.jpeg_tables = self
-                .find_tag(Tag::JPEGTables)?
-                .map(|_| {
-                    let vec = self.get_tag_u8_vec(Tag::JPEGTables)?;
-                    if vec.len() < 2 {
-                        return Err(TiffError::FormatError(
-                            TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
-                        ));
-                    }
-                    Ok(vec)
-                })
-                .transpose()?;
-        }
-
-        self.image.samples = self.find_tag_unsigned(Tag::SamplesPerPixel)?.unwrap_or(1);
-
-        self.image.sample_format = match self.find_tag_unsigned_vec(Tag::SampleFormat)? {
-            Some(vals) => {
-                let sample_format: Vec<_> = vals
-                    .into_iter()
-                    .map(SampleFormat::from_u16_exhaustive)
-                    .collect();
-
-                // TODO: for now, only homogenous formats across samples are supported.
-                if !sample_format.windows(2).all(|s| s[0] == s[1]) {
-                    return Err(TiffUnsupportedError::UnsupportedSampleFormat(
-                        self.image.sample_format.clone(),
-                    )
-                    .into());
-                }
-
-                sample_format
-            }
-            None => vec![SampleFormat::Uint],
-        };
-
-        self.image.bits_per_sample = match self.image.samples {
-            1 | 3 | 4 => self
-                .find_tag_unsigned_vec(Tag::BitsPerSample)?
-                .unwrap_or_else(|| vec![1]),
-            _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.image.samples).into()),
-        };
-
-        self.image.predictor = self
-            .find_tag_unsigned(Tag::Predictor)?
-            .map(|p| {
-                Predictor::from_u16(p)
-                    .ok_or(TiffError::FormatError(TiffFormatError::UnknownPredictor(p)))
-            })
-            .transpose()?
-            .unwrap_or(Predictor::None);
-
-        let ifd = self.image.ifd.as_ref().unwrap();
-        match (
-            ifd.contains_key(&Tag::StripByteCounts),
-            ifd.contains_key(&Tag::StripOffsets),
-            ifd.contains_key(&Tag::TileByteCounts),
-            ifd.contains_key(&Tag::TileOffsets),
-        ) {
-            (true, true, false, false) => {
-                self.image.chunk_type = ChunkType::Strip;
-
-                self.image.chunk_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
-                self.image.chunk_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
-                let rows_per_strip = self
-                    .find_tag(Tag::RowsPerStrip)?
-                    .unwrap_or(ifd::Value::Unsigned(self.image.height))
-                    .into_u32()?;
-                self.image.strip_decoder = Some(StripDecodeState { rows_per_strip });
-            }
-            (false, false, true, true) => {
-                self.image.chunk_type = ChunkType::Tile;
-
-                let tile_width = usize::try_from(self.get_tag_u32(Tag::TileWidth)?)?;
-                let tile_length = usize::try_from(self.get_tag_u32(Tag::TileLength)?)?;
-
-                if tile_width == 0 {
-                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
-                } else if tile_length == 0 {
-                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
-                }
-
-                self.image.tile_attributes = Some(TileAttributes {
-                    image_width: usize::try_from(self.image.width)?,
-                    image_height: usize::try_from(self.image.height)?,
-                    samples_per_pixel: self.image.bits_per_sample.len(),
-                    tile_width,
-                    tile_length,
-                });
-                self.image.chunk_offsets = self.get_tag_u64_vec(Tag::TileOffsets)?;
-                self.image.chunk_bytes = self.get_tag_u64_vec(Tag::TileByteCounts)?;
-
-                let tile = self.image.tile_attributes.as_ref().unwrap();
-                if self.image.chunk_offsets.len() != self.image.chunk_bytes.len()
-                    || self.image.chunk_offsets.len() != tile.tiles_down() * tile.tiles_across()
-                {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InconsistentSizesEncountered,
-                    ));
-                }
-            }
-            (_, _, _, _) => {
-                return Err(TiffError::FormatError(
-                    TiffFormatError::StripTileTagConflict,
-                ))
-            }
-        };
-
+        self.image = Image::from_reader(
+            &mut self.reader,
+            ifd,
+            &self.limits,
+            self.bigtiff
+        )?;
         Ok(())
     }
 

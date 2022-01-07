@@ -1,8 +1,11 @@
-use super::ChunkType;
-use super::ifd::Directory;
-use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat,
-};
+use super::ifd::{Directory, Value};
+use super::tag_reader::TagReader;
+use super::Limits;
+use super::{stream::SmartReader, ChunkType};
+use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag};
+use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use std::convert::{TryFrom, TryInto};
+use std::io::{Read, Seek};
 
 #[derive(Debug)]
 pub(crate) struct StripDecodeState {
@@ -92,5 +95,189 @@ pub(crate) struct Image {
 }
 
 impl Image {
+    pub fn from_reader<R: Read + Seek>(
+        reader: &mut SmartReader<R>,
+        ifd: Directory,
+        limits: &Limits,
+        bigtiff: bool,
+    ) -> TiffResult<Image> {
+        let mut tag_reader = TagReader {
+            reader,
+            limits,
+            ifd: &ifd,
+            bigtiff,
+        };
 
+        let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
+        let height = tag_reader.require_tag(Tag::ImageLength)?.into_u32()?;
+
+        let photometric_interpretation = tag_reader
+            .find_tag(Tag::PhotometricInterpretation)?
+            .map(Value::into_u16)
+            .transpose()?
+            .and_then(PhotometricInterpretation::from_u16)
+            .ok_or(TiffUnsupportedError::UnknownInterpretation)?;
+
+        // Try to parse both the compression method and the number, format, and bits of the included samples.
+        // If they are not explicitly specified, those tags are reset to their default values and not carried from previous images.
+        let compression_method = match tag_reader.find_tag(Tag::Compression)? {
+            Some(val) => CompressionMethod::from_u16(val.into_u16()?)
+                .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?,
+            None => CompressionMethod::None,
+        };
+
+        let jpeg_tables = if compression_method == CompressionMethod::ModernJPEG
+            && ifd.contains_key(&Tag::JPEGTables)
+        {
+            let vec = tag_reader
+                .find_tag(Tag::JPEGTables)?
+                .unwrap()
+                .into_u8_vec()?;
+            if vec.len() < 2 {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                ));
+            }
+            Some(vec)
+        } else {
+            None
+        };
+
+        let samples = tag_reader
+            .find_tag(Tag::SamplesPerPixel)?
+            .map(Value::into_u16)
+            .transpose()?
+            .unwrap_or(1)
+            .try_into()?;
+
+        let sample_format = match tag_reader.find_tag_uint_vec(Tag::SampleFormat)? {
+            Some(vals) => {
+                let sample_format: Vec<_> = vals
+                    .into_iter()
+                    .map(SampleFormat::from_u16_exhaustive)
+                    .collect();
+
+                // TODO: for now, only homogenous formats across samples are supported.
+                if !sample_format.windows(2).all(|s| s[0] == s[1]) {
+                    return Err(TiffUnsupportedError::UnsupportedSampleFormat(sample_format).into());
+                }
+
+                sample_format
+            }
+            None => vec![SampleFormat::Uint],
+        };
+
+        let bits_per_sample = match samples {
+            1 | 3 | 4 => tag_reader
+                .find_tag_uint_vec(Tag::BitsPerSample)?
+                .unwrap_or_else(|| vec![1]),
+            _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(samples).into()),
+        };
+
+        let predictor = tag_reader
+            .find_tag(Tag::Predictor)?
+            .map(Value::into_u16)
+            .transpose()?
+            .map(|p| {
+                Predictor::from_u16(p)
+                    .ok_or(TiffError::FormatError(TiffFormatError::UnknownPredictor(p)))
+            })
+            .transpose()?
+            .unwrap_or(Predictor::None);
+
+        let chunk_type;
+        let chunk_offsets;
+        let chunk_bytes;
+        let strip_decoder;
+        let tile_attributes;
+        match (
+            ifd.contains_key(&Tag::StripByteCounts),
+            ifd.contains_key(&Tag::StripOffsets),
+            ifd.contains_key(&Tag::TileByteCounts),
+            ifd.contains_key(&Tag::TileOffsets),
+        ) {
+            (true, true, false, false) => {
+                chunk_type = ChunkType::Strip;
+
+                chunk_offsets = tag_reader
+                    .find_tag(Tag::StripOffsets)?
+                    .unwrap()
+                    .into_u64_vec()?;
+                chunk_bytes = tag_reader
+                    .find_tag(Tag::StripByteCounts)?
+                    .unwrap()
+                    .into_u64_vec()?;
+                let rows_per_strip = tag_reader
+                    .find_tag(Tag::RowsPerStrip)?
+                    .map(Value::into_u32)
+                    .transpose()?
+                    .unwrap_or(height);
+                strip_decoder = Some(StripDecodeState { rows_per_strip });
+                tile_attributes = None;
+            }
+            (false, false, true, true) => {
+                chunk_type = ChunkType::Tile;
+
+                let tile_width =
+                    usize::try_from(tag_reader.require_tag(Tag::TileWidth)?.into_u32()?)?;
+                let tile_length =
+                    usize::try_from(tag_reader.require_tag(Tag::TileLength)?.into_u32()?)?;
+
+                if tile_width == 0 {
+                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
+                } else if tile_length == 0 {
+                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
+                }
+
+                strip_decoder = None;
+                tile_attributes = Some(TileAttributes {
+                    image_width: usize::try_from(width)?,
+                    image_height: usize::try_from(height)?,
+                    samples_per_pixel: bits_per_sample.len(),
+                    tile_width,
+                    tile_length,
+                });
+                chunk_offsets = tag_reader
+                    .find_tag(Tag::TileOffsets)?
+                    .unwrap()
+                    .into_u64_vec()?;
+                chunk_bytes = tag_reader
+                    .find_tag(Tag::TileByteCounts)?
+                    .unwrap()
+                    .into_u64_vec()?;
+
+                let tile = tile_attributes.as_ref().unwrap();
+                if chunk_offsets.len() != chunk_bytes.len()
+                    || chunk_offsets.len() != tile.tiles_down() * tile.tiles_across()
+                {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+            }
+            (_, _, _, _) => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::StripTileTagConflict,
+                ))
+            }
+        };
+
+        Ok(Image {
+            ifd: Some(ifd),
+            width,
+            height,
+            bits_per_sample,
+            samples,
+            sample_format,
+            photometric_interpretation,
+            compression_method,
+            jpeg_tables,
+            predictor,
+            chunk_type,
+            strip_decoder,
+            tile_attributes,
+            chunk_offsets,
+            chunk_bytes,
+        })
+    }
 }
