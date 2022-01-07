@@ -8,6 +8,7 @@ use crate::{
 };
 
 use self::ifd::Directory;
+use self::image::{Image, StripDecodeState, TileAttributes};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
 };
@@ -17,6 +18,7 @@ use self::stream::{
 };
 
 pub mod ifd;
+mod image;
 mod stream;
 
 /// Result of a decoding process
@@ -233,74 +235,6 @@ impl<'a> DecodingBuffer<'a> {
     }
 }
 
-#[derive(Debug)]
-struct StripDecodeState {
-    rows_per_strip: u32,
-}
-
-#[derive(Debug)]
-/// Computed values useful for tile decoding
-struct TileAttributes {
-    image_width: usize,
-    image_height: usize,
-    samples_per_pixel: usize,
-
-    tile_width: usize,
-    tile_length: usize,
-}
-
-impl TileAttributes {
-    fn tiles_across(&self) -> usize {
-        (self.image_width + self.tile_width - 1) / self.tile_width
-    }
-    fn tiles_down(&self) -> usize {
-        (self.image_height + self.tile_length - 1) / self.tile_length
-    }
-    fn padding_right(&self) -> usize {
-        self.tile_width - self.image_width % self.tile_width
-    }
-    fn padding_down(&self) -> usize {
-        self.tile_length - self.image_height % self.tile_length
-    }
-    fn row_samples(&self) -> usize {
-        self.tile_width * self.samples_per_pixel
-    }
-    fn tile_samples(&self) -> usize {
-        self.tile_length * self.tile_width * self.samples_per_pixel
-    }
-    fn tile_strip_samples(&self) -> usize {
-        (self.tile_samples() * self.tiles_across())
-            - (self.padding_right() * self.tile_length * self.samples_per_pixel)
-    }
-
-    /// Returns the tile offset in the result buffer, counted in samples
-    fn get_offset(&self, tile: usize) -> usize {
-        let row = tile / self.tiles_across();
-        let column = tile % self.tiles_across();
-
-        (row * self.tile_strip_samples()) + (column * self.row_samples())
-    }
-
-    fn get_padding(&self, tile: usize) -> (usize, usize) {
-        let row = tile / self.tiles_across();
-        let column = tile % self.tiles_across();
-
-        let padding_right = if column == self.tiles_across() - 1 {
-            self.padding_right()
-        } else {
-            0
-        };
-
-        let padding_down = if row == self.tiles_down() - 1 {
-            self.padding_down()
-        } else {
-            0
-        };
-
-        (padding_right, padding_down)
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq)]
 /// Chunk type of the internal representation
 pub enum ChunkType {
@@ -369,23 +303,9 @@ where
     bigtiff: bool,
     limits: Limits,
     next_ifd: Option<u64>,
-    ifd: Option<Directory>,
-    width: u32,
-    height: u32,
-    bits_per_sample: Vec<u8>,
-    samples: u8,
-    sample_format: Vec<SampleFormat>,
-    photometric_interpretation: PhotometricInterpretation,
-    compression_method: CompressionMethod,
-    predictor: Predictor,
-    jpeg_tables: Option<Vec<u8>>,
-    chunk_type: ChunkType,
-    strip_decoder: Option<StripDecodeState>,
-    tile_attributes: Option<TileAttributes>,
-    chunk_offsets: Vec<u64>,
-    chunk_bytes: Vec<u64>,
     current_chunk: usize,
     seen_ifds: HashSet<u64>,
+    image: Image,
 }
 
 trait Wrapping {
@@ -584,21 +504,23 @@ impl<R: Read + Seek> Decoder<R> {
             bigtiff,
             limits: Default::default(),
             next_ifd,
-            ifd: None,
-            width: 0,
-            height: 0,
-            bits_per_sample: vec![1],
-            samples: 1,
-            sample_format: vec![SampleFormat::Uint],
-            photometric_interpretation: PhotometricInterpretation::BlackIsZero,
-            compression_method: CompressionMethod::None,
-            jpeg_tables: None,
-            predictor: Predictor::None,
-            chunk_type: ChunkType::Strip,
-            strip_decoder: None,
-            tile_attributes: None,
-            chunk_offsets: Vec::new(),
-            chunk_bytes: Vec::new(),
+            image: Image {
+                ifd: None,
+                width: 0,
+                height: 0,
+                bits_per_sample: vec![1],
+                samples: 1,
+                sample_format: vec![SampleFormat::Uint],
+                photometric_interpretation: PhotometricInterpretation::BlackIsZero,
+                compression_method: CompressionMethod::None,
+                jpeg_tables: None,
+                predictor: Predictor::None,
+                chunk_type: ChunkType::Strip,
+                strip_decoder: None,
+                tile_attributes: None,
+                chunk_offsets: Vec::new(),
+                chunk_bytes: Vec::new(),
+            },
             current_chunk: 0,
             seen_ifds,
         };
@@ -612,12 +534,12 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
-        Ok((self.width, self.height))
+        Ok((self.image().width, self.image().height))
     }
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
-        match self.photometric_interpretation {
-            PhotometricInterpretation::RGB => match self.bits_per_sample[..] {
+        match self.image().photometric_interpretation {
+            PhotometricInterpretation::RGB => match self.image().bits_per_sample[..] {
                 [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
                 [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
                 // FIXME: We should _ignore_ other components. In particular:
@@ -627,34 +549,38 @@ impl<R: Read + Seek> Decoder<R> {
                 // > -- TIFF 6.0 Specification, Section 7, Additional Baseline requirements.
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
-                        self.photometric_interpretation,
-                        self.bits_per_sample.clone(),
+                        self.image().photometric_interpretation,
+                        self.image().bits_per_sample.clone(),
                     ),
                 )),
             },
-            PhotometricInterpretation::CMYK => match self.bits_per_sample[..] {
+            PhotometricInterpretation::CMYK => match self.image().bits_per_sample[..] {
                 [c, m, y, k] if [c, c, c] == [m, y, k] => Ok(ColorType::CMYK(c)),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
-                        self.photometric_interpretation,
-                        self.bits_per_sample.clone(),
+                        self.image().photometric_interpretation,
+                        self.image().bits_per_sample.clone(),
                     ),
                 )),
             },
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                if self.bits_per_sample.len() == 1 =>
+                if self.image().bits_per_sample.len() == 1 =>
             {
-                Ok(ColorType::Gray(self.bits_per_sample[0]))
+                Ok(ColorType::Gray(self.image().bits_per_sample[0]))
             }
 
             // TODO: this is bad we should not fail at this point
             _ => Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::InterpretationWithBits(
-                    self.photometric_interpretation,
-                    self.bits_per_sample.clone(),
+                    self.image().photometric_interpretation,
+                    self.image().bits_per_sample.clone(),
                 ),
             )),
         }
+    }
+
+    fn image(&self) -> &Image {
+        &self.image
     }
 
     /// Reset the decoder.
@@ -668,30 +594,32 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
-        self.ifd = Some(self.read_ifd()?);
-        self.width = self.get_tag_u32(Tag::ImageWidth)?;
-        self.height = self.get_tag_u32(Tag::ImageLength)?;
-        self.strip_decoder = None;
-        self.tile_attributes = None;
-        self.chunk_offsets.clear();
-        self.chunk_bytes.clear();
         self.current_chunk = 0;
 
-        self.photometric_interpretation = self
+        self.image.ifd = Some(self.read_ifd()?);
+        self.image.width = self.get_tag_u32(Tag::ImageWidth)?;
+        self.image.height = self.get_tag_u32(Tag::ImageLength)?;
+        self.image.strip_decoder = None;
+        self.image.tile_attributes = None;
+        self.image.chunk_offsets.clear();
+        self.image.chunk_bytes.clear();
+        self.image.jpeg_tables = None;
+
+        self.image.photometric_interpretation = self
             .find_tag_unsigned(Tag::PhotometricInterpretation)?
             .and_then(PhotometricInterpretation::from_u16)
             .ok_or(TiffUnsupportedError::UnknownInterpretation)?;
 
         // Try to parse both the compression method and the number, format, and bits of the included samples.
         // If they are not explicitly specified, those tags are reset to their default values and not carried from previous images.
-        self.compression_method = match self.find_tag_unsigned(Tag::Compression)? {
+        self.image.compression_method = match self.find_tag_unsigned(Tag::Compression)? {
             Some(val) => CompressionMethod::from_u16(val)
                 .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?,
             None => CompressionMethod::None,
         };
 
-        if self.compression_method == CompressionMethod::ModernJPEG {
-            self.jpeg_tables = self
+        if self.image.compression_method == CompressionMethod::ModernJPEG {
+            self.image.jpeg_tables = self
                 .find_tag(Tag::JPEGTables)?
                 .map(|_| {
                     let vec = self.get_tag_u8_vec(Tag::JPEGTables)?;
@@ -705,9 +633,9 @@ impl<R: Read + Seek> Decoder<R> {
                 .transpose()?;
         }
 
-        self.samples = self.find_tag_unsigned(Tag::SamplesPerPixel)?.unwrap_or(1);
+        self.image.samples = self.find_tag_unsigned(Tag::SamplesPerPixel)?.unwrap_or(1);
 
-        self.sample_format = match self.find_tag_unsigned_vec(Tag::SampleFormat)? {
+        self.image.sample_format = match self.find_tag_unsigned_vec(Tag::SampleFormat)? {
             Some(vals) => {
                 let sample_format: Vec<_> = vals
                     .into_iter()
@@ -717,7 +645,7 @@ impl<R: Read + Seek> Decoder<R> {
                 // TODO: for now, only homogenous formats across samples are supported.
                 if !sample_format.windows(2).all(|s| s[0] == s[1]) {
                     return Err(TiffUnsupportedError::UnsupportedSampleFormat(
-                        self.sample_format.clone(),
+                        self.image.sample_format.clone(),
                     )
                     .into());
                 }
@@ -727,14 +655,14 @@ impl<R: Read + Seek> Decoder<R> {
             None => vec![SampleFormat::Uint],
         };
 
-        self.bits_per_sample = match self.samples {
+        self.image.bits_per_sample = match self.image.samples {
             1 | 3 | 4 => self
                 .find_tag_unsigned_vec(Tag::BitsPerSample)?
                 .unwrap_or_else(|| vec![1]),
-            _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
+            _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.image.samples).into()),
         };
 
-        self.predictor = self
+        self.image.predictor = self
             .find_tag_unsigned(Tag::Predictor)?
             .map(|p| {
                 Predictor::from_u16(p)
@@ -743,7 +671,7 @@ impl<R: Read + Seek> Decoder<R> {
             .transpose()?
             .unwrap_or(Predictor::None);
 
-        let ifd = self.ifd.as_ref().unwrap();
+        let ifd = self.image.ifd.as_ref().unwrap();
         match (
             ifd.contains_key(&Tag::StripByteCounts),
             ifd.contains_key(&Tag::StripOffsets),
@@ -751,18 +679,18 @@ impl<R: Read + Seek> Decoder<R> {
             ifd.contains_key(&Tag::TileOffsets),
         ) {
             (true, true, false, false) => {
-                self.chunk_type = ChunkType::Strip;
+                self.image.chunk_type = ChunkType::Strip;
 
-                self.chunk_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
-                self.chunk_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
+                self.image.chunk_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
+                self.image.chunk_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
                 let rows_per_strip = self
                     .find_tag(Tag::RowsPerStrip)?
-                    .unwrap_or(ifd::Value::Unsigned(self.height))
+                    .unwrap_or(ifd::Value::Unsigned(self.image.height))
                     .into_u32()?;
-                self.strip_decoder = Some(StripDecodeState { rows_per_strip });
+                self.image.strip_decoder = Some(StripDecodeState { rows_per_strip });
             }
             (false, false, true, true) => {
-                self.chunk_type = ChunkType::Tile;
+                self.image.chunk_type = ChunkType::Tile;
 
                 let tile_width = usize::try_from(self.get_tag_u32(Tag::TileWidth)?)?;
                 let tile_length = usize::try_from(self.get_tag_u32(Tag::TileLength)?)?;
@@ -773,19 +701,19 @@ impl<R: Read + Seek> Decoder<R> {
                     return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
                 }
 
-                self.tile_attributes = Some(TileAttributes {
-                    image_width: usize::try_from(self.width)?,
-                    image_height: usize::try_from(self.height)?,
-                    samples_per_pixel: self.bits_per_sample.len(),
+                self.image.tile_attributes = Some(TileAttributes {
+                    image_width: usize::try_from(self.image.width)?,
+                    image_height: usize::try_from(self.image.height)?,
+                    samples_per_pixel: self.image.bits_per_sample.len(),
                     tile_width,
                     tile_length,
                 });
-                self.chunk_offsets = self.get_tag_u64_vec(Tag::TileOffsets)?;
-                self.chunk_bytes = self.get_tag_u64_vec(Tag::TileByteCounts)?;
+                self.image.chunk_offsets = self.get_tag_u64_vec(Tag::TileOffsets)?;
+                self.image.chunk_bytes = self.get_tag_u64_vec(Tag::TileByteCounts)?;
 
-                let tile = self.tile_attributes.as_ref().unwrap();
-                if self.chunk_offsets.len() != self.chunk_bytes.len()
-                    || self.chunk_offsets.len() != tile.tiles_down() * tile.tiles_across()
+                let tile = self.image.tile_attributes.as_ref().unwrap();
+                if self.image.chunk_offsets.len() != self.image.chunk_bytes.len()
+                    || self.image.chunk_offsets.len() != tile.tiles_down() * tile.tiles_across()
                 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
@@ -984,7 +912,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        let entry = match self.ifd.as_ref().unwrap().get(&tag) {
+        let entry = match self.image().ifd.as_ref().unwrap().get(&tag) {
             None => return Ok(None),
             Some(entry) => entry.clone(),
         };
@@ -1199,10 +1127,11 @@ impl<R: Read + Seek> Decoder<R> {
         // Construct necessary reader to perform decompression.
         self.goto_offset_u64(offset)?;
         let byte_order = self.reader.byte_order;
+        let compression_method = self.image().compression_method;
 
         let reader = Self::create_reader(
             &mut self.reader,
-            self.compression_method,
+            compression_method,
             length,
             buffer.len(),
             buffer.byte_len(),
@@ -1235,7 +1164,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         Self::fix_endianness(&mut buffer, byte_order);
 
-        if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+        if self.image().photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
             Self::invert_colors(&mut buffer, color_type);
         }
 
@@ -1255,20 +1184,22 @@ impl<R: Read + Seek> Decoder<R> {
         let byte_len = buffer.byte_len();
         let byte_order = self.reader.byte_order;
 
-        let tile_attrs = self.tile_attributes.as_mut().unwrap();
+        let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
         let tile_samples = tile_attrs.tile_samples();
         let tile_length = tile_attrs.tile_length;
         let row_samples = tile_attrs.row_samples();
-        let padding_right_samples = padding_right * self.bits_per_sample.len();
+        let padding_right_samples = padding_right * self.image().bits_per_sample.len();
 
         self.goto_offset_u64(offset)?;
 
-        let line_samples = output_width * self.bits_per_sample.len();
+        let line_samples = output_width * self.image().bits_per_sample.len();
+        let compression_method = self.image().compression_method;
+        let photometric_interpretation = self.image().photometric_interpretation;
 
         let mut reader = Self::create_reader(
             &mut self.reader,
-            self.compression_method,
+            compression_method,
             compressed_length,
             tile_samples,
             byte_len,
@@ -1303,7 +1234,7 @@ impl<R: Read + Seek> Decoder<R> {
 
             Self::fix_endianness(&mut buffer.subrange(row_start..row_end), byte_order);
 
-            if self.photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+            if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 Self::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
             }
         }
@@ -1346,10 +1277,10 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
-        if expected != self.chunk_type {
+        if expected != self.image().chunk_type {
             return Err(TiffError::UsageError(UsageError::InvalidChunkType(
                 expected,
-                self.chunk_type,
+                self.image().chunk_type,
             )));
         }
 
@@ -1358,20 +1289,20 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// The chunk type (Strips / Tiles) of the image
     pub fn get_chunk_type(&self) -> ChunkType {
-        self.chunk_type
+        self.image().chunk_type
     }
 
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Strip)?;
-        let rows_per_strip = self.strip_decoder.as_ref().unwrap().rows_per_strip;
+        let rows_per_strip = self.image().strip_decoder.as_ref().unwrap().rows_per_strip;
 
         if rows_per_strip == 0 {
             return Ok(0);
         }
 
         // rows_per_strip - 1 can never fail since we know it's at least 1
-        let height = match self.height.checked_add(rows_per_strip - 1) {
+        let height = match self.image().height.checked_add(rows_per_strip - 1) {
             Some(h) => h,
             None => return Err(TiffError::IntSizeError),
         };
@@ -1382,7 +1313,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Number of tiles in image
     pub fn tile_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Tile)?;
-        Ok(u32::try_from(self.chunk_offsets.len())?)
+        Ok(u32::try_from(self.image().chunk_offsets.len())?)
     }
 
     pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
@@ -1416,12 +1347,15 @@ impl<R: Read + Seek> Decoder<R> {
             self.goto_offset(*offset)?;
             let length = bytes[idx];
 
-            if self.jpeg_tables.is_some() && length < 2 {
+            if self.image().jpeg_tables.is_some() && length < 2 {
                 return Err(TiffError::FormatError(
                     TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
                 ));
             }
-            let jpeg_reader = JpegReader::new(&mut self.reader, length, &self.jpeg_tables)?;
+            // TODO: avoid this clone
+            let jpeg_tables = self.image().jpeg_tables.clone();
+
+            let jpeg_reader = JpegReader::new(&mut self.reader, length, &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
@@ -1449,16 +1383,25 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
         let index = self.current_chunk;
-        let offset = *self.chunk_offsets.get(index).ok_or(TiffError::FormatError(
-            TiffFormatError::InconsistentSizesEncountered,
-        ))?;
-        let byte_count = *self.chunk_bytes.get(index).ok_or(TiffError::FormatError(
-            TiffFormatError::InconsistentSizesEncountered,
-        ))?;
-        let rows_per_strip = usize::try_from(self.strip_decoder.as_ref().unwrap().rows_per_strip)?;
+        let offset = *self
+            .image()
+            .chunk_offsets
+            .get(index)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
+        let byte_count = *self
+            .image()
+            .chunk_bytes
+            .get(index)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
+        let rows_per_strip =
+            usize::try_from(self.image().strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
-        let sized_width = usize::try_from(self.width)?;
-        let sized_height = usize::try_from(self.height)?;
+        let sized_width = usize::try_from(self.image().width)?;
+        let sized_height = usize::try_from(self.image().height)?;
 
         let strip_height_without_padding = index
             .checked_mul(rows_per_strip)
@@ -1470,7 +1413,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let buffer_size = sized_width
             .checked_mul(strip_height)
-            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+            .and_then(|x| x.checked_mul(self.image().bits_per_sample.len()))
             .ok_or(TiffError::LimitsExceeded)?;
 
         if buffer.len() < buffer_size {
@@ -1482,16 +1425,13 @@ impl<R: Read + Seek> Decoder<R> {
         self.expand_strip(buffer.subrange(0..buffer_size), offset, byte_count)?;
         self.current_chunk += 1;
 
-        if u32::try_from(index)? == self.strip_count()? {
-            self.strip_decoder = None;
-        }
-        match self.predictor {
+        match self.image().predictor {
             Predictor::None => {}
             Predictor::Horizontal => {
                 rev_hpredict(
                     buffer.copy(),
-                    (self.width, u32::try_from(strip_height)?),
-                    usize::try_from(self.width)?,
+                    (self.image().width, u32::try_from(strip_height)?),
+                    usize::try_from(self.image().width)?,
                     self.colortype()?,
                 )?;
             }
@@ -1506,15 +1446,24 @@ impl<R: Read + Seek> Decoder<R> {
         tile: usize,
         output_width: usize,
     ) -> TiffResult<()> {
-        let file_offset = *self.chunk_offsets.get(tile).ok_or(TiffError::FormatError(
-            TiffFormatError::InconsistentSizesEncountered,
-        ))?;
+        let file_offset = *self
+            .image()
+            .chunk_offsets
+            .get(tile)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
 
-        let compressed_bytes = *self.chunk_bytes.get(tile).ok_or(TiffError::FormatError(
-            TiffFormatError::InconsistentSizesEncountered,
-        ))?;
+        let compressed_bytes =
+            *self
+                .image()
+                .chunk_bytes
+                .get(tile)
+                .ok_or(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ))?;
 
-        let tile_attrs = self.tile_attributes.as_ref().unwrap();
+        let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
         let tile_width = tile_attrs.tile_width;
         let tile_length = tile_attrs.tile_length;
 
@@ -1528,7 +1477,7 @@ impl<R: Read + Seek> Decoder<R> {
             output_width,
         )?;
 
-        match self.predictor {
+        match self.image().predictor {
             Predictor::None => {}
             Predictor::Horizontal => {
                 rev_hpredict(
@@ -1549,14 +1498,25 @@ impl<R: Read + Seek> Decoder<R> {
     fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
         let buffer_size = match width
             .checked_mul(height)
-            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+            .and_then(|x| x.checked_mul(self.image().bits_per_sample.len()))
         {
             Some(s) => s,
             None => return Err(TiffError::LimitsExceeded),
         };
 
-        let max_sample_bits = self.bits_per_sample.iter().cloned().max().unwrap_or(8);
-        match self.sample_format.first().unwrap_or(&SampleFormat::Uint) {
+        let max_sample_bits = self
+            .image()
+            .bits_per_sample
+            .iter()
+            .cloned()
+            .max()
+            .unwrap_or(8);
+        match self
+            .image()
+            .sample_format
+            .first()
+            .unwrap_or(&SampleFormat::Uint)
+        {
             SampleFormat::Uint => match max_sample_bits {
                 n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
                 n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
@@ -1593,14 +1553,15 @@ impl<R: Read + Seek> Decoder<R> {
         self.check_chunk_type(ChunkType::Strip)?;
         let index = self.current_chunk;
 
-        let rows_per_strip = usize::try_from(self.strip_decoder.as_ref().unwrap().rows_per_strip)?;
+        let rows_per_strip =
+            usize::try_from(self.image().strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
         let strip_height = cmp::min(
             rows_per_strip,
-            usize::try_from(self.height)? - index * rows_per_strip,
+            usize::try_from(self.image().height)? - index * rows_per_strip,
         );
 
-        let mut result = self.result_buffer(usize::try_from(self.width)?, strip_height)?;
+        let mut result = self.result_buffer(usize::try_from(self.image().width)?, strip_height)?;
         self.read_strip_to_buffer(result.as_buffer(0))?;
 
         Ok(result)
@@ -1612,7 +1573,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let tile = self.current_chunk;
 
-        let tile_attrs = self.tile_attributes.as_ref().unwrap();
+        let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
 
         let tile_width = tile_attrs.tile_width - padding_right;
@@ -1628,11 +1589,16 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn read_tiled_image(&mut self) -> TiffResult<DecodingResult> {
-        let width = usize::try_from(self.width)?;
-        let mut result = self.result_buffer(width, usize::try_from(self.height)?)?;
+        let width = usize::try_from(self.image().width)?;
+        let mut result = self.result_buffer(width, usize::try_from(self.image().height)?)?;
 
-        for tile in 0..self.chunk_offsets.len() {
-            let buffer_offset = self.tile_attributes.as_ref().unwrap().get_offset(tile);
+        for tile in 0..self.image().chunk_offsets.len() {
+            let buffer_offset = self
+                .image()
+                .tile_attributes
+                .as_ref()
+                .unwrap()
+                .get_offset(tile);
             self.read_tile_to_buffer(&mut result.as_buffer(buffer_offset), tile, width)?;
         }
 
@@ -1640,18 +1606,21 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn read_stripped_image(&mut self) -> TiffResult<DecodingResult> {
-        let rows_per_strip = usize::try_from(self.strip_decoder.as_ref().unwrap().rows_per_strip)?;
+        let rows_per_strip =
+            usize::try_from(self.image().strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
-        let samples_per_strip = match usize::try_from(self.width)?
+        let samples_per_strip = match usize::try_from(self.image().width)?
             .checked_mul(rows_per_strip)
-            .and_then(|x| x.checked_mul(self.bits_per_sample.len()))
+            .and_then(|x| x.checked_mul(self.image().bits_per_sample.len()))
         {
             Some(s) => s,
             None => return Err(TiffError::LimitsExceeded),
         };
 
-        let mut result =
-            self.result_buffer(usize::try_from(self.width)?, usize::try_from(self.height)?)?;
+        let mut result = self.result_buffer(
+            usize::try_from(self.image().width)?,
+            usize::try_from(self.image().height)?,
+        )?;
 
         for i in 0..usize::try_from(self.strip_count()?)? {
             let r = result.as_buffer(samples_per_strip * i);
@@ -1662,7 +1631,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        let result = match (self.chunk_type, self.compression_method) {
+        let result = match (self.image().chunk_type, self.image().compression_method) {
             (_, CompressionMethod::ModernJPEG) => self.read_jpeg()?,
             (ChunkType::Strip, _) => self.read_stripped_image()?,
             (ChunkType::Tile, _) => self.read_tiled_image()?,
