@@ -344,26 +344,6 @@ fn test_bad_strip_count() {
 }
 
 #[test]
-fn test_too_big_buffer_size() {
-    let image = [
-        73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 99, 255, 255, 254, 1, 1, 4, 0, 1,
-        0, 0, 0, 158, 0, 0, 251, 3, 1, 3, 255, 254, 255, 255, 0, 1, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0,
-        0, 0, 0, 0, 0, 17, 1, 4, 0, 9, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 0, 2, 0, 0, 0, 63, 0, 0, 0,
-        22, 1, 4, 0, 1, 0, 0, 0, 44, 0, 0, 0, 23, 1, 4, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 1, 0, 178,
-        178,
-    ];
-
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        tiff::TiffError::LimitsExceeded => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
-}
-
-#[test]
 fn test_stripped_image_overflow() {
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 100, 0, 0, 148, 1, 1, 4, 0, 1, 0,
@@ -422,32 +402,6 @@ fn oom_2() {
 }
 
 #[test]
-fn invalid_jpeg_tag() {
-    use tiff::tags;
-    use tiff::{TiffError, TiffFormatError};
-
-    let image = [
-        73, 73, 42, 0, 8, 0, 0, 0, 15, 0, 0, 254, 44, 1, 0, 0, 0, 0, 0, 32, 0, 0, 0, 1, 4, 0, 1, 0,
-        0, 0, 0, 1, 0, 0, 91, 1, 1, 0, 0, 0, 0, 0, 242, 4, 0, 0, 0, 22, 0, 56, 77, 0, 77, 1, 0, 0,
-        73, 42, 0, 1, 4, 0, 1, 0, 0, 0, 4, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 158, 0, 0, 251, 3, 1,
-        3, 0, 1, 0, 0, 0, 7, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0, 0, 2, 0, 0, 0, 17, 1, 4, 0, 1, 0, 0, 0,
-        0, 0, 0, 0, 1, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 4, 61, 1, 18, 0, 1, 0, 0, 0, 202, 0, 0, 0, 17,
-        1, 100, 0, 129, 0, 0, 0, 0, 0, 0, 0, 232, 254, 252, 255, 254, 255, 255, 255, 1, 29, 0, 0,
-        22, 1, 3, 0, 1, 0, 0, 0, 16, 0, 0, 0, 23, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 123, 73, 254, 0,
-        73,
-    ];
-
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::JPEGTables)) => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
-}
-
-#[test]
 fn invalid_jpeg_tag_2() {
     use tiff::tags;
     use tiff::{TiffError, TiffFormatError};
@@ -469,29 +423,6 @@ fn invalid_jpeg_tag_2() {
 
     match err {
         TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::JPEGTables)) => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
-}
-
-#[test]
-fn multiple_images_strip_height() {
-    use tiff::TiffError;
-
-    let image = [
-        73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 2, 0, 0, 0, 61, 1, 9, 0, 46, 22,
-        128, 0, 0, 0, 0, 1, 6, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 17, 1, 4, 0, 27, 0, 0, 0, 0, 0, 0,
-        0, 1, 1, 3, 0, 1, 0, 0, 0, 17, 1, 0, 231, 22, 1, 1, 0, 1, 0, 0, 0, 130, 0, 0, 0, 23, 1, 4,
-        0, 14, 0, 0, 0, 0, 0, 0, 0, 133, 133, 133, 77, 77, 77, 0, 0, 22, 128, 0, 255, 255, 255,
-        255, 255,
-    ];
-
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let _ = decoder.read_image().unwrap();
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        TiffError::IntSizeError => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
