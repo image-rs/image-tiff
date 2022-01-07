@@ -238,6 +238,7 @@ struct StripDecodeState {
     strip_index: usize,
     strip_offsets: Vec<u64>,
     strip_bytes: Vec<u64>,
+    rows_per_strip: u32,
 }
 
 #[derive(Debug)]
@@ -524,9 +525,9 @@ fn rev_hpredict(
 
 impl<R: Read + Seek> Decoder<R> {
     /// Create a new decoder that decodes from the stream ```r```
-    pub fn new(r: R) -> TiffResult<Decoder<R>> {
+    pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
         let mut endianess = Vec::with_capacity(2);
-        r.take(2).read_to_end(&mut endianess)?;
+        (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
             b"II" => {
                 ByteOrder::LittleEndian
@@ -571,7 +572,10 @@ impl<R: Read + Seek> Decoder<R> {
             Some(u64::from(reader.read_u32()?))
         };
 
-        let decoder = Decoder {
+        let mut seen_ifds = HashSet::new();
+        seen_ifds.insert(*next_ifd.as_ref().unwrap());
+
+        let mut decoder = Decoder {
             reader,
             byte_order,
             bigtiff,
@@ -589,7 +593,7 @@ impl<R: Read + Seek> Decoder<R> {
             strip_decoder: None,
             tile_decoder: None,
             tile_attributes: None,
-            seen_ifds: HashSet::new(),
+            seen_ifds,
         };
         decoder.next_image()?;
         Ok(decoder)
@@ -718,10 +722,14 @@ impl<R: Read + Seek> Decoder<R> {
 
                 let strip_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
                 let strip_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
+                let rows_per_strip = self.find_tag(Tag::RowsPerStrip)?
+                    .unwrap_or(ifd::Value::Unsigned(self.height))
+                    .into_u32()?;
                 self.strip_decoder = Some(StripDecodeState {
                     strip_index: 0,
                     strip_offsets,
                     strip_bytes,
+                    rows_per_strip,
                 });
             }
             (false, false, true, true) => {
@@ -1337,7 +1345,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Strip)?;
-        let rows_per_strip = self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height);
+        let rows_per_strip = self.strip_decoder.as_ref().unwrap().rows_per_strip;
 
         if rows_per_strip == 0 {
             return Ok(0);
@@ -1457,8 +1465,7 @@ impl<R: Read + Seek> Decoder<R> {
             .ok_or(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ))?;
-        let tag_rows = self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height);
-        let rows_per_strip = usize::try_from(tag_rows)?;
+        let rows_per_strip = usize::try_from(self.strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
         let sized_width = usize::try_from(self.width)?;
         let sized_height = usize::try_from(self.height)?;
@@ -1622,8 +1629,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.check_chunk_type(ChunkType::Strip)?;
         let index = self.strip_decoder.as_ref().unwrap().strip_index;
 
-        let rows_per_strip =
-            usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
+        let rows_per_strip = usize::try_from(self.strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
         let strip_height = cmp::min(
             rows_per_strip,
@@ -1674,8 +1680,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn read_stripped_image(&mut self) -> TiffResult<DecodingResult> {
-        let rows_per_strip =
-            usize::try_from(self.get_tag_u32(Tag::RowsPerStrip).unwrap_or(self.height))?;
+        let rows_per_strip = usize::try_from(self.strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
         let samples_per_strip = match usize::try_from(self.width)?
             .checked_mul(rows_per_strip)
