@@ -235,7 +235,6 @@ impl<'a> DecodingBuffer<'a> {
 
 #[derive(Debug)]
 struct StripDecodeState {
-    strip_index: usize,
     strip_offsets: Vec<u64>,
     strip_bytes: Vec<u64>,
     rows_per_strip: u32,
@@ -291,7 +290,6 @@ impl TileAttributes {
 #[derive(Debug)]
 /// Stateful variables for tile decoding
 struct TileDecodeState {
-    current_tile: usize,
     tile_offsets: Vec<u64>,
     tile_bytes: Vec<u64>,
 }
@@ -378,6 +376,7 @@ where
     strip_decoder: Option<StripDecodeState>,
     tile_decoder: Option<TileDecodeState>,
     tile_attributes: Option<TileAttributes>,
+    current_chunk: usize,
     seen_ifds: HashSet<u64>,
 }
 
@@ -591,6 +590,7 @@ impl<R: Read + Seek> Decoder<R> {
             strip_decoder: None,
             tile_decoder: None,
             tile_attributes: None,
+            current_chunk: 0,
             seen_ifds,
         };
         decoder.next_image()?;
@@ -665,6 +665,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.strip_decoder = None;
         self.tile_decoder = None;
         self.tile_attributes = None;
+        self.current_chunk = 0;
 
         self.photometric_interpretation = self
             .find_tag_unsigned(Tag::PhotometricInterpretation)?
@@ -746,7 +747,6 @@ impl<R: Read + Seek> Decoder<R> {
                     .unwrap_or(ifd::Value::Unsigned(self.height))
                     .into_u32()?;
                 self.strip_decoder = Some(StripDecodeState {
-                    strip_index: 0,
                     strip_offsets,
                     strip_bytes,
                     rows_per_strip,
@@ -786,7 +786,6 @@ impl<R: Read + Seek> Decoder<R> {
                     tile_strip_samples,
                 });
                 self.tile_decoder = Some(TileDecodeState {
-                    current_tile: 0,
                     tile_offsets: self.get_tag_u64_vec(Tag::TileOffsets)?,
                     tile_bytes: self.get_tag_u64_vec(Tag::TileByteCounts)?,
                 });
@@ -1446,7 +1445,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
-        let index = self.strip_decoder.as_ref().unwrap().strip_index;
+        let index = self.current_chunk;
         let offset = *self
             .strip_decoder
             .as_ref()
@@ -1490,7 +1489,7 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         self.expand_strip(buffer.subrange(0..buffer_size), offset, byte_count)?;
-        self.strip_decoder.as_mut().unwrap().strip_index += 1;
+        self.current_chunk += 1;
 
         if u32::try_from(index)? == self.strip_count()? {
             self.strip_decoder = None;
@@ -1613,7 +1612,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Read a single strip from the image and return it as a Vector
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
         self.check_chunk_type(ChunkType::Strip)?;
-        let index = self.strip_decoder.as_ref().unwrap().strip_index;
+        let index = self.current_chunk;
 
         let rows_per_strip = usize::try_from(self.strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
@@ -1632,7 +1631,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
         self.check_chunk_type(ChunkType::Tile)?;
 
-        let tile = self.tile_decoder.as_ref().map_or(0, |d| d.current_tile);
+        let tile = self.current_chunk;
 
         let tile_attrs = self.tile_attributes.as_ref().unwrap();
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
@@ -1644,7 +1643,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         self.read_tile_to_buffer(&mut result.as_buffer(0), tile, tile_width)?;
 
-        self.tile_decoder.as_mut().unwrap().current_tile += 1;
+        self.current_chunk += 1;
 
         Ok(result)
     }
