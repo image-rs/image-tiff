@@ -374,6 +374,7 @@ where
     photometric_interpretation: PhotometricInterpretation,
     compression_method: CompressionMethod,
     predictor: Predictor,
+    jpeg_tables: Option<Vec<u8>>,
     chunk_type: ChunkType,
     strip_decoder: Option<StripDecodeState>,
     tile_decoder: Option<TileDecodeState>,
@@ -586,6 +587,7 @@ impl<R: Read + Seek> Decoder<R> {
             sample_format: vec![SampleFormat::Uint],
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
+            jpeg_tables: None,
             predictor: Predictor::None,
             chunk_type: ChunkType::Strip,
             strip_decoder: None,
@@ -678,6 +680,18 @@ impl<R: Read + Seek> Decoder<R> {
                 .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?,
             None => CompressionMethod::None,
         };
+
+        if self.compression_method == CompressionMethod::ModernJPEG {
+            self.jpeg_tables = self.find_tag(Tag::JPEGTables)?.map(|_|{
+                let vec = self.get_tag_u8_vec(Tag::JPEGTables)?;
+                if vec.len() < 2 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                    ));
+                }
+                Ok(vec)
+            }).transpose()?;
+        }
 
         self.samples = self.find_tag_unsigned(Tag::SamplesPerPixel)?.unwrap_or(1);
 
@@ -1378,24 +1392,10 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
+        self.check_chunk_type(ChunkType::Strip)?;
+
         let offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
         let bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
-
-        let jpeg_tables: Option<Vec<u8>> = match self.find_tag(Tag::JPEGTables) {
-            Ok(None) => None,
-            Ok(_) => {
-                let vec = self.get_tag_u8_vec(Tag::JPEGTables)?;
-
-                if vec.len() < 2 {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
-                    ));
-                }
-
-                Some(vec)
-            }
-            Err(e) => return Err(e),
-        };
 
         if offsets.len() == 0 {
             return Err(TiffError::FormatError(TiffFormatError::RequiredTagEmpty(
@@ -1422,12 +1422,12 @@ impl<R: Read + Seek> Decoder<R> {
             self.goto_offset(*offset)?;
             let length = bytes[idx];
 
-            if jpeg_tables.is_some() && length < 2 {
+            if self.jpeg_tables.is_some() && length < 2 {
                 return Err(TiffError::FormatError(
                     TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
                 ));
             }
-            let jpeg_reader = JpegReader::new(&mut self.reader, length, &jpeg_tables)?;
+            let jpeg_reader = JpegReader::new(&mut self.reader, length, &self.jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
