@@ -373,6 +373,7 @@ where
     sample_format: Vec<SampleFormat>,
     photometric_interpretation: PhotometricInterpretation,
     compression_method: CompressionMethod,
+    predictor: Predictor,
     chunk_type: ChunkType,
     strip_decoder: Option<StripDecodeState>,
     tile_decoder: Option<TileDecodeState>,
@@ -529,12 +530,8 @@ impl<R: Read + Seek> Decoder<R> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
-            b"II" => {
-                ByteOrder::LittleEndian
-            }
-            b"MM" => {
-                ByteOrder::BigEndian
-            }
+            b"II" => ByteOrder::LittleEndian,
+            b"MM" => ByteOrder::BigEndian,
             _ => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::TiffSignatureNotFound,
@@ -589,6 +586,7 @@ impl<R: Read + Seek> Decoder<R> {
             sample_format: vec![SampleFormat::Uint],
             photometric_interpretation: PhotometricInterpretation::BlackIsZero,
             compression_method: CompressionMethod::None,
+            predictor: Predictor::None,
             chunk_type: ChunkType::Strip,
             strip_decoder: None,
             tile_decoder: None,
@@ -710,6 +708,15 @@ impl<R: Read + Seek> Decoder<R> {
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(self.samples).into()),
         };
 
+        self.predictor = self
+            .find_tag_unsigned(Tag::Predictor)?
+            .map(|p| {
+                Predictor::from_u16(p)
+                    .ok_or(TiffError::FormatError(TiffFormatError::UnknownPredictor(p)))
+            })
+            .transpose()?
+            .unwrap_or(Predictor::None);
+
         let ifd = self.ifd.as_ref().unwrap();
         match (
             ifd.contains_key(&Tag::StripByteCounts),
@@ -722,7 +729,8 @@ impl<R: Read + Seek> Decoder<R> {
 
                 let strip_offsets = self.get_tag_u64_vec(Tag::StripOffsets)?;
                 let strip_bytes = self.get_tag_u64_vec(Tag::StripByteCounts)?;
-                let rows_per_strip = self.find_tag(Tag::RowsPerStrip)?
+                let rows_per_strip = self
+                    .find_tag(Tag::RowsPerStrip)?
                     .unwrap_or(ifd::Value::Unsigned(self.height))
                     .into_u32()?;
                 self.strip_decoder = Some(StripDecodeState {
@@ -1495,24 +1503,17 @@ impl<R: Read + Seek> Decoder<R> {
         if u32::try_from(index)? == self.strip_count()? {
             self.strip_decoder = None;
         }
-        if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
-            match Predictor::from_u16(predictor) {
-                Some(Predictor::None) => (),
-                Some(Predictor::Horizontal) => {
-                    rev_hpredict(
-                        buffer.copy(),
-                        (self.width, u32::try_from(strip_height)?),
-                        usize::try_from(self.width)?,
-                        self.colortype()?,
-                    )?;
-                }
-                None => {
-                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
-                        predictor,
-                    )))
-                }
-                Some(Predictor::__NonExhaustive) => unreachable!(),
+        match self.predictor {
+            Predictor::None => {}
+            Predictor::Horizontal => {
+                rev_hpredict(
+                    buffer.copy(),
+                    (self.width, u32::try_from(strip_height)?),
+                    usize::try_from(self.width)?,
+                    self.colortype()?,
+                )?;
             }
+            Predictor::__NonExhaustive => unreachable!(),
         }
         Ok(())
     }
@@ -1557,27 +1558,20 @@ impl<R: Read + Seek> Decoder<R> {
             output_width,
         )?;
 
-        if let Ok(predictor) = self.get_tag_unsigned(Tag::Predictor) {
-            match Predictor::from_u16(predictor) {
-                Some(Predictor::None) => (),
-                Some(Predictor::Horizontal) => {
-                    rev_hpredict(
-                        result.copy(),
-                        (
-                            u32::try_from(tile_width - padding_right)?,
-                            u32::try_from(tile_length - padding_down)?,
-                        ),
-                        output_width,
-                        self.colortype()?,
-                    )?;
-                }
-                None => {
-                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
-                        predictor,
-                    )))
-                }
-                Some(Predictor::__NonExhaustive) => unreachable!(),
+        match self.predictor {
+            Predictor::None => {}
+            Predictor::Horizontal => {
+                rev_hpredict(
+                    result.copy(),
+                    (
+                        u32::try_from(tile_width - padding_right)?,
+                        u32::try_from(tile_length - padding_down)?,
+                    ),
+                    output_width,
+                    self.colortype()?,
+                )?;
             }
+            Predictor::__NonExhaustive => unreachable!(),
         }
         Ok(())
     }
