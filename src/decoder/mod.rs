@@ -241,42 +241,58 @@ struct StripDecodeState {
 #[derive(Debug)]
 /// Computed values useful for tile decoding
 struct TileAttributes {
+    image_width: usize,
+    image_height: usize,
+    samples_per_pixel: usize,
+
     tile_width: usize,
     tile_length: usize,
-    tiles_down: usize,
-    tiles_across: usize,
-    /// Length of padding for rightmost tiles in pixels
-    padding_right: usize,
-    /// length of padding for bottommost tile in pixels
-    padding_down: usize,
-    tile_samples: usize,
-    /// Sample count of one row of one tile
-    row_samples: usize,
-    /// Sample count of one row of tiles
-    tile_strip_samples: usize,
 }
 
 impl TileAttributes {
+    fn tiles_across(&self) -> usize {
+        (self.image_width + self.tile_width - 1) / self.tile_width
+    }
+    fn tiles_down(&self) -> usize {
+        (self.image_height + self.tile_length - 1) / self.tile_length
+    }
+    fn padding_right(&self) -> usize {
+        self.tile_width - self.image_width % self.tile_width
+    }
+    fn padding_down(&self) -> usize {
+        self.tile_length - self.image_height % self.tile_length
+    }
+    fn row_samples(&self) -> usize {
+        self.tile_width * self.samples_per_pixel
+    }
+    fn tile_samples(&self) -> usize {
+        self.tile_length * self.tile_width * self.samples_per_pixel
+    }
+    fn tile_strip_samples(&self) -> usize {
+        (self.tile_samples() * self.tiles_across())
+            - (self.padding_right() * self.tile_length * self.samples_per_pixel)
+    }
+
     /// Returns the tile offset in the result buffer, counted in samples
     fn get_offset(&self, tile: usize) -> usize {
-        let row = tile / self.tiles_across;
-        let column = tile % self.tiles_across;
+        let row = tile / self.tiles_across();
+        let column = tile % self.tiles_across();
 
-        (row * self.tile_strip_samples) + (column * self.row_samples)
+        (row * self.tile_strip_samples()) + (column * self.row_samples())
     }
 
     fn get_padding(&self, tile: usize) -> (usize, usize) {
-        let row = tile / self.tiles_across;
-        let column = tile % self.tiles_across;
+        let row = tile / self.tiles_across();
+        let column = tile % self.tiles_across();
 
-        let padding_right = if column == self.tiles_across - 1 {
-            self.padding_right
+        let padding_right = if column == self.tiles_across() - 1 {
+            self.padding_right()
         } else {
             0
         };
 
-        let padding_down = if row == self.tiles_down - 1 {
-            self.padding_down
+        let padding_down = if row == self.tiles_down() - 1 {
+            self.padding_down()
         } else {
             0
         };
@@ -757,29 +773,24 @@ impl<R: Read + Seek> Decoder<R> {
                     return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
                 }
 
-                let tiles_across = (usize::try_from(self.width)? + tile_width - 1) / tile_width;
-                let tiles_down = (usize::try_from(self.height)? + tile_length - 1) / tile_length;
-
-                let samples_per_pixel = self.bits_per_sample.len();
-
-                let tile_samples = tile_length * tile_width * samples_per_pixel;
-                let padding_right = (tiles_across * tile_width) - usize::try_from(self.width)?;
-                let tile_strip_samples = (tile_samples * tiles_across)
-                    - (padding_right * tile_length * samples_per_pixel);
-
                 self.tile_attributes = Some(TileAttributes {
+                    image_width: usize::try_from(self.width)?,
+                    image_height: usize::try_from(self.height)?,
+                    samples_per_pixel: self.bits_per_sample.len(),
                     tile_width,
                     tile_length,
-                    tiles_across,
-                    tiles_down,
-                    tile_samples,
-                    padding_right,
-                    padding_down: (tiles_down * tile_length) - usize::try_from(self.height)?,
-                    row_samples: (tile_width * samples_per_pixel),
-                    tile_strip_samples,
                 });
                 self.chunk_offsets = self.get_tag_u64_vec(Tag::TileOffsets)?;
                 self.chunk_bytes = self.get_tag_u64_vec(Tag::TileByteCounts)?;
+
+                let tile = self.tile_attributes.as_ref().unwrap();
+                if self.chunk_offsets.len() != self.chunk_bytes.len()
+                    || self.chunk_offsets.len() != tile.tiles_down() * tile.tiles_across()
+                {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
             }
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
@@ -1246,9 +1257,9 @@ impl<R: Read + Seek> Decoder<R> {
 
         let tile_attrs = self.tile_attributes.as_mut().unwrap();
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-        let tile_samples = tile_attrs.tile_samples;
+        let tile_samples = tile_attrs.tile_samples();
         let tile_length = tile_attrs.tile_length;
-        let row_samples = tile_attrs.row_samples;
+        let row_samples = tile_attrs.row_samples();
         let padding_right_samples = padding_right * self.bits_per_sample.len();
 
         self.goto_offset_u64(offset)?;
@@ -1371,10 +1382,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Number of tiles in image
     pub fn tile_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Tile)?;
-        let tile_attrs = self.tile_attributes.as_ref().unwrap();
-        Ok(u32::try_from(
-            tile_attrs.tiles_across * tile_attrs.tiles_down,
-        )?)
+        Ok(u32::try_from(self.chunk_offsets.len())?)
     }
 
     pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
@@ -1623,11 +1631,7 @@ impl<R: Read + Seek> Decoder<R> {
         let width = usize::try_from(self.width)?;
         let mut result = self.result_buffer(width, usize::try_from(self.height)?)?;
 
-        let tile_attrs = self.tile_attributes.as_ref().unwrap();
-        let tiles_across = tile_attrs.tiles_across;
-        let tiles_down = tile_attrs.tiles_down;
-
-        for tile in 0..(tiles_across * tiles_down) {
+        for tile in 0..self.chunk_offsets.len() {
             let buffer_offset = self.tile_attributes.as_ref().unwrap().get_offset(tile);
             self.read_tile_to_buffer(&mut result.as_buffer(buffer_offset), tile, width)?;
         }
