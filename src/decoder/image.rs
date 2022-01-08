@@ -81,6 +81,7 @@ pub(crate) struct Image {
     pub width: u32,
     pub height: u32,
     pub bits_per_sample: Vec<u8>,
+    #[allow(unused)]
     pub samples: u8,
     pub sample_format: Vec<SampleFormat>,
     pub photometric_interpretation: PhotometricInterpretation,
