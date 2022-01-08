@@ -1222,33 +1222,27 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
         self.check_chunk_type(ChunkType::Strip)?;
 
-        let offsets = self.get_tag_u32_vec(Tag::StripOffsets)?;
-        let bytes = self.get_tag_u32_vec(Tag::StripByteCounts)?;
-
-        if offsets.len() == 0 {
+        if self.image().chunk_offsets.len() == 0 {
             return Err(TiffError::FormatError(TiffFormatError::RequiredTagEmpty(
                 Tag::StripOffsets,
             )));
         }
-        if offsets.len() != bytes.len() {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ));
-        }
 
-        if offsets[0] as usize > self.limits.intermediate_buffer_size
-            || bytes
+        if self.image().chunk_offsets[0] as usize > self.limits.intermediate_buffer_size
+            || self.image().chunk_bytes
                 .iter()
                 .any(|&x| x as usize > self.limits.intermediate_buffer_size)
         {
             return Err(TiffError::LimitsExceeded);
         }
 
-        let mut res_img = Vec::with_capacity(offsets[0] as usize);
+        let mut res_img = Vec::with_capacity(self.image().chunk_offsets[0] as usize);
 
-        for (idx, offset) in offsets.iter().enumerate() {
-            self.goto_offset(*offset)?;
-            let length = bytes[idx];
+        for idx in 0..self.image.chunk_offsets.len() {
+            let offset = self.image.chunk_offsets[idx];
+            let length = self.image.chunk_bytes[idx];
+
+            self.goto_offset_u64(offset)?;
 
             if self.image().jpeg_tables.is_some() && length < 2 {
                 return Err(TiffError::FormatError(
@@ -1258,7 +1252,7 @@ impl<R: Read + Seek> Decoder<R> {
             // TODO: avoid this clone
             let jpeg_tables = self.image().jpeg_tables.clone();
 
-            let jpeg_reader = JpegReader::new(&mut self.reader, length, &jpeg_tables)?;
+            let jpeg_reader = JpegReader::new(&mut self.reader, u32::try_from(length)?, &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
