@@ -595,15 +595,27 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
-        let ifd = self.read_ifd()?;
+        if self.next_ifd.is_none() {
+            return Err(TiffError::FormatError(
+                TiffFormatError::ImageFileDirectoryNotFound,
+            ));
+        }
+
+        let (ifd, next_ifd) = Self::read_ifd(
+            &mut self.reader,
+            self.bigtiff,
+            self.next_ifd.take().unwrap(),
+        )?;
+
+        if let Some(next) = next_ifd {
+            if !self.seen_ifds.insert(next) {
+                return Err(TiffError::FormatError(TiffFormatError::CycleInOffsets));
+            }
+            self.next_ifd = Some(next);
+        }
 
         self.current_chunk = 0;
-        self.image = Image::from_reader(
-            &mut self.reader,
-            ifd,
-            &self.limits,
-            self.bigtiff
-        )?;
+        self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
         Ok(())
     }
 
@@ -731,43 +743,53 @@ impl<R: Read + Seek> Decoder<R> {
     // Type  2 bytes
     // Count 4 bytes
     // Value 4 bytes either a pointer the value itself
-    fn read_entry(&mut self) -> TiffResult<Option<(Tag, ifd::Entry)>> {
-        let tag = Tag::from_u16_exhaustive(self.read_short()?);
-        let type_ = match Type::from_u16(self.read_short()?) {
+    fn read_entry(
+        reader: &mut SmartReader<R>,
+        bigtiff: bool,
+    ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
+        let tag = Tag::from_u16_exhaustive(reader.read_u16()?);
+        let type_ = match Type::from_u16(reader.read_u16()?) {
             Some(t) => t,
             None => {
                 // Unknown type. Skip this entry according to spec.
-                self.read_long()?;
-                self.read_long()?;
+                reader.read_u32()?;
+                reader.read_u32()?;
                 return Ok(None);
             }
         };
-        let entry = if self.bigtiff {
-            ifd::Entry::new_u64(type_, self.read_long8()?, self.read_offset_u64()?)
+        let entry = if bigtiff {
+            let mut offset = [0; 8];
+
+            let count = reader.read_u64()?;
+            reader.read_exact(&mut offset)?;
+            ifd::Entry::new_u64(type_, count, offset)
         } else {
-            ifd::Entry::new(type_, self.read_long()?, self.read_offset()?)
+            let mut offset = [0; 4];
+
+            let count = reader.read_u32()?;
+            reader.read_exact(&mut offset)?;
+            ifd::Entry::new(type_, count, offset)
         };
         Ok(Some((tag, entry)))
     }
 
-    /// Reads the next IFD
-    fn read_ifd(&mut self) -> TiffResult<Directory> {
+    /// Reads the IFD starting at the indicated location.
+    fn read_ifd(
+        reader: &mut SmartReader<R>,
+        bigtiff: bool,
+        ifd_location: u64,
+    ) -> TiffResult<(Directory, Option<u64>)> {
+        reader.goto_offset(ifd_location)?;
+
         let mut dir: Directory = HashMap::new();
-        match self.next_ifd {
-            None => {
-                return Err(TiffError::FormatError(
-                    TiffFormatError::ImageFileDirectoryNotFound,
-                ))
-            }
-            Some(offset) => self.goto_offset_u64(offset)?,
-        }
-        let num_tags = if self.bigtiff {
-            self.read_long8()?
+
+        let num_tags = if bigtiff {
+            reader.read_u64()?
         } else {
-            self.read_short()?.into()
+            reader.read_u16()?.into()
         };
         for _ in 0..num_tags {
-            let (tag, entry) = match self.read_entry()? {
+            let (tag, entry) = match Self::read_entry(reader, bigtiff)? {
                 Some(val) => val,
                 None => {
                     continue;
@@ -776,14 +798,18 @@ impl<R: Read + Seek> Decoder<R> {
             dir.insert(tag, entry);
         }
 
-        self.next_ifd = {
-            let result = self.read_ifd_offset()?;
-            if !self.seen_ifds.insert(result) {
-                return Err(TiffError::FormatError(TiffFormatError::CycleInOffsets));
-            }
-            Some(result)
+        let next_ifd = if bigtiff {
+            reader.read_u64()?
+        } else {
+            reader.read_u32()?.into()
         };
-        Ok(dir)
+
+        let next_ifd = match next_ifd {
+            0 => None,
+            1.. => Some(next_ifd),
+        };
+
+        Ok((dir, next_ifd))
     }
 
     /// Tries to retrieve a tag.
