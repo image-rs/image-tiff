@@ -215,6 +215,12 @@ impl Image {
                     .unwrap_or(height);
                 strip_decoder = Some(StripDecodeState { rows_per_strip });
                 tile_attributes = None;
+
+                if chunk_offsets.len() != chunk_bytes.len() {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
             }
             (false, false, true, true) => {
                 chunk_type = ChunkType::Tile;
