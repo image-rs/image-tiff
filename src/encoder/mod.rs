@@ -246,6 +246,11 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(offset)
     }
 
+    /// Provides the number of bytes written by the underlying TiffWriter during the last call.
+    fn last_written(&self) -> u64 {
+        self.writer.last_written()
+    }
+
     fn finish_internal(&mut self) -> TiffResult<()> {
         let ifd_pointer = self.write_directory()?;
         let curr_pos = self.writer.offset();
@@ -383,7 +388,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
             strip_offsets: Vec::new(),
             strip_byte_count: Vec::new(),
             dropped: false,
-            compression,
+            compression: compression,
             _phantom: ::std::marker::PhantomData,
         })
     }
@@ -416,11 +421,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         }
 
         // Write the (possible compressed) data to the encoder.
-        let (offset, byte_count) = self
-            .compression
-            .write_to::<T, K, W>(&mut self.encoder, value)?;
-        self.strip_offsets.push(offset);
-        self.strip_byte_count.push(byte_count);
+        let offset = self.encoder.write_data(value)?;
+        let byte_count = self.encoder.last_written() as usize;
+
+        self.strip_offsets.push(K::convert_offset(offset)?);
+        self.strip_byte_count.push(byte_count.try_into()?);
 
         self.strip_idx += 1;
         Ok(())
@@ -446,12 +451,19 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
             )
             .into());
         }
+
+        self.encoder
+            .writer
+            .set_compression(self.compression.get_algorithm());
+
         let mut idx = 0;
         while self.next_strip_sample_count() > 0 {
             let sample_count = usize::try_from(self.next_strip_sample_count())?;
             self.write_strip(&data[idx..idx + sample_count])?;
             idx += sample_count;
         }
+
+        self.encoder.writer.reset_compression();
         self.finish()?;
         Ok(())
     }

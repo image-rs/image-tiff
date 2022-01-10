@@ -136,7 +136,7 @@ fn encode_decode_with_compression<C: Compression + Clone>(compression: C) {
 
 #[test]
 fn encode_decode_without_compression() {
-    encode_decode_with_compression(Uncompressed);
+    encode_decode_with_compression(Uncompressed::default());
 }
 
 #[test]

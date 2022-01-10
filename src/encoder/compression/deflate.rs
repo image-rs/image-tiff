@@ -1,23 +1,11 @@
-use std::{
-    convert::TryInto,
-    io::{Seek, Write},
-};
-
+use crate::{encoder::compression::*, tags::CompressionMethod};
 use flate2::{write::ZlibEncoder, Compression as FlateCompression};
-
-use crate::{
-    encoder::{
-        colortype::ColorType, compression::Compression, DirectoryEncoder, TiffKind, TiffValue,
-    },
-    tags::CompressionMethod,
-    TiffResult,
-};
+use std::io::Write;
 
 /// The Deflate algorithm used to compress image data in TIFF files.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Deflate {
     level: FlateCompression,
-    buffer: Vec<u8>,
 }
 
 /// The level of compression used by the Deflate algorithm.
@@ -40,13 +28,9 @@ impl Default for DeflateLevel {
 }
 
 impl Deflate {
-    /// Lets be greedy and allocate more bytes in advance. We will likely encode longer image strips.
-    const DEFAULT_BUFFER_SIZE: usize = 256;
-
-    /// Create a new deflate compr+essor with a specific level of compression.
+    /// Create a new deflate compressor with a specific level of compression.
     pub fn with_level(level: DeflateLevel) -> Self {
         Self {
-            buffer: Vec::with_capacity(Self::DEFAULT_BUFFER_SIZE),
             level: FlateCompression::new(level as u32),
         }
     }
@@ -61,36 +45,25 @@ impl Default for Deflate {
 impl Compression for Deflate {
     const COMPRESSION_METHOD: CompressionMethod = CompressionMethod::Deflate;
 
-    fn write_to<'a, T: ColorType, K: TiffKind, W: 'a + Write + Seek>(
-        &mut self,
-        encoder: &mut DirectoryEncoder<'a, W, K>,
-        value: &[T::Inner],
-    ) -> TiffResult<(K::OffsetType, K::OffsetType)>
-    where
-        [T::Inner]: TiffValue,
-    {
-        let data = value.data();
-        {
-            let mut encoder = ZlibEncoder::new(&mut self.buffer, self.level);
-            encoder.write_all(&data)?;
-            encoder.finish()?;
-        }
+    fn get_algorithm(&self) -> Compressor {
+        Compressor::Deflate(self.clone())
+    }
+}
 
-        let compressed_byte_count = self.buffer.len().try_into()?;
-        let offset = encoder
-            .write_data(self.buffer.as_slice())
-            .and_then(K::convert_offset)?;
-
-        // Clear the buffer for the next compression.
-        self.buffer.clear();
-
-        Ok((offset, compressed_byte_count))
+impl CompressionAlgorithm for Deflate {
+    fn write_to<W: Write>(&mut self, writer: &mut W, bytes: &[u8]) -> Result<u64, io::Error> {
+        let mut encoder = ZlibEncoder::new(writer, self.level);
+        encoder.write(&bytes)?;
+        encoder.try_finish()?;
+        Ok(encoder.total_out())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::encoder::compression::tests::{compress, TEST_DATA};
+    use super::*;
+    use crate::encoder::compression::tests::TEST_DATA;
+    use std::io::Cursor;
 
     #[test]
     fn test_deflate() {
@@ -102,7 +75,9 @@ mod tests {
             0x3E, 0xAC, 0xF1, 0x98, 0xB9, 0x70, 0x17, 0x13,
         ];
 
-        let compressed_data = compress(TEST_DATA, super::Deflate::default());
-        assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
+        let mut compressed_data = Vec::<u8>::new();
+        let mut writer = Cursor::new(&mut compressed_data);
+        Deflate::default().write_to(&mut writer, TEST_DATA).unwrap();
+        assert_eq!(EXPECTED_COMPRESSED_DATA, compressed_data.as_slice());
     }
 }

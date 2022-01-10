@@ -1,10 +1,5 @@
-use std::io::prelude::*;
-
-use crate::{
-    encoder::{ColorType, DirectoryEncoder, TiffKind, TiffValue},
-    error::TiffResult,
-    tags::CompressionMethod,
-};
+use crate::tags::CompressionMethod;
+use std::io::{self, Write};
 
 mod deflate;
 mod lzw;
@@ -14,45 +9,48 @@ pub use self::deflate::{Deflate, DeflateLevel};
 pub use self::lzw::Lzw;
 pub use self::uncompressed::Uncompressed;
 
-/// An algorithm used for compression with associated optional buffers and/or configurations.
-pub trait Compression: Default {
+/// An algorithm used for compression
+pub trait CompressionAlgorithm {
+    /// The algorithm writes data directly into the writer.
+    /// It returns the total number of bytes written.
+    fn write_to<W: Write>(&mut self, writer: &mut W, bytes: &[u8]) -> Result<u64, io::Error>;
+}
+
+/// An algorithm used for compression with associated enums and optional configurations.
+pub trait Compression: CompressionAlgorithm {
     /// The corresponding tag to the algorithm.
     const COMPRESSION_METHOD: CompressionMethod;
 
-    /// Write the data of a specific color type to the given encoder and return the offset and byte count, respectively.
-    fn write_to<'a, T: ColorType, K: TiffKind, W: 'a + Write + Seek>(
-        &mut self,
-        encoder: &mut DirectoryEncoder<'a, W, K>,
-        value: &[T::Inner],
-    ) -> TiffResult<(K::OffsetType, K::OffsetType)>
-    where
-        [T::Inner]: TiffValue;
+    /// Method to optain a type that can store each variant of comression algorithm.
+    fn get_algorithm(&self) -> Compressor;
+}
+
+/// An enum to store each compression algorithm.
+pub enum Compressor {
+    Uncompressed(Uncompressed),
+    Lzw(Lzw),
+    Deflate(Deflate),
+}
+
+impl Default for Compressor {
+    /// The default compression strategy does not apply any compression.
+    fn default() -> Self {
+        Compressor::Uncompressed(Uncompressed::default())
+    }
+}
+
+impl CompressionAlgorithm for Compressor {
+    fn write_to<W: Write>(&mut self, writer: &mut W, bytes: &[u8]) -> Result<u64, io::Error> {
+        match self {
+            Compressor::Uncompressed(algorithm) => algorithm.write_to(writer, bytes),
+            Compressor::Lzw(algorithm) => algorithm.write_to(writer, bytes),
+            Compressor::Deflate(algorithm) => algorithm.write_to(writer, bytes),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::encoder::{colortype::Gray8, compression::Compression, TiffEncoder};
-    use std::io::Cursor;
-
     pub const TEST_DATA: &'static [u8] =
         b"This is a string for checking various compression algorithms.";
-
-    pub fn compress<C: Compression>(data: &[u8], compressor: C) -> Vec<u8> {
-        let mut buffer = Vec::new();
-
-        // Compress the data
-        {
-            let mut encoder = TiffEncoder::new(Cursor::new(&mut buffer)).unwrap();
-            let encoder = encoder
-                .new_image_with_compression::<Gray8, _>(data.len() as u32, 1, compressor)
-                .unwrap();
-            encoder.write_data(&data).unwrap();
-        }
-
-        // Remove the meta data written by the encoder
-        buffer.drain(..8);
-        buffer.drain(buffer.len() - 178..);
-
-        buffer
-    }
 }

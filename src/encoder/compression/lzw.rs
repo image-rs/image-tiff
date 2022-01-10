@@ -1,67 +1,33 @@
-use std::{
-    convert::TryInto,
-    io::{Seek, Write},
-};
-
+use crate::{encoder::compression::*, tags::CompressionMethod};
+use std::io::Write;
 use weezl::encode::Encoder as LZWEncoder;
 
-use crate::{
-    encoder::{
-        colortype::ColorType, compression::Compression, DirectoryEncoder, TiffKind, TiffValue,
-    },
-    tags::CompressionMethod,
-    TiffResult,
-};
-
 /// The LZW algorithm used to compress image data in TIFF files.
-#[derive(Debug, Clone)]
-pub struct Lzw {
-    buffer: Vec<u8>,
-}
-
-impl Default for Lzw {
-    fn default() -> Self {
-        // Lets be greedy and allocate more bytes in advance. We will likely encode longer image strips.
-        const DEFAULT_BUFFER_SIZE: usize = 256;
-        Self {
-            buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
-        }
-    }
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Lzw;
 
 impl Compression for Lzw {
     const COMPRESSION_METHOD: CompressionMethod = CompressionMethod::LZW;
 
-    fn write_to<'a, T: ColorType, K: TiffKind, W: 'a + Write + Seek>(
-        &mut self,
-        encoder: &mut DirectoryEncoder<'a, W, K>,
-        value: &[T::Inner],
-    ) -> TiffResult<(K::OffsetType, K::OffsetType)>
-    where
-        [T::Inner]: TiffValue,
-    {
-        let bytes = value.data();
-        let compressed_byte_count = {
-            let mut encoder = LZWEncoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
-            let result = encoder.into_vec(&mut self.buffer).encode_all(&bytes);
-            result.status.map(|_| result.consumed_out)
-        }?
-        .try_into()?;
+    fn get_algorithm(&self) -> Compressor {
+        Compressor::Lzw(*self)
+    }
+}
 
-        let offset = encoder
-            .write_data(self.buffer.as_slice())
-            .and_then(K::convert_offset)?;
-
-        // Clear the buffer for the next compression.
-        self.buffer.clear();
-
-        Ok((offset, compressed_byte_count))
+impl CompressionAlgorithm for Lzw {
+    fn write_to<W: Write>(&mut self, writer: &mut W, bytes: &[u8]) -> Result<u64, io::Error> {
+        let mut encoder = LZWEncoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
+        let result = encoder.into_stream(writer).encode_all(bytes);
+        let byte_count = result.bytes_written as u64;
+        result.status.map(|_| byte_count)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::encoder::compression::tests::{compress, TEST_DATA};
+    use super::*;
+    use crate::encoder::compression::tests::TEST_DATA;
+    use std::io::Cursor;
 
     #[test]
     fn test_lzw() {
@@ -73,7 +39,9 @@ mod tests {
             0x4E, 0x86, 0x83, 0x69, 0xCC, 0x5D, 0x01,
         ];
 
-        let compressed_data = compress(TEST_DATA, super::Lzw::default());
-        assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
+        let mut compressed_data = Vec::<u8>::new();
+        let mut writer = Cursor::new(&mut compressed_data);
+        Lzw::default().write_to(&mut writer, TEST_DATA).unwrap();
+        assert_eq!(EXPECTED_COMPRESSED_DATA, compressed_data.as_slice());
     }
 }
