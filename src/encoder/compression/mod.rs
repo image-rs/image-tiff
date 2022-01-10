@@ -3,10 +3,12 @@ use std::io::{self, Write};
 
 mod deflate;
 mod lzw;
+mod packbits;
 mod uncompressed;
 
 pub use self::deflate::{Deflate, DeflateLevel};
 pub use self::lzw::Lzw;
+pub use self::packbits::Packbits;
 pub use self::uncompressed::Uncompressed;
 
 /// An algorithm used for compression
@@ -30,6 +32,7 @@ pub enum Compressor {
     Uncompressed(Uncompressed),
     Lzw(Lzw),
     Deflate(Deflate),
+    Packbits(Packbits),
 }
 
 impl Default for Compressor {
@@ -45,6 +48,7 @@ impl CompressionAlgorithm for Compressor {
             Compressor::Uncompressed(algorithm) => algorithm.write_to(writer, bytes),
             Compressor::Lzw(algorithm) => algorithm.write_to(writer, bytes),
             Compressor::Deflate(algorithm) => algorithm.write_to(writer, bytes),
+            Compressor::Packbits(algorithm) => algorithm.write_to(writer, bytes),
         }
     }
 }

@@ -150,3 +150,8 @@ fn encode_decode_with_deflate() {
     encode_decode_with_compression(Deflate::with_level(DeflateLevel::Balanced));
     encode_decode_with_compression(Deflate::with_level(DeflateLevel::Best));
 }
+
+#[test]
+fn encode_decode_with_packbits() {
+    encode_decode_with_compression(Packbits::default());
+}
