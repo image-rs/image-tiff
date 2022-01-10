@@ -10,6 +10,8 @@ use crate::tags::{
 };
 use crate::ColorType;
 
+use crate::weezl::LzwError;
+
 /// Tiff error kinds.
 #[derive(Debug)]
 pub enum TiffError {
@@ -285,6 +287,16 @@ impl From<TiffUnsupportedError> for TiffError {
 impl From<std::num::TryFromIntError> for TiffError {
     fn from(_err: std::num::TryFromIntError) -> TiffError {
         TiffError::IntSizeError
+    }
+}
+
+impl From<LzwError> for TiffError {
+    fn from(err: LzwError) -> TiffError {
+        match err {
+            LzwError::InvalidCode => TiffError::FormatError(TiffFormatError::Format(String::from(
+                "LZW compressed data corrupted",
+            ))),
+        }
     }
 }
 

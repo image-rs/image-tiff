@@ -1,3 +1,4 @@
+use crate::encoder::compression::*;
 use crate::error::TiffResult;
 use std::io::{self, Seek, SeekFrom, Write};
 
@@ -42,87 +43,126 @@ pub fn write_bigtiff_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<
 pub struct TiffWriter<W> {
     writer: W,
     offset: u64,
+    byte_count: u64,
+    compressor: Compressor,
 }
 
 impl<W: Write> TiffWriter<W> {
     pub fn new(writer: W) -> Self {
-        Self { writer, offset: 0 }
+        Self {
+            writer,
+            offset: 0,
+            byte_count: 0,
+            compressor: Compressor::default(),
+        }
+    }
+
+    pub fn set_compression(&mut self, compressor: Compressor) {
+        self.compressor = compressor;
+    }
+
+    pub fn reset_compression(&mut self) {
+        self.compressor = Compressor::default();
     }
 
     pub fn offset(&self) -> u64 {
         self.offset
     }
 
+    pub fn last_written(&self) -> u64 {
+        self.byte_count
+    }
+
     pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), io::Error> {
-        self.writer.write_all(bytes)?;
-        self.offset += bytes.len() as u64;
+        self.byte_count = self.compressor.write_to(&mut self.writer, bytes)?;
+        self.offset += self.byte_count;
         Ok(())
     }
 
     pub fn write_u8(&mut self, n: u8) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 1;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
         Ok(())
     }
 
     pub fn write_i8(&mut self, n: i8) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 1;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
         Ok(())
     }
 
     pub fn write_u16(&mut self, n: u16) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 2;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
 
     pub fn write_i16(&mut self, n: i16) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 2;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
 
     pub fn write_u32(&mut self, n: u32) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 4;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
 
     pub fn write_i32(&mut self, n: i32) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 4;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
 
     pub fn write_u64(&mut self, n: u64) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 8;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
 
     pub fn write_i64(&mut self, n: i64) -> Result<(), io::Error> {
-        self.writer.write_all(&n.to_ne_bytes())?;
-        self.offset += 8;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &n.to_ne_bytes())?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
 
     pub fn write_f32(&mut self, n: f32) -> Result<(), io::Error> {
-        self.writer.write_all(&u32::to_ne_bytes(n.to_bits()))?;
-        self.offset += 4;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &u32::to_ne_bytes(n.to_bits()))?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
 
     pub fn write_f64(&mut self, n: f64) -> Result<(), io::Error> {
-        self.writer.write_all(&u64::to_ne_bytes(n.to_bits()))?;
-        self.offset += 8;
+        self.byte_count = self
+            .compressor
+            .write_to(&mut self.writer, &u64::to_ne_bytes(n.to_bits()))?;
+        self.offset += self.byte_count;
 
         Ok(())
     }
