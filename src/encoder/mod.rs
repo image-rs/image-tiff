@@ -12,7 +12,7 @@ use std::{
 
 use crate::{
     error::TiffResult,
-    tags::{ResolutionUnit, Tag},
+    tags::{CompressionMethod, ResolutionUnit, Tag},
 };
 
 pub mod colortype;
@@ -356,7 +356,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         // Also keep the multiple strip handling 'oiled'
         let rows_per_strip = {
             match D::COMPRESSION_METHOD {
-                crate::tags::CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
+                CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
                 _ => (1_000_000 + row_bytes - 1) / row_bytes,
             }
         };
