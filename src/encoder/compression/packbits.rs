@@ -122,6 +122,7 @@ impl CompressionAlgorithm for Packbits {
             bufwriter.write(&bytes[pending_index..pending_index + bytes_pending as usize])?;
         }
 
+        bufwriter.flush()?;
         Ok(bytes_written)
     }
 }

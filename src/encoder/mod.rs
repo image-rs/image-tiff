@@ -354,7 +354,12 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
 
         // Limit the strip size to prevent potential memory and security issues.
         // Also keep the multiple strip handling 'oiled'
-        let rows_per_strip = (1_000_000 + row_bytes - 1) / row_bytes;
+        let rows_per_strip = {
+            match D::COMPRESSION_METHOD {
+                crate::tags::CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
+                _ => (1_000_000 + row_bytes - 1) / row_bytes,
+            }
+        };
 
         let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
 
