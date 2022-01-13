@@ -806,7 +806,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let next_ifd = match next_ifd {
             0 => None,
-            1.. => Some(next_ifd),
+            _ => Some(next_ifd),
         };
 
         Ok((dir, next_ifd))
