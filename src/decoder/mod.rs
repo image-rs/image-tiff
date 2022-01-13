@@ -1229,7 +1229,9 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         if self.image().chunk_offsets[0] as usize > self.limits.intermediate_buffer_size
-            || self.image().chunk_bytes
+            || self
+                .image()
+                .chunk_bytes
                 .iter()
                 .any(|&x| x as usize > self.limits.intermediate_buffer_size)
         {
@@ -1252,7 +1254,8 @@ impl<R: Read + Seek> Decoder<R> {
             // TODO: avoid this clone
             let jpeg_tables = self.image().jpeg_tables.clone();
 
-            let jpeg_reader = JpegReader::new(&mut self.reader, u32::try_from(length)?, &jpeg_tables)?;
+            let jpeg_reader =
+                JpegReader::new(&mut self.reader, u32::try_from(length)?, &jpeg_tables)?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {

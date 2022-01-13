@@ -562,12 +562,16 @@ impl Entry {
             Type::DOUBLE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 Ok(Double(reader.read_f64()?))
             }),
-            Type::RATIONAL => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(Rational(reader.read_u32()?, reader.read_u32()?))
-            }),
-            Type::SRATIONAL => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(SRational(reader.read_i32()?, reader.read_i32()?))
-            }),
+            Type::RATIONAL => {
+                self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
+                    Ok(Rational(reader.read_u32()?, reader.read_u32()?))
+                })
+            }
+            Type::SRATIONAL => {
+                self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
+                    Ok(SRational(reader.read_i32()?, reader.read_i32()?))
+                })
+            }
             Type::LONG8 => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 Ok(UnsignedBig(reader.read_u64()?))
             }),
@@ -580,11 +584,13 @@ impl Entry {
             Type::IFD8 => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 Ok(IfdBig(reader.read_u64()?))
             }),
-            Type::UNDEFINED => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                let mut buf = [0; 1];
-                reader.read_exact(&mut buf)?;
-                Ok(Byte(buf[0]))
-            }),
+            Type::UNDEFINED => {
+                self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
+                    let mut buf = [0; 1];
+                    reader.read_exact(&mut buf)?;
+                    Ok(Byte(buf[0]))
+                })
+            }
             Type::ASCII => {
                 let n = usize::try_from(self.count)?;
                 if n > limits.decoding_buffer_size {

@@ -29,10 +29,7 @@ impl<'a, R: Read + Seek> TagReader<'a, R> {
             )),
         }
     }
-    pub fn find_tag_uint_vec<T: TryFrom<u64>>(
-        &mut self,
-        tag: Tag,
-    ) -> TiffResult<Option<Vec<T>>> {
+    pub fn find_tag_uint_vec<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<Vec<T>>> {
         self.find_tag(tag)?
             .map(|v| v.into_u64_vec())
             .transpose()?
