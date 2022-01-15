@@ -344,7 +344,7 @@ fn test_bad_strip_count() {
 }
 
 #[test]
-fn test_too_big_buffer_size() {
+fn fuzzer_testcase1() {
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 99, 255, 255, 254, 1, 1, 4, 0, 1,
         0, 0, 0, 158, 0, 0, 251, 3, 1, 3, 255, 254, 255, 255, 0, 1, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0,
@@ -353,14 +353,7 @@ fn test_too_big_buffer_size() {
         178,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        tiff::TiffError::LimitsExceeded => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]
@@ -422,10 +415,7 @@ fn oom_2() {
 }
 
 #[test]
-fn invalid_jpeg_tag() {
-    use tiff::tags;
-    use tiff::{TiffError, TiffFormatError};
-
+fn fuzzer_testcase2() {
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 15, 0, 0, 254, 44, 1, 0, 0, 0, 0, 0, 32, 0, 0, 0, 1, 4, 0, 1, 0,
         0, 0, 0, 1, 0, 0, 91, 1, 1, 0, 0, 0, 0, 0, 242, 4, 0, 0, 0, 22, 0, 56, 77, 0, 77, 1, 0, 0,
@@ -437,14 +427,7 @@ fn invalid_jpeg_tag() {
         73,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::JPEGTables)) => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]
@@ -474,9 +457,7 @@ fn invalid_jpeg_tag_2() {
 }
 
 #[test]
-fn multiple_images_strip_height() {
-    use tiff::TiffError;
-
+fn fuzzer_testcase3() {
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 2, 0, 0, 0, 61, 1, 9, 0, 46, 22,
         128, 0, 0, 0, 0, 1, 6, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 17, 1, 4, 0, 27, 0, 0, 0, 0, 0, 0,
@@ -485,15 +466,7 @@ fn multiple_images_strip_height() {
         255, 255,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let _ = decoder.read_image().unwrap();
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        TiffError::IntSizeError => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]

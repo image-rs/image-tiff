@@ -339,6 +339,14 @@ where
     pub fn wrap(reader: R, byte_order: ByteOrder) -> SmartReader<R> {
         SmartReader { reader, byte_order }
     }
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
+}
+impl<R: Read + Seek> SmartReader<R> {
+    pub fn goto_offset(&mut self, offset: u64) -> io::Result<()> {
+        self.seek(io::SeekFrom::Start(offset)).map(|_| ())
+    }
 }
 
 impl<R> EndianReader for SmartReader<R>
