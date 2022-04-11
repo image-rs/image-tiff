@@ -1,3 +1,16 @@
+# Version 0.7.2
+
+New features:
+* Encoding with `ImageEncoder` now takes an optional compressor argument,
+  allowing compressed encoding. See the methods 
+  `TiffEncoder::{new_image,write_image}_with_compression`.
+* `jpeg_decoder` has been upgraded, now supports lossless JPEG.
+
+Changes:
+* Decoding now more consistently reads and interprets the initial IFD, instead
+  of performing _some_ interpretation lazily. (This change prepares fully lazy
+  and backwards seeking.)
+
 # Version 0.7.1
 
 New features:

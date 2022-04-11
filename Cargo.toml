@@ -1,6 +1,6 @@
 [package]
 name = "tiff"
-version = "0.7.1"
+version = "0.7.2"
 authors = [
     "ccgn",
     "bvssvni <bvssvni@gmail.com>",
@@ -19,7 +19,7 @@ edition = "2018"
 
 [dependencies]
 weezl = "0.1.0"
-jpeg = { package = "jpeg-decoder", version = "0.2.1", default-features = false }
+jpeg = { package = "jpeg-decoder", version = "0.2.4", default-features = false }
 flate2 = "1.0.20"
 
 [dev-dependencies]
