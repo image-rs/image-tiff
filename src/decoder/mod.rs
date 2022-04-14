@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
-use std::io::{self, Cursor, Read, Seek};
-use std::sync::Arc;
+use std::io::{self, Read, Seek};
 use std::{cmp, ops::Range};
 
 use crate::{
@@ -14,9 +13,7 @@ use crate::tags::{
     CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
 };
 
-use self::stream::{
-    ByteOrder, DeflateReader, EndianReader, JpegReader, LZWReader, PackBitsReader, SmartReader,
-};
+use self::stream::{ByteOrder, EndianReader, SmartReader};
 
 pub mod ifd;
 mod image;
@@ -170,21 +167,6 @@ pub enum DecodingBuffer<'a> {
 }
 
 impl<'a> DecodingBuffer<'a> {
-    fn len(&self) -> usize {
-        match *self {
-            DecodingBuffer::U8(ref buf) => buf.len(),
-            DecodingBuffer::U16(ref buf) => buf.len(),
-            DecodingBuffer::U32(ref buf) => buf.len(),
-            DecodingBuffer::U64(ref buf) => buf.len(),
-            DecodingBuffer::F32(ref buf) => buf.len(),
-            DecodingBuffer::F64(ref buf) => buf.len(),
-            DecodingBuffer::I8(ref buf) => buf.len(),
-            DecodingBuffer::I16(ref buf) => buf.len(),
-            DecodingBuffer::I32(ref buf) => buf.len(),
-            DecodingBuffer::I64(ref buf) => buf.len(),
-        }
-    }
-
     fn byte_len(&self) -> usize {
         match *self {
             DecodingBuffer::U8(_) => 1,
@@ -233,6 +215,21 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[range]),
             DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[range]),
             DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[range]),
+        }
+    }
+
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            DecodingBuffer::U8(buf) => &mut *buf,
+            DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
+            DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
+            DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
+            DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
+            DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
+            DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
+            DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
+            DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
+            DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
         }
     }
 }
@@ -453,6 +450,85 @@ fn rev_hpredict(
     Ok(())
 }
 
+fn invert_colors_unsigned<T>(buffer: &mut [T], max: T)
+where
+    T: std::ops::Sub<T> + std::ops::Sub<Output = T> + Copy,
+{
+    for datum in buffer.iter_mut() {
+        *datum = max - *datum
+    }
+}
+
+fn invert_colors_fp<T>(buffer: &mut [T], max: T)
+where
+    T: std::ops::Sub<T> + std::ops::Sub<Output = T> + Copy,
+{
+    for datum in buffer.iter_mut() {
+        // FIXME: assumes [0, 1) range for floats
+        *datum = max - *datum
+    }
+}
+
+fn invert_colors(buf: &mut DecodingBuffer, color_type: ColorType) {
+    match (color_type, buf) {
+        (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
+            invert_colors_unsigned(buffer, 0xffff_ffff_ffff_ffff);
+        }
+        (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
+            invert_colors_unsigned(buffer, 0xffff_ffff);
+        }
+        (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
+            invert_colors_unsigned(buffer, 0xffff);
+        }
+        (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
+            invert_colors_unsigned(buffer, 0xff);
+        }
+        (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
+            invert_colors_fp(buffer, 1.0);
+        }
+        (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
+            invert_colors_fp(buffer, 1.0);
+        }
+        _ => {}
+    }
+}
+
+/// Fix endianness. If `byte_order` matches the host, then conversion is a no-op.
+fn fix_endianness(buf: &mut DecodingBuffer, byte_order: ByteOrder) {
+    match byte_order {
+        ByteOrder::LittleEndian => match buf {
+            DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+            DecodingBuffer::U16(b) => b.iter_mut().for_each(|v| *v = u16::from_le(*v)),
+            DecodingBuffer::I16(b) => b.iter_mut().for_each(|v| *v = i16::from_le(*v)),
+            DecodingBuffer::U32(b) => b.iter_mut().for_each(|v| *v = u32::from_le(*v)),
+            DecodingBuffer::I32(b) => b.iter_mut().for_each(|v| *v = i32::from_le(*v)),
+            DecodingBuffer::U64(b) => b.iter_mut().for_each(|v| *v = u64::from_le(*v)),
+            DecodingBuffer::I64(b) => b.iter_mut().for_each(|v| *v = i64::from_le(*v)),
+            DecodingBuffer::F32(b) => b
+                .iter_mut()
+                .for_each(|v| *v = f32::from_bits(u32::from_le(v.to_bits()))),
+            DecodingBuffer::F64(b) => b
+                .iter_mut()
+                .for_each(|v| *v = f64::from_bits(u64::from_le(v.to_bits()))),
+        },
+        ByteOrder::BigEndian => match buf {
+            DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
+            DecodingBuffer::U16(b) => b.iter_mut().for_each(|v| *v = u16::from_be(*v)),
+            DecodingBuffer::I16(b) => b.iter_mut().for_each(|v| *v = i16::from_be(*v)),
+            DecodingBuffer::U32(b) => b.iter_mut().for_each(|v| *v = u32::from_be(*v)),
+            DecodingBuffer::I32(b) => b.iter_mut().for_each(|v| *v = i32::from_be(*v)),
+            DecodingBuffer::U64(b) => b.iter_mut().for_each(|v| *v = u64::from_be(*v)),
+            DecodingBuffer::I64(b) => b.iter_mut().for_each(|v| *v = i64::from_be(*v)),
+            DecodingBuffer::F32(b) => b
+                .iter_mut()
+                .for_each(|v| *v = f32::from_bits(u32::from_be(v.to_bits()))),
+            DecodingBuffer::F64(b) => b
+                .iter_mut()
+                .for_each(|v| *v = f64::from_bits(u64::from_be(v.to_bits()))),
+        },
+    };
+}
+
 impl<R: Read + Seek> Decoder<R> {
     /// Create a new decoder that decodes from the stream ```r```
     pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
@@ -540,45 +616,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
-        match self.image().photometric_interpretation {
-            PhotometricInterpretation::RGB => match self.image().bits_per_sample[..] {
-                [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
-                [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
-                // FIXME: We should _ignore_ other components. In particular:
-                // > Beware of extra components. Some TIFF files may have more components per pixel
-                // than you think. A Baseline TIFF reader must skip over them gracefully,using the
-                // values of the SamplesPerPixel and BitsPerSample fields.
-                // > -- TIFF 6.0 Specification, Section 7, Additional Baseline requirements.
-                _ => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::InterpretationWithBits(
-                        self.image().photometric_interpretation,
-                        self.image().bits_per_sample.clone(),
-                    ),
-                )),
-            },
-            PhotometricInterpretation::CMYK => match self.image().bits_per_sample[..] {
-                [c, m, y, k] if [c, c, c] == [m, y, k] => Ok(ColorType::CMYK(c)),
-                _ => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::InterpretationWithBits(
-                        self.image().photometric_interpretation,
-                        self.image().bits_per_sample.clone(),
-                    ),
-                )),
-            },
-            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                if self.image().bits_per_sample.len() == 1 =>
-            {
-                Ok(ColorType::Gray(self.image().bits_per_sample[0]))
-            }
-
-            // TODO: this is bad we should not fail at this point
-            _ => Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::InterpretationWithBits(
-                    self.image().photometric_interpretation,
-                    self.image().bits_per_sample.clone(),
-                ),
-            )),
-        }
+        self.image().colortype()
     }
 
     fn image(&self) -> &Image {
@@ -926,256 +964,6 @@ impl<R: Read + Seek> Decoder<R> {
         self.get_tag(tag)?.into_string()
     }
 
-    fn invert_colors_unsigned<T>(buffer: &mut [T], max: T)
-    where
-        T: std::ops::Sub<T> + std::ops::Sub<Output = T> + Copy,
-    {
-        for datum in buffer.iter_mut() {
-            *datum = max - *datum
-        }
-    }
-
-    fn invert_colors_fp<T>(buffer: &mut [T], max: T)
-    where
-        T: std::ops::Sub<T> + std::ops::Sub<Output = T> + Copy,
-    {
-        for datum in buffer.iter_mut() {
-            // FIXME: assumes [0, 1) range for floats
-            *datum = max - *datum
-        }
-    }
-
-    fn invert_colors(buf: &mut DecodingBuffer, color_type: ColorType) {
-        match (color_type, buf) {
-            (ColorType::Gray(64), DecodingBuffer::U64(ref mut buffer)) => {
-                Self::invert_colors_unsigned(buffer, 0xffff_ffff_ffff_ffff);
-            }
-            (ColorType::Gray(32), DecodingBuffer::U32(ref mut buffer)) => {
-                Self::invert_colors_unsigned(buffer, 0xffff_ffff);
-            }
-            (ColorType::Gray(16), DecodingBuffer::U16(ref mut buffer)) => {
-                Self::invert_colors_unsigned(buffer, 0xffff);
-            }
-            (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
-                Self::invert_colors_unsigned(buffer, 0xff);
-            }
-            (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
-                Self::invert_colors_fp(buffer, 1.0);
-            }
-            (ColorType::Gray(64), DecodingBuffer::F64(ref mut buffer)) => {
-                Self::invert_colors_fp(buffer, 1.0);
-            }
-            _ => {}
-        }
-    }
-
-    /// Fix endianness. If `byte_order` matches the host, then conversion is a no-op.
-    fn fix_endianness(buf: &mut DecodingBuffer, byte_order: ByteOrder) {
-        match byte_order {
-            ByteOrder::LittleEndian => match buf {
-                DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
-                DecodingBuffer::U16(b) => b.iter_mut().for_each(|v| *v = u16::from_le(*v)),
-                DecodingBuffer::I16(b) => b.iter_mut().for_each(|v| *v = i16::from_le(*v)),
-                DecodingBuffer::U32(b) => b.iter_mut().for_each(|v| *v = u32::from_le(*v)),
-                DecodingBuffer::I32(b) => b.iter_mut().for_each(|v| *v = i32::from_le(*v)),
-                DecodingBuffer::U64(b) => b.iter_mut().for_each(|v| *v = u64::from_le(*v)),
-                DecodingBuffer::I64(b) => b.iter_mut().for_each(|v| *v = i64::from_le(*v)),
-                DecodingBuffer::F32(b) => b
-                    .iter_mut()
-                    .for_each(|v| *v = f32::from_bits(u32::from_le(v.to_bits()))),
-                DecodingBuffer::F64(b) => b
-                    .iter_mut()
-                    .for_each(|v| *v = f64::from_bits(u64::from_le(v.to_bits()))),
-            },
-            ByteOrder::BigEndian => match buf {
-                DecodingBuffer::U8(_) | DecodingBuffer::I8(_) => {}
-                DecodingBuffer::U16(b) => b.iter_mut().for_each(|v| *v = u16::from_be(*v)),
-                DecodingBuffer::I16(b) => b.iter_mut().for_each(|v| *v = i16::from_be(*v)),
-                DecodingBuffer::U32(b) => b.iter_mut().for_each(|v| *v = u32::from_be(*v)),
-                DecodingBuffer::I32(b) => b.iter_mut().for_each(|v| *v = i32::from_be(*v)),
-                DecodingBuffer::U64(b) => b.iter_mut().for_each(|v| *v = u64::from_be(*v)),
-                DecodingBuffer::I64(b) => b.iter_mut().for_each(|v| *v = i64::from_be(*v)),
-                DecodingBuffer::F32(b) => b
-                    .iter_mut()
-                    .for_each(|v| *v = f32::from_bits(u32::from_be(v.to_bits()))),
-                DecodingBuffer::F64(b) => b
-                    .iter_mut()
-                    .for_each(|v| *v = f64::from_bits(u64::from_be(v.to_bits()))),
-            },
-        };
-    }
-
-    /// Decompresses the strip into the supplied buffer.
-    fn expand_strip<'a>(
-        &mut self,
-        mut buffer: DecodingBuffer<'a>,
-        offset: u64,
-        length: u64,
-    ) -> TiffResult<()> {
-        // Validate that the provided buffer is of the expected type.
-        let color_type = self.colortype()?;
-        match (color_type, &buffer) {
-            (ColorType::RGB(n), _)
-            | (ColorType::RGBA(n), _)
-            | (ColorType::CMYK(n), _)
-            | (ColorType::Gray(n), _)
-                if usize::from(n) == buffer.byte_len() * 8 => {}
-            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n <= 8 => {}
-            (type_, _) => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedColorType(type_),
-                ))
-            }
-        }
-
-        // Construct necessary reader to perform decompression.
-        self.goto_offset_u64(offset)?;
-        let byte_order = self.reader.byte_order;
-
-        let compression_method = self.image().compression_method;
-        let jpeg_tables = self.image().jpeg_tables.clone();
-
-        let reader =
-            Self::create_reader(&mut self.reader, compression_method, length, jpeg_tables)?;
-
-        // Read into output buffer.
-        {
-            let mut buffer = match &mut buffer {
-                DecodingBuffer::U8(buf) => &mut *buf,
-                DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
-                DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
-                DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
-                DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
-                DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
-                DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
-                DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
-                DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
-                DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
-            };
-
-            // Note that writing updates the slice to point to the yet unwritten part.
-            std::io::copy(&mut reader.take(buffer.len() as u64), &mut buffer)?;
-
-            // If less than the expected amount of bytes was read, set the remaining data to 0.
-            for b in buffer {
-                *b = 0;
-            }
-        }
-
-        Self::fix_endianness(&mut buffer, byte_order);
-
-        if self.image().photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-            Self::invert_colors(&mut buffer, color_type);
-        }
-
-        Ok(())
-    }
-
-    /// Decompresses the tile into the supplied buffer.
-    fn expand_tile(
-        &mut self,
-        mut buffer: DecodingBuffer,
-        offset: u64,
-        compressed_length: u64,
-        tile: usize,
-        output_width: usize,
-    ) -> TiffResult<()> {
-        let color_type = self.colortype()?;
-        let byte_len = buffer.byte_len();
-        let byte_order = self.reader.byte_order;
-
-        let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
-        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-        let tile_length = tile_attrs.tile_length;
-        let row_samples = tile_attrs.row_samples();
-        let padding_right_samples = padding_right * self.image().bits_per_sample.len();
-
-        self.goto_offset_u64(offset)?;
-
-        let line_samples = output_width * self.image().bits_per_sample.len();
-        let photometric_interpretation = self.image().photometric_interpretation;
-        let compression_method = self.image().compression_method;
-        let jpeg_tables = self.image().jpeg_tables.clone();
-
-        let mut reader = Self::create_reader(
-            &mut self.reader,
-            compression_method,
-            compressed_length,
-            jpeg_tables,
-        )?;
-
-        for row in 0..(tile_length - padding_down) {
-            let buf = match &mut buffer {
-                DecodingBuffer::U8(buf) => &mut *buf,
-                DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
-                DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
-                DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
-                DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
-                DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
-                DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
-                DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
-                DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
-                DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
-            };
-
-            let row_start = row * line_samples;
-            let row_end = row_start + row_samples - padding_right_samples;
-
-            let row = &mut buf[(row_start * byte_len)..(row_end * byte_len)];
-            reader.read_exact(row)?;
-
-            // Skip horizontal padding
-            if padding_right > 0 {
-                let len = u64::try_from(padding_right_samples * byte_len)?;
-                io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
-            }
-
-            Self::fix_endianness(&mut buffer.subrange(row_start..row_end), byte_order);
-
-            if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                Self::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn create_reader<'r>(
-        reader: &'r mut SmartReader<R>,
-        compression_method: CompressionMethod,
-        compressed_length: u64,
-        jpeg_tables: Option<Arc<Vec<u8>>>,
-    ) -> TiffResult<Box<dyn Read + 'r>> {
-        Ok(match compression_method {
-            CompressionMethod::None => Box::new(reader),
-            CompressionMethod::LZW => {
-                Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
-            }
-            CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
-            CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
-                Box::new(DeflateReader::new(reader))
-            }
-            CompressionMethod::ModernJPEG => {
-                if jpeg_tables.is_some() && compressed_length < 2 {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
-                    ));
-                }
-
-                let jpeg_reader = JpegReader::new(reader, compressed_length, jpeg_tables)?;
-                let mut decoder = jpeg::Decoder::new(jpeg_reader);
-                let data = decoder.decode().unwrap();
-
-                Box::new(Cursor::new(data))
-            }
-            method => {
-                return Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedCompressionMethod(method),
-                ))
-            }
-        })
-    }
-
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
         if expected != self.image().chunk_type {
             return Err(TiffError::UsageError(UsageError::InvalidChunkType(
@@ -1223,61 +1011,22 @@ impl<R: Read + Seek> Decoder<R> {
 
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
-        let index = self.current_chunk;
-        let offset = *self
-            .image()
-            .chunk_offsets
-            .get(index)
-            .ok_or(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ))?;
-        let byte_count = *self
-            .image()
-            .chunk_bytes
-            .get(index)
-            .ok_or(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ))?;
-        let rows_per_strip =
-            usize::try_from(self.image().strip_decoder.as_ref().unwrap().rows_per_strip)?;
 
-        let sized_width = usize::try_from(self.image().width)?;
-        let sized_height = usize::try_from(self.image().height)?;
+        let offset = self.image.chunk_byte_range(self.current_chunk)?.0;
+        self.goto_offset_u64(offset)?;
 
-        let strip_height_without_padding = index
-            .checked_mul(rows_per_strip)
-            .and_then(|x| sized_height.checked_sub(x))
-            .ok_or(TiffError::IntSizeError)?;
+        let byte_order = self.reader.byte_order;
+        let output_width = usize::try_from(self.image().width)?;
+        self.image.expand_chunk(
+            &mut self.reader,
+            buffer.copy(),
+            output_width,
+            byte_order,
+            self.current_chunk,
+        )?;
 
-        // Ignore potential vertical padding on the bottommost strip
-        let strip_height = rows_per_strip.min(strip_height_without_padding);
-
-        let buffer_size = sized_width
-            .checked_mul(strip_height)
-            .and_then(|x| x.checked_mul(self.image().bits_per_sample.len()))
-            .ok_or(TiffError::LimitsExceeded)?;
-
-        if buffer.len() < buffer_size {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ));
-        }
-
-        self.expand_strip(buffer.subrange(0..buffer_size), offset, byte_count)?;
         self.current_chunk += 1;
 
-        match self.image().predictor {
-            Predictor::None => {}
-            Predictor::Horizontal => {
-                rev_hpredict(
-                    buffer.copy(),
-                    (self.image().width, u32::try_from(strip_height)?),
-                    usize::try_from(self.image().width)?,
-                    self.colortype()?,
-                )?;
-            }
-            Predictor::__NonExhaustive => unreachable!(),
-        }
         Ok(())
     }
 
@@ -1287,52 +1036,20 @@ impl<R: Read + Seek> Decoder<R> {
         tile: usize,
         output_width: usize,
     ) -> TiffResult<()> {
-        let file_offset = *self
-            .image()
-            .chunk_offsets
-            .get(tile)
-            .ok_or(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ))?;
+        self.check_chunk_type(ChunkType::Tile)?;
 
-        let compressed_bytes =
-            *self
-                .image()
-                .chunk_bytes
-                .get(tile)
-                .ok_or(TiffError::FormatError(
-                    TiffFormatError::InconsistentSizesEncountered,
-                ))?;
+        let offset = self.image.chunk_byte_range(tile)?.0;
+        self.goto_offset_u64(offset)?;
 
-        let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
-        let tile_width = tile_attrs.tile_width;
-        let tile_length = tile_attrs.tile_length;
-
-        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-
-        self.expand_tile(
+        let byte_order = self.reader.byte_order;
+        self.image.expand_chunk(
+            &mut self.reader,
             result.copy(),
-            file_offset,
-            compressed_bytes,
-            tile,
             output_width,
+            byte_order,
+            tile,
         )?;
 
-        match self.image().predictor {
-            Predictor::None => {}
-            Predictor::Horizontal => {
-                rev_hpredict(
-                    result.copy(),
-                    (
-                        u32::try_from(tile_width - padding_right)?,
-                        u32::try_from(tile_length - padding_down)?,
-                    ),
-                    output_width,
-                    self.colortype()?,
-                )?;
-            }
-            Predictor::__NonExhaustive => unreachable!(),
-        }
         Ok(())
     }
 

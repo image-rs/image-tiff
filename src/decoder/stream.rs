@@ -4,8 +4,6 @@ use std::convert::TryFrom;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Take};
 use std::sync::Arc;
 
-use crate::tags::PhotometricInterpretation;
-
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
 pub enum ByteOrder {
@@ -128,7 +126,7 @@ pub trait EndianReader: Read {
 /// ## Deflate Reader
 ///
 
-pub type DeflateReader<'r, R> = flate2::read::ZlibDecoder<&'r mut SmartReader<R>>;
+pub type DeflateReader<R> = flate2::read::ZlibDecoder<R>;
 
 ///
 /// ## LZW Reader
@@ -209,15 +207,11 @@ impl JpegReader {
     /// bytes of the remaining JPEG data is removed because it follows `jpeg_tables`.
     /// Similary, `jpeg_tables` ends with a `EOI` (HEX: `0xFFD9`) or __end of image__ marker,
     /// this has to be removed as well (last two bytes of `jpeg_tables`).
-
-    pub fn new<R>(
-        reader: &mut SmartReader<R>,
+    pub fn new<R: Read>(
+        mut reader: R,
         length: u64,
         jpeg_tables: Option<Arc<Vec<u8>>>,
-    ) -> io::Result<JpegReader>
-    where
-        R: Read + Seek,
-    {
+    ) -> io::Result<JpegReader> {
         // Read jpeg image data
         let mut segment = vec![0; length as usize];
 
