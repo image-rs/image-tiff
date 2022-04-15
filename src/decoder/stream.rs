@@ -139,10 +139,7 @@ pub struct LZWReader<R: Read> {
 
 impl<R: Read> LZWReader<R> {
     /// Wraps a reader
-    pub fn new(
-        reader: R,
-        compressed_length: usize,
-    ) -> LZWReader<R> {
+    pub fn new(reader: R, compressed_length: usize) -> LZWReader<R> {
         Self {
             reader: BufReader::with_capacity(
                 (32 * 1024).min(compressed_length),
@@ -156,9 +153,7 @@ impl<R: Read> LZWReader<R> {
 impl<R: Read> Read for LZWReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         loop {
-            let result = self
-                .decoder
-                .decode_bytes(self.reader.fill_buf()?, buf);
+            let result = self.decoder.decode_bytes(self.reader.fill_buf()?, buf);
             self.reader.consume(result.consumed_in);
 
             match result.status {

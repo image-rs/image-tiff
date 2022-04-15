@@ -1032,11 +1032,7 @@ impl<R: Read + Seek> Decoder<R> {
         let byte_order = self.reader.byte_order;
         let compression_method = self.image().compression_method;
 
-        let reader = Self::create_reader(
-            &mut self.reader,
-            compression_method,
-            length,
-        )?;
+        let reader = Self::create_reader(&mut self.reader, compression_method, length)?;
 
         // Read into output buffer.
         {
@@ -1096,11 +1092,8 @@ impl<R: Read + Seek> Decoder<R> {
         let compression_method = self.image().compression_method;
         let photometric_interpretation = self.image().photometric_interpretation;
 
-        let mut reader = Self::create_reader(
-            &mut self.reader,
-            compression_method,
-            compressed_length,
-        )?;
+        let mut reader =
+            Self::create_reader(&mut self.reader, compression_method, compressed_length)?;
 
         for row in 0..(tile_length - padding_down) {
             let buf = match &mut buffer {
