@@ -1,6 +1,7 @@
 //! All IO functionality needed for TIFF decoding
 
-use std::io::{self, Read, Seek};
+use std::convert::TryFrom;
+use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -132,13 +133,8 @@ pub type DeflateReader<'r, R> = flate2::read::ZlibDecoder<&'r mut SmartReader<R>
 
 /// Reader that decompresses LZW streams
 pub struct LZWReader<R: Read> {
-    compressed_buf: Box<[u8]>,
-    compressed_buf_length: usize,
-    compressed_bytes_read: usize,
-
-    reader: R,
+    reader: BufReader<Take<R>>,
     decoder: weezl::decode::Decoder,
-    input_remaining: usize,
     output_remaining: usize,
 }
 
@@ -150,12 +146,11 @@ impl<R: Read> LZWReader<R> {
         max_uncompressed_length: usize,
     ) -> LZWReader<R> {
         Self {
-            compressed_buf: vec![0; (32 * 1024).min(compressed_length)].into_boxed_slice(),
-            compressed_buf_length: 0,
-            compressed_bytes_read: 0,
-            reader,
+            reader: BufReader::with_capacity(
+                (32 * 1024).min(compressed_length),
+                reader.take(u64::try_from(compressed_length).unwrap()),
+            ),
             decoder: weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8),
-            input_remaining: compressed_length,
             output_remaining: max_uncompressed_length,
         }
     }
@@ -167,58 +162,39 @@ impl<R: Read> Read for LZWReader<R> {
             return Ok(0);
         }
 
-        if self.compressed_buf_length == 0 && self.input_remaining > 0 {
-            let max_input_length = self.compressed_buf.len().min(self.input_remaining);
-            self.compressed_bytes_read = 0;
-            self.compressed_buf_length = self
-                .reader
-                .read(&mut self.compressed_buf[..max_input_length])?;
-            self.input_remaining -= self.compressed_buf_length;
-        }
+        loop {
+            let max_output_length = self.output_remaining.min(buf.len());
+            let result = self
+                .decoder
+                .decode_bytes(self.reader.fill_buf()?, &mut buf[..max_output_length]);
 
-        let max_output_length = self.output_remaining.min(buf.len());
-        let result = self.decoder.decode_bytes(
-            &self.compressed_buf[self.compressed_bytes_read..self.compressed_buf_length],
-            &mut buf[..max_output_length],
-        );
+            self.reader.consume(result.consumed_in);
+            self.output_remaining -= result.consumed_out;
 
-        self.compressed_bytes_read += result.consumed_in;
-        self.output_remaining -= result.consumed_out;
-
-        match result.status {
-            Ok(weezl::LzwStatus::Ok) => {
-                if result.consumed_out == 0 {
-                    return self.read(buf);
+            match result.status {
+                Ok(weezl::LzwStatus::Ok) => {
+                    if result.consumed_out == 0 {
+                        continue;
+                    } else {
+                        return Ok(result.consumed_out);
+                    }
                 }
-            }
-            Ok(weezl::LzwStatus::NoProgress) => {
-                assert_eq!(result.consumed_out, 0);
-                if self.compressed_bytes_read != 0 {
-                    self.compressed_buf
-                        .copy_within(self.compressed_bytes_read..self.compressed_buf_length, 0);
-                    self.compressed_buf_length -= self.compressed_bytes_read;
-                    self.compressed_bytes_read = 0;
-                }
-                if self.compressed_buf_length < self.compressed_buf.len()
-                    && self.input_remaining > 0
-                {
-                    self.compressed_buf_length += self
-                        .reader
-                        .read(&mut self.compressed_buf[self.compressed_buf_length..])?;
-                    return self.read(buf);
-                } else {
+                Ok(weezl::LzwStatus::NoProgress) => {
+                    assert_eq!(result.consumed_in, 0);
+                    assert_eq!(result.consumed_out, 0);
+                    assert!(self.reader.buffer().is_empty());
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "no lzw end code found",
                     ));
                 }
+                Ok(weezl::LzwStatus::Done) => {
+                    self.output_remaining = 0;
+                    return Ok(result.consumed_out);
+                }
+                Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
             }
-            Ok(weezl::LzwStatus::Done) => {
-                self.output_remaining = 0;
-            }
-            Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
         }
-        Ok(result.consumed_out)
     }
 }
 
