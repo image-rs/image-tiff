@@ -1163,7 +1163,7 @@ impl<R: Read + Seek> Decoder<R> {
                     return Err(TiffError::LimitsExceeded);
                 }
 
-                Box::new(LZWReader::new(reader, clen, samples * byte_len)?.1)
+                Box::new(LZWReader::new(reader, clen, samples * byte_len))
             }
             CompressionMethod::PackBits => {
                 Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)
