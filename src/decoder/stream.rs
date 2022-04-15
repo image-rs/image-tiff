@@ -255,56 +255,70 @@ impl Read for JpegReader {
 /// ## PackBits Reader
 ///
 
-/// Reader that unpacks Apple's `PackBits` format
-pub struct PackBitsReader {
-    buffer: io::Cursor<Vec<u8>>,
+enum PackBitsReaderState {
+    Header,
+    Literal,
+    Repeat { value: u8 },
 }
 
-impl PackBitsReader {
+/// Reader that unpacks Apple's `PackBits` format
+pub struct PackBitsReader<R: Read> {
+    reader: Take<R>,
+    state: PackBitsReaderState,
+    count: usize,
+}
+
+impl<R: Read> PackBitsReader<R> {
     /// Wraps a reader
-    pub fn new<R: Read + Seek>(
-        mut reader: R,
-        length: usize,
-    ) -> io::Result<(usize, PackBitsReader)> {
-        let mut buffer = Vec::new();
-        let mut header: [u8; 1] = [0];
-        let mut data: [u8; 1] = [0];
+    pub fn new(reader: R, length: usize) -> Self {
+        Self {
+            reader: reader.take(length as u64),
+            state: PackBitsReaderState::Header,
+            count: 0,
+        }
+    }
+}
 
-        let mut bytes_read = 0;
-        while bytes_read < length {
-            reader.read_exact(&mut header)?;
-            bytes_read += 1;
-
-            let h = header[0] as i8;
+impl<R: Read> Read for PackBitsReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        while let PackBitsReaderState::Header = self.state {
+            if self.reader.limit() == 0 {
+                return Ok(0);
+            }
+            let mut header: [u8; 1] = [0];
+            self.reader.read_exact(&mut header)?;
+            let h = dbg!(header[0] as i8);
             if h >= -127 && h <= -1 {
-                let new_len = buffer.len() + (1 - h as isize) as usize;
-                reader.read_exact(&mut data)?;
-                buffer.resize(new_len, data[0]);
-                bytes_read += 1;
+                let mut data: [u8; 1] = [0];
+                self.reader.read_exact(&mut data)?;
+                self.state = PackBitsReaderState::Repeat { value: data[0] };
+                self.count = (1 - h as isize) as usize;
             } else if h >= 0 {
-                let num_vals = h as usize + 1;
-                let start = buffer.len();
-                buffer.resize(start + num_vals, 0);
-                reader.read_exact(&mut buffer[start..])?;
-                bytes_read += num_vals
+                self.state = PackBitsReaderState::Literal;
+                self.count = h as usize + 1;
             } else {
                 // h = -128 is a no-op.
             }
         }
 
-        Ok((
-            buffer.len(),
-            PackBitsReader {
-                buffer: io::Cursor::new(buffer),
-            },
-        ))
-    }
-}
+        let length = buf.len().min(self.count);
+        match self.state {
+            PackBitsReaderState::Literal => {
+                self.reader.read(&mut buf[..length])?;
+            }
+            PackBitsReaderState::Repeat { value } => {
+                for b in &mut buf[..length] {
+                    *b = value;
+                }
+            }
+            PackBitsReaderState::Header => unreachable!(),
+        }
 
-impl Read for PackBitsReader {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.buffer.read(buf)
+        self.count -= length;
+        if self.count <= buf.len() {
+            self.state = PackBitsReaderState::Header;
+        }
+        return Ok(length);
     }
 }
 
@@ -377,7 +391,7 @@ mod test {
         let encoded_len = encoded.len();
 
         let buff = io::Cursor::new(encoded);
-        let (_, mut decoder) = PackBitsReader::new(buff, encoded_len).unwrap();
+        let mut decoder = PackBitsReader::new(buff, encoded_len);
 
         let mut decoded = Vec::new();
         decoder.read_to_end(&mut decoded).unwrap();

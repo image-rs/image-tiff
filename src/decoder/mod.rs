@@ -1141,9 +1141,10 @@ impl<R: Read + Seek> Decoder<R> {
             CompressionMethod::LZW => {
                 Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
             }
-            CompressionMethod::PackBits => {
-                Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)
-            }
+            CompressionMethod::PackBits => Box::new(PackBitsReader::new(
+                reader,
+                usize::try_from(compressed_length)?,
+            )),
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
                 Box::new(DeflateReader::new(reader))
             }
