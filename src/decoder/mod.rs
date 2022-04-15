@@ -1036,8 +1036,6 @@ impl<R: Read + Seek> Decoder<R> {
             &mut self.reader,
             compression_method,
             length,
-            buffer.len(),
-            buffer.byte_len(),
         )?;
 
         // Read into output buffer.
@@ -1088,7 +1086,6 @@ impl<R: Read + Seek> Decoder<R> {
 
         let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-        let tile_samples = tile_attrs.tile_samples();
         let tile_length = tile_attrs.tile_length;
         let row_samples = tile_attrs.row_samples();
         let padding_right_samples = padding_right * self.image().bits_per_sample.len();
@@ -1103,8 +1100,6 @@ impl<R: Read + Seek> Decoder<R> {
             &mut self.reader,
             compression_method,
             compressed_length,
-            tile_samples,
-            byte_len,
         )?;
 
         for row in 0..(tile_length - padding_down) {
@@ -1147,16 +1142,12 @@ impl<R: Read + Seek> Decoder<R> {
         reader: &'r mut SmartReader<R>,
         compression_method: CompressionMethod,
         compressed_length: u64,
-        samples: usize,  // Expected chunk length in samples
-        byte_len: usize, // Byte length of the samples in result buffer
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
-            CompressionMethod::LZW => Box::new(LZWReader::new(
-                reader,
-                usize::try_from(compressed_length)?,
-                samples * byte_len,
-            )),
+            CompressionMethod::LZW => {
+                Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
+            }
             CompressionMethod::PackBits => {
                 Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)
             }

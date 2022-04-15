@@ -135,7 +135,6 @@ pub type DeflateReader<'r, R> = flate2::read::ZlibDecoder<&'r mut SmartReader<R>
 pub struct LZWReader<R: Read> {
     reader: BufReader<Take<R>>,
     decoder: weezl::decode::Decoder,
-    output_remaining: usize,
 }
 
 impl<R: Read> LZWReader<R> {
@@ -143,7 +142,6 @@ impl<R: Read> LZWReader<R> {
     pub fn new(
         reader: R,
         compressed_length: usize,
-        max_uncompressed_length: usize,
     ) -> LZWReader<R> {
         Self {
             reader: BufReader::with_capacity(
@@ -151,25 +149,17 @@ impl<R: Read> LZWReader<R> {
                 reader.take(u64::try_from(compressed_length).unwrap()),
             ),
             decoder: weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8),
-            output_remaining: max_uncompressed_length,
         }
     }
 }
 
 impl<R: Read> Read for LZWReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.output_remaining == 0 {
-            return Ok(0);
-        }
-
         loop {
-            let max_output_length = self.output_remaining.min(buf.len());
             let result = self
                 .decoder
-                .decode_bytes(self.reader.fill_buf()?, &mut buf[..max_output_length]);
-
+                .decode_bytes(self.reader.fill_buf()?, buf);
             self.reader.consume(result.consumed_in);
-            self.output_remaining -= result.consumed_out;
 
             match result.status {
                 Ok(weezl::LzwStatus::Ok) => {
@@ -189,7 +179,6 @@ impl<R: Read> Read for LZWReader<R> {
                     ));
                 }
                 Ok(weezl::LzwStatus::Done) => {
-                    self.output_remaining = 0;
                     return Ok(result.consumed_out);
                 }
                 Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
