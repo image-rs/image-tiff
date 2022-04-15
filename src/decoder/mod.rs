@@ -1038,7 +1038,6 @@ impl<R: Read + Seek> Decoder<R> {
             length,
             buffer.len(),
             buffer.byte_len(),
-            self.limits.intermediate_buffer_size,
         )?;
 
         // Read into output buffer.
@@ -1106,7 +1105,6 @@ impl<R: Read + Seek> Decoder<R> {
             compressed_length,
             tile_samples,
             byte_len,
-            self.limits.intermediate_buffer_size,
         )?;
 
         for row in 0..(tile_length - padding_down) {
@@ -1151,20 +1149,14 @@ impl<R: Read + Seek> Decoder<R> {
         compressed_length: u64,
         samples: usize,  // Expected chunk length in samples
         byte_len: usize, // Byte length of the samples in result buffer
-        intermediate_buffer_size: usize,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
-            CompressionMethod::LZW => {
-                let clen = usize::try_from(compressed_length)?;
-
-                if samples * byte_len > intermediate_buffer_size || clen > intermediate_buffer_size
-                {
-                    return Err(TiffError::LimitsExceeded);
-                }
-
-                Box::new(LZWReader::new(reader, clen, samples * byte_len))
-            }
+            CompressionMethod::LZW => Box::new(LZWReader::new(
+                reader,
+                usize::try_from(compressed_length)?,
+                samples * byte_len,
+            )),
             CompressionMethod::PackBits => {
                 Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)
             }

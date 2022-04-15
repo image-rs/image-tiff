@@ -409,7 +409,7 @@ fn oom_2() {
     let err = decoder.read_image().unwrap_err();
 
     match err {
-        tiff::TiffError::LimitsExceeded => {}
+        tiff::TiffError::IoError(_) => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
