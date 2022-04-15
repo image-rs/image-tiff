@@ -1032,14 +1032,7 @@ impl<R: Read + Seek> Decoder<R> {
         let byte_order = self.reader.byte_order;
         let compression_method = self.image().compression_method;
 
-        let reader = Self::create_reader(
-            &mut self.reader,
-            compression_method,
-            length,
-            buffer.len(),
-            buffer.byte_len(),
-            self.limits.intermediate_buffer_size,
-        )?;
+        let reader = Self::create_reader(&mut self.reader, compression_method, length)?;
 
         // Read into output buffer.
         {
@@ -1089,7 +1082,6 @@ impl<R: Read + Seek> Decoder<R> {
 
         let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
         let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-        let tile_samples = tile_attrs.tile_samples();
         let tile_length = tile_attrs.tile_length;
         let row_samples = tile_attrs.row_samples();
         let padding_right_samples = padding_right * self.image().bits_per_sample.len();
@@ -1100,14 +1092,8 @@ impl<R: Read + Seek> Decoder<R> {
         let compression_method = self.image().compression_method;
         let photometric_interpretation = self.image().photometric_interpretation;
 
-        let mut reader = Self::create_reader(
-            &mut self.reader,
-            compression_method,
-            compressed_length,
-            tile_samples,
-            byte_len,
-            self.limits.intermediate_buffer_size,
-        )?;
+        let mut reader =
+            Self::create_reader(&mut self.reader, compression_method, compressed_length)?;
 
         for row in 0..(tile_length - padding_down) {
             let buf = match &mut buffer {
@@ -1149,21 +1135,11 @@ impl<R: Read + Seek> Decoder<R> {
         reader: &'r mut SmartReader<R>,
         compression_method: CompressionMethod,
         compressed_length: u64,
-        samples: usize,  // Expected chunk length in samples
-        byte_len: usize, // Byte length of the samples in result buffer
-        intermediate_buffer_size: usize,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
             CompressionMethod::LZW => {
-                let clen = usize::try_from(compressed_length)?;
-
-                if samples * byte_len > intermediate_buffer_size || clen > intermediate_buffer_size
-                {
-                    return Err(TiffError::LimitsExceeded);
-                }
-
-                Box::new(LZWReader::new(reader, clen, samples * byte_len)?.1)
+                Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
             }
             CompressionMethod::PackBits => {
                 Box::new(PackBitsReader::new(reader, usize::try_from(compressed_length)?)?.1)

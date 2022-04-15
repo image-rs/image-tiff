@@ -1,6 +1,7 @@
 //! All IO functionality needed for TIFF decoding
 
-use std::io::{self, Read, Seek};
+use std::convert::TryFrom;
+use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -131,63 +132,53 @@ pub type DeflateReader<'r, R> = flate2::read::ZlibDecoder<&'r mut SmartReader<R>
 ///
 
 /// Reader that decompresses LZW streams
-pub struct LZWReader {
-    buffer: io::Cursor<Vec<u8>>,
+pub struct LZWReader<R: Read> {
+    reader: BufReader<Take<R>>,
+    decoder: weezl::decode::Decoder,
 }
 
-impl LZWReader {
+impl<R: Read> LZWReader<R> {
     /// Wraps a reader
-    pub fn new<R>(
-        reader: &mut SmartReader<R>,
-        compressed_length: usize,
-        max_uncompressed_length: usize,
-    ) -> io::Result<(usize, LZWReader)>
-    where
-        R: Read + Seek,
-    {
-        let mut compressed = vec![0; compressed_length as usize];
-        reader.read_exact(&mut compressed[..])?;
-        let mut uncompressed = vec![0; max_uncompressed_length];
-        let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
+    pub fn new(reader: R, compressed_length: usize) -> LZWReader<R> {
+        Self {
+            reader: BufReader::with_capacity(
+                (32 * 1024).min(compressed_length),
+                reader.take(u64::try_from(compressed_length).unwrap()),
+            ),
+            decoder: weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8),
+        }
+    }
+}
 
-        let mut bytes_read = 0;
-        let mut bytes_written = 0;
-
-        while bytes_written < max_uncompressed_length {
-            let result = decoder.decode_bytes(
-                &compressed[bytes_read..],
-                &mut uncompressed[bytes_written..],
-            );
-            bytes_read += result.consumed_in;
-            bytes_written += result.consumed_out;
+impl<R: Read> Read for LZWReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            let result = self.decoder.decode_bytes(self.reader.fill_buf()?, buf);
+            self.reader.consume(result.consumed_in);
 
             match result.status {
-                Ok(weezl::LzwStatus::Ok) => {}
-                Ok(weezl::LzwStatus::Done) => break,
+                Ok(weezl::LzwStatus::Ok) => {
+                    if result.consumed_out == 0 {
+                        continue;
+                    } else {
+                        return Ok(result.consumed_out);
+                    }
+                }
                 Ok(weezl::LzwStatus::NoProgress) => {
+                    assert_eq!(result.consumed_in, 0);
+                    assert_eq!(result.consumed_out, 0);
+                    assert!(self.reader.buffer().is_empty());
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "no lzw end code found",
-                    ))
+                    ));
+                }
+                Ok(weezl::LzwStatus::Done) => {
+                    return Ok(result.consumed_out);
                 }
                 Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
             }
         }
-
-        uncompressed.resize(bytes_written, 0);
-        Ok((
-            uncompressed.len(),
-            LZWReader {
-                buffer: io::Cursor::new(uncompressed),
-            },
-        ))
-    }
-}
-
-impl Read for LZWReader {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.buffer.read(buf)
     }
 }
 

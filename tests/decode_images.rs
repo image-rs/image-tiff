@@ -396,7 +396,7 @@ fn oom() {
 }
 
 #[test]
-fn oom_2() {
+fn fuzzer_testcase4() {
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 40, 1, 0, 0,
         0, 158, 0, 0, 251, 3, 1, 3, 0, 1, 0, 0, 0, 5, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0,
@@ -409,7 +409,7 @@ fn oom_2() {
     let err = decoder.read_image().unwrap_err();
 
     match err {
-        tiff::TiffError::LimitsExceeded => {}
+        tiff::TiffError::IoError(_) => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
