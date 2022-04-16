@@ -270,9 +270,9 @@ pub struct PackBitsReader<R: Read> {
 
 impl<R: Read> PackBitsReader<R> {
     /// Wraps a reader
-    pub fn new(reader: R, length: usize) -> Self {
+    pub fn new(reader: R, length: u64) -> Self {
         Self {
-            reader: reader.take(length as u64),
+            reader: reader.take(length),
             state: PackBitsReaderState::Header,
             count: 0,
         }
@@ -315,7 +315,7 @@ impl<R: Read> Read for PackBitsReader<R> {
         }
 
         self.count -= length;
-        if self.count <= buf.len() {
+        if self.count == 0 {
             self.state = PackBitsReaderState::Header;
         }
         return Ok(length);
@@ -391,7 +391,7 @@ mod test {
         let encoded_len = encoded.len();
 
         let buff = io::Cursor::new(encoded);
-        let mut decoder = PackBitsReader::new(buff, encoded_len);
+        let mut decoder = PackBitsReader::new(buff, encoded_len as u64);
 
         let mut decoded = Vec::new();
         decoder.read_to_end(&mut decoded).unwrap();
