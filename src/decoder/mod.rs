@@ -232,6 +232,52 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
         }
     }
+
+    #[allow(unused)]
+    fn chunks_mut(self, chunk_size: usize) -> Box<dyn Iterator<Item = DecodingBuffer<'a>> + 'a> {
+        match self {
+            DecodingBuffer::U8(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::U8(buf)),
+            ),
+            DecodingBuffer::I8(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::I8(buf)),
+            ),
+            DecodingBuffer::U16(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::U16(buf)),
+            ),
+            DecodingBuffer::I16(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::I16(buf)),
+            ),
+            DecodingBuffer::U32(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::U32(buf)),
+            ),
+            DecodingBuffer::I32(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::I32(buf)),
+            ),
+            DecodingBuffer::U64(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::U64(buf)),
+            ),
+            DecodingBuffer::I64(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::I64(buf)),
+            ),
+            DecodingBuffer::F32(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::F32(buf)),
+            ),
+            DecodingBuffer::F64(buf) => Box::new(
+                buf.chunks_mut(chunk_size)
+                    .map(|buf| DecodingBuffer::F64(buf)),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -1163,6 +1209,89 @@ impl<R: Read + Seek> Decoder<R> {
         let chunks_across = (width - 1) / chunk_dimensions.0 + 1;
         let strip_samples = width * chunk_dimensions.1 * samples;
 
+        // Parallel decode. Requires the "rayon" feature, the presence of multiple vertical chunks
+        // in the image, and that all chunks are at most half the limit for intermediate buffer size.
+        #[cfg(feature = "rayon")]
+        if height > chunk_dimensions.1
+            && self
+                .image()
+                .chunk_bytes
+                .iter()
+                .all(|&b| b <= self.limits.intermediate_buffer_size as u64 / 2)
+        {
+            let condvar = std::sync::Condvar::new();
+            let bytes_allocated = std::sync::Mutex::new(Ok(0));
+            for x in 0..chunks_across {
+                rayon::in_place_scope_fifo(|s| -> TiffResult<()> {
+                    let buffer_offset = x * chunk_dimensions.0 * samples;
+                    for (y, strip) in result
+                        .as_buffer(buffer_offset)
+                        .chunks_mut(strip_samples)
+                        .enumerate()
+                    {
+                        let chunk = y * chunks_across + x;
+                        let (offset, size) = self.image.chunk_file_range(chunk)?;
+
+                        // Block until there is enough memory left.
+                        let l = bytes_allocated.lock().unwrap();
+                        let mut l = condvar
+                            .wait_while(l, |l| match *l {
+                                Err(_) => false,
+                                Ok(bytes_allocated) => {
+                                    bytes_allocated + size as usize
+                                        > self.limits.intermediate_buffer_size
+                                }
+                            })
+                            .unwrap();
+                        match *l {
+                            Ok(ref mut bytes_allocated) => *bytes_allocated += size as usize,
+                            Err(_) => return Ok(()),
+                        }
+
+                        // Read chunk contents from file.
+                        self.reader.seek(io::SeekFrom::Start(offset))?;
+                        let mut chunk_contents = Vec::new();
+                        (&mut self.reader)
+                            .take(size)
+                            .read_to_end(&mut chunk_contents)?;
+
+                        // Spawn a task to expand the chunk.
+                        let condvar = &condvar;
+                        let mutex = &bytes_allocated;
+                        let image = &self.image;
+                        let byte_order = self.reader.byte_order;
+                        s.spawn_fifo(move |_| {
+                            // Do chunk expansion.
+                            let ret = image.expand_chunk(
+                                std::io::Cursor::new(&chunk_contents),
+                                strip,
+                                width,
+                                byte_order,
+                                chunk,
+                            );
+
+                            // Propogate result to main thread.
+                            match (ret, &mut *mutex.lock().unwrap()) {
+                                (Err(e), mutex) => *mutex = Err(e),
+                                (Ok(_), Ok(ref mut bytes_allocated)) => {
+                                    *bytes_allocated -= chunk_contents.len();
+                                    drop(chunk_contents);
+                                }
+                                (Ok(_), _) => {}
+                            }
+                            condvar.notify_one();
+                        });
+                    }
+                    Ok(())
+                })?;
+
+                // If we encountered any errors on this strip, return now.
+                std::mem::replace(&mut *bytes_allocated.lock().unwrap(), Ok(0))?;
+            }
+            return Ok(result);
+        }
+
+        // Sequential decode.
         for chunk in 0..self.image().chunk_offsets.len() {
             self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
 

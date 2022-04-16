@@ -21,6 +21,7 @@ edition = "2018"
 weezl = "0.1.0"
 jpeg = { package = "jpeg-decoder", version = "0.2.4", default-features = false }
 flate2 = "1.0.20"
+rayon = { version = "1.5.1", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.1"
@@ -28,3 +29,6 @@ criterion = "0.3.1"
 [[bench]]
 name = "lzw"
 harness = false
+
+[features]
+default = ["rayon"]
