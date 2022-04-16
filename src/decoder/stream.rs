@@ -287,7 +287,7 @@ impl<R: Read> Read for PackBitsReader<R> {
             }
             let mut header: [u8; 1] = [0];
             self.reader.read_exact(&mut header)?;
-            let h = dbg!(header[0] as i8);
+            let h = header[0] as i8;
             if h >= -127 && h <= -1 {
                 let mut data: [u8; 1] = [0];
                 self.reader.read_exact(&mut data)?;
