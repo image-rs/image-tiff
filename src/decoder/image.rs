@@ -21,7 +21,6 @@ pub(crate) struct StripDecodeState {
 pub(crate) struct TileAttributes {
     pub image_width: usize,
     pub image_height: usize,
-    pub samples_per_pixel: usize,
 
     pub tile_width: usize,
     pub tile_length: usize,
@@ -39,24 +38,6 @@ impl TileAttributes {
     }
     fn padding_down(&self) -> usize {
         self.tile_length - self.image_height % self.tile_length
-    }
-    pub fn row_samples(&self) -> usize {
-        self.tile_width * self.samples_per_pixel
-    }
-    pub fn tile_samples(&self) -> usize {
-        self.tile_length * self.tile_width * self.samples_per_pixel
-    }
-    fn tile_strip_samples(&self) -> usize {
-        (self.tile_samples() * self.tiles_across())
-            - (self.padding_right() * self.tile_length * self.samples_per_pixel)
-    }
-
-    /// Returns the tile offset in the result buffer, counted in samples
-    pub fn get_offset(&self, tile: usize) -> usize {
-        let row = tile / self.tiles_across();
-        let column = tile % self.tiles_across();
-
-        (row * self.tile_strip_samples()) + (column * self.row_samples())
     }
 
     pub fn get_padding(&self, tile: usize) -> (usize, usize) {
@@ -250,7 +231,6 @@ impl Image {
                 tile_attributes = Some(TileAttributes {
                     image_width: usize::try_from(width)?,
                     image_height: usize::try_from(height)?,
-                    samples_per_pixel: bits_per_sample.len(),
                     tile_width,
                     tile_length,
                 });
@@ -388,6 +368,20 @@ impl Image {
         Ok((*file_offset, *compressed_bytes))
     }
 
+    pub(crate) fn chunk_dimensions(&self) -> TiffResult<(usize, usize)> {
+        match self.chunk_type {
+            ChunkType::Strip => {
+                let width = usize::try_from(self.width)?;
+                let strip_attrs = self.strip_decoder.as_ref().unwrap();
+                Ok((width, usize::try_from(strip_attrs.rows_per_strip)?))
+            }
+            ChunkType::Tile => {
+                let tile_attrs = self.tile_attributes.as_ref().unwrap();
+                Ok((tile_attrs.tile_width, tile_attrs.tile_length))
+            }
+        }
+    }
+
     pub(crate) fn expand_chunk(
         &self,
         reader: impl Read,
@@ -453,13 +447,11 @@ impl Image {
                 super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
             }
         } else {
-            for row in 0..(dbg!(chunk_dimensions.1) - dbg!(padding.1)) {
-                let row_start = dbg!(row) * dbg!(output_width) * dbg!(samples);
-                let row_end =
-                    dbg!(row_start) + (dbg!(chunk_dimensions.0) - dbg!(padding.0)) * samples;
+            for row in 0..(chunk_dimensions.1 - padding.1) {
+                let row_start = row * output_width * samples;
+                let row_end = row_start + (chunk_dimensions.0 - padding.0) * samples;
 
-                let row = &mut buffer.as_bytes_mut()
-                    [(dbg!(row_start) * dbg!(byte_len))..(dbg!(row_end) * byte_len)];
+                let row = &mut buffer.as_bytes_mut()[(row_start * byte_len)..(row_end * byte_len)];
                 reader.read_exact(row)?;
 
                 // Skip horizontal padding

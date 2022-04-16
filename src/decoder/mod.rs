@@ -1030,29 +1030,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn read_tile_to_buffer(
-        &mut self,
-        result: &mut DecodingBuffer,
-        tile: usize,
-        output_width: usize,
-    ) -> TiffResult<()> {
-        self.check_chunk_type(ChunkType::Tile)?;
-
-        let offset = self.image.chunk_byte_range(tile)?.0;
-        self.goto_offset_u64(offset)?;
-
-        let byte_order = self.reader.byte_order;
-        self.image.expand_chunk(
-            &mut self.reader,
-            result.copy(),
-            output_width,
-            byte_order,
-            tile,
-        )?;
-
-        Ok(())
-    }
-
     fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
         let buffer_size = match width
             .checked_mul(height)
@@ -1139,60 +1116,69 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut result = self.result_buffer(tile_width, tile_length)?;
 
-        self.read_tile_to_buffer(&mut result.as_buffer(0), tile, tile_width)?;
+        let offset = self.image.chunk_byte_range(tile)?.0;
+        self.goto_offset_u64(offset)?;
+
+        let byte_order = self.reader.byte_order;
+        self.image.expand_chunk(
+            &mut self.reader,
+            result.as_buffer(0),
+            tile_width,
+            byte_order,
+            tile,
+        )?;
 
         self.current_chunk += 1;
 
         Ok(result)
     }
 
-    fn read_tiled_image(&mut self) -> TiffResult<DecodingResult> {
-        let width = usize::try_from(self.image().width)?;
-        let mut result = self.result_buffer(width, usize::try_from(self.image().height)?)?;
-
-        for tile in 0..self.image().chunk_offsets.len() {
-            let buffer_offset = self
-                .image()
-                .tile_attributes
-                .as_ref()
-                .unwrap()
-                .get_offset(tile);
-
-            self.read_tile_to_buffer(&mut result.as_buffer(buffer_offset), tile, width)?;
-        }
-
-        Ok(result)
-    }
-
-    fn read_stripped_image(&mut self) -> TiffResult<DecodingResult> {
-        let rows_per_strip =
-            usize::try_from(self.image().strip_decoder.as_ref().unwrap().rows_per_strip)?;
-
-        let samples_per_strip = match usize::try_from(self.image().width)?
-            .checked_mul(rows_per_strip)
-            .and_then(|x| x.checked_mul(self.image().bits_per_sample.len()))
-        {
-            Some(s) => s,
-            None => return Err(TiffError::LimitsExceeded),
-        };
-
-        let mut result = self.result_buffer(
-            usize::try_from(self.image().width)?,
-            usize::try_from(self.image().height)?,
-        )?;
-
-        for i in 0..usize::try_from(self.strip_count()?)? {
-            let r = result.as_buffer(samples_per_strip * i);
-            self.read_strip_to_buffer(r)?;
-        }
-        Ok(result)
-    }
-
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        match self.image().chunk_type {
-            ChunkType::Strip => self.read_stripped_image(),
-            ChunkType::Tile => self.read_tiled_image(),
+        let width = usize::try_from(self.image().width)?;
+        let height = usize::try_from(self.image().height)?;
+        let mut result = self.result_buffer(width, height)?;
+        if width == 0 || height == 0 {
+            return Ok(result);
         }
+
+        let chunk_dimensions = self.image().chunk_dimensions()?;
+        let chunk_dimensions = (
+            chunk_dimensions.0.min(width),
+            chunk_dimensions.1.min(height),
+        );
+        if chunk_dimensions.0 == 0 || chunk_dimensions.1 == 0 {
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
+        }
+
+        let samples = self.image().bits_per_sample.len();
+        if samples == 0 {
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
+        }
+
+        let chunks_across = (width - 1) / chunk_dimensions.0 + 1;
+        let strip_samples = width * chunk_dimensions.1 * samples;
+
+        for chunk in 0..self.image().chunk_offsets.len() {
+            self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
+
+            let x = chunk % chunks_across;
+            let y = chunk / chunks_across;
+            let buffer_offset = y * strip_samples + x * chunk_dimensions.0 * samples;
+            let byte_order = self.reader.byte_order;
+            self.image.expand_chunk(
+                &mut self.reader,
+                result.as_buffer(buffer_offset).copy(),
+                width,
+                byte_order,
+                chunk,
+            )?;
+        }
+
+        Ok(result)
     }
 }
