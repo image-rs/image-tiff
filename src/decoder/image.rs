@@ -356,7 +356,7 @@ impl Image {
         })
     }
 
-    pub(crate) fn chunk_byte_range(&self, chunk: usize) -> TiffResult<(u64, u64)> {
+    pub(crate) fn chunk_file_range(&self, chunk: usize) -> TiffResult<(u64, u64)> {
         let file_offset = self.chunk_offsets.get(chunk).ok_or(TiffError::FormatError(
             TiffFormatError::InconsistentSizesEncountered,
         ))?;

@@ -1012,7 +1012,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
 
-        let offset = self.image.chunk_byte_range(self.current_chunk)?.0;
+        let offset = self.image.chunk_file_range(self.current_chunk)?.0;
         self.goto_offset_u64(offset)?;
 
         let byte_order = self.reader.byte_order;
@@ -1116,7 +1116,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut result = self.result_buffer(tile_width, tile_length)?;
 
-        let offset = self.image.chunk_byte_range(tile)?.0;
+        let offset = self.image.chunk_file_range(tile)?.0;
         self.goto_offset_u64(offset)?;
 
         let byte_order = self.reader.byte_order;
