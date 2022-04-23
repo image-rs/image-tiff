@@ -1227,8 +1227,8 @@ impl<R: Read + Seek> Decoder<R> {
             // This iteration is needed to work around an annoying lifetime issue for tiled images:
             // each tile of an image will map to potentially thousands of non-contiguous ranges in
             // the output buffer. So instead of getting mutable references to a single tile, we
-            // take a mutable refence to a entire rows of tiles (which do fit within a single
-            // contiguous range) and on each iteration only access the x-th tile in that row.
+            // take a mutable refence to a entire row of tiles (which do fit within a single
+            // contiguous range) and on each iteration only access the x-th tile in the row.
             for x in 0..chunks_across {
                 rayon::in_place_scope_fifo(|s| -> TiffResult<()> {
                     let buffer_offset = x * chunk_dimensions.0 * samples;
