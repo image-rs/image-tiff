@@ -1221,9 +1221,21 @@ impl<R: Read + Seek> Decoder<R> {
         {
             let condvar = std::sync::Condvar::new();
             let bytes_allocated = std::sync::Mutex::new(Ok(0));
+
+            // Loop over columns of chunks (for stripped images `chunks_across` is always 1).
+            //
+            // This iteration is needed to work around an annoying lifetime issue for tiled images:
+            // each tile of an image will map to potentially thousands of non-contiguous ranges in
+            // the output buffer. So instead of getting mutable references to a single tile, we
+            // take a mutable refence to a entire rows of tiles (which do fit within a single
+            // contiguous range) and on each iteration only access the x-th tile in that row.
             for x in 0..chunks_across {
                 rayon::in_place_scope_fifo(|s| -> TiffResult<()> {
                     let buffer_offset = x * chunk_dimensions.0 * samples;
+                    // Iterate over rows of chunks. For stripped images, `strip` will be the y-th
+                    // strip of the image. While for tiled images, `strip` will be the memory for
+                    // the entire y-th row of tiles so the loop body will be careful to only access
+                    // the parts corresponding to tile (x,y).
                     for (y, strip) in result
                         .as_buffer(buffer_offset)
                         .chunks_mut(strip_samples)
@@ -1233,22 +1245,35 @@ impl<R: Read + Seek> Decoder<R> {
                         let (offset, size) = self.image.chunk_file_range(chunk)?;
 
                         // Block until there is enough memory left.
-                        let l = bytes_allocated.lock().unwrap();
-                        let mut l = condvar
-                            .wait_while(l, |l| match *l {
-                                Err(_) => false,
-                                Ok(bytes_allocated) => {
-                                    bytes_allocated + size as usize
-                                        > self.limits.intermediate_buffer_size
-                                }
-                            })
-                            .unwrap();
-                        match *l {
-                            Ok(ref mut bytes_allocated) => *bytes_allocated += size as usize,
-                            Err(_) => return Ok(()),
+                        //
+                        // We called in_place_scope_fifo, so this blocking operation is happening
+                        // on the calling thread, *not* on one of rayon's worker threads. Further,
+                        // we don't take any other locks or do any blocking operations while the
+                        // bytes_allocated lock is held (the `wait_while` operations releases the
+                        // lock while waiting), so this code will never disrupt forward progress
+                        // for other threads that try to acquire the lock.
+                        {
+                            let l = bytes_allocated.lock().unwrap();
+                            let mut l = condvar
+                                .wait_while(l, |l| match *l {
+                                    Err(_) => false,
+                                    Ok(bytes_allocated) => {
+                                        bytes_allocated + size as usize
+                                            > self.limits.intermediate_buffer_size
+                                    }
+                                })
+                                .unwrap();
+                            match *l {
+                                Ok(ref mut bytes_allocated) => *bytes_allocated += size as usize,
+                                Err(_) => return Ok(()),
+                            }
                         }
 
                         // Read chunk contents from file.
+                        //
+                        // This read call will run in parallel with prior spawned rayon tasks,
+                        // which is desirable because reading chunks from a file is a
+                        // potentially slow operation.
                         self.reader.seek(io::SeekFrom::Start(offset))?;
                         let mut chunk_contents = Vec::new();
                         (&mut self.reader)
@@ -1270,7 +1295,8 @@ impl<R: Read + Seek> Decoder<R> {
                                 chunk,
                             );
 
-                            // Propogate result to main thread.
+                            // Propogate result to main thread. This code doesn't do any blocking
+                            // operations while the lock is held, so it cannot deadlock.
                             match (ret, &mut *mutex.lock().unwrap()) {
                                 (Err(e), mutex) => *mutex = Err(e),
                                 (Ok(_), Ok(ref mut bytes_allocated)) => {
