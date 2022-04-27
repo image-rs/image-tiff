@@ -1533,9 +1533,9 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        let result = match (self.image().chunk_type, self.image().compression_method) {
-            (ChunkType::Strip, _) => self.read_stripped_image()?,
-            (ChunkType::Tile, _) => self.read_tiled_image()?,
+        let result = match self.image().chunk_type {
+            ChunkType::Strip => self.read_stripped_image()?,
+            ChunkType::Tile => self.read_tiled_image()?,
         };
 
         Ok(result)
