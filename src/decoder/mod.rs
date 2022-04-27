@@ -325,8 +325,7 @@ where
     limits: Limits,
     current_chunk: usize,
     next_ifd: Option<u64>,
-    next_ifd_index: usize,
-    ifds: Vec<u64>,
+    ifd_offsets: Vec<u64>,
     seen_ifds: HashSet<u64>,
     image: Image,
 }
@@ -600,15 +599,14 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut seen_ifds = HashSet::new();
         seen_ifds.insert(*next_ifd.as_ref().unwrap());
-        let ifds = vec![*next_ifd.as_ref().unwrap()];
+        let ifd_offsets = vec![*next_ifd.as_ref().unwrap()];
 
         let mut decoder = Decoder {
             reader,
             bigtiff,
             limits: Default::default(),
             next_ifd,
-            next_ifd_index: 1,
-            ifds,
+            ifd_offsets,
             seen_ifds,
             image: Image {
                 ifd: None,
@@ -652,7 +650,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Loads the IFD at the specified index in the list, if one exists
     pub fn image_at(&mut self, ifd_index: usize) -> TiffResult<()> {
-        if ifd_index >= self.next_ifd_index {
+        // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
+        if ifd_index >= self.ifd_offsets.len() {
             // We possibly need to load in the next IFD
             if self.next_ifd.is_none() {
                 return Err(TiffError::FormatError(
@@ -661,24 +660,25 @@ impl<R: Read + Seek> Decoder<R> {
             }
 
             loop {
-                // Follow the list until we find the one we want
-                let (ifd, next_ifd) = self.next_ifd()?;
+                // Follow the list until we find the one we want, or we reach the end, whichever happens first
+                let (_ifd, next_ifd) = self.next_ifd()?;
 
                 if next_ifd.is_none() {
                     break;
                 }
 
-                if ifd_index < self.ifds.len() {
+                if ifd_index < self.ifd_offsets.len() {
                     break;
                 }
             }
         }
 
-        if ifd_index < self.ifds.len() {
-            let (ifd, next_ifd) = Self::read_ifd(
+        // If the index is within the list of ifds then we can load the selected image/IFD
+        if ifd_index < self.ifd_offsets.len() {
+            let (ifd, _next_ifd) = Self::read_ifd(
                 &mut self.reader,
                 self.bigtiff,
-                *self.ifds.get(ifd_index).unwrap(),
+                *self.ifd_offsets.get(ifd_index).unwrap(),
             )?;
 
             self.current_chunk = 0;
@@ -717,8 +717,7 @@ impl<R: Read + Seek> Decoder<R> {
                 return Err(TiffError::FormatError(TiffFormatError::CycleInOffsets));
             }
             self.next_ifd = Some(next);
-            self.next_ifd_index += 1;
-            self.ifds.push(next);
+            self.ifd_offsets.push(next);
         }
 
         Ok((ifd, next_ifd))
@@ -728,7 +727,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
-        let (ifd, next_ifd) = self.next_ifd()?;
+        let (ifd, _next_ifd) = self.next_ifd()?;
 
         self.current_chunk = 0;
         self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
