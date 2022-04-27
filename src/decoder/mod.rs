@@ -241,6 +241,28 @@ pub enum ChunkType {
     Tile,
 }
 
+pub struct ChunkInfo {
+    /// Width of the chunk as specified (includes potential padding)
+    pub chunk_width: usize,
+    pub chunk_height: usize,
+
+    /// Width of the data (excluding potential padding)
+    pub data_width: usize,
+    pub data_height: usize,
+}
+
+impl ChunkInfo {
+    #[inline]
+    pub fn padding_right(&self) -> usize {
+        self.chunk_width - self.data_width
+    }
+
+    #[inline]
+    pub fn padding_down(&self) -> usize {
+        self.chunk_height - self.data_height
+    }
+}
+
 /// Decoding limits
 #[derive(Clone, Debug)]
 pub struct Limits {
@@ -1014,6 +1036,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         let offset = self.image.chunk_file_range(self.current_chunk)?.0;
         self.goto_offset_u64(offset)?;
+        let chunk_info = self.chunk_info(index).ok_or(TiffError::IntSizeError)?;
 
         let byte_order = self.reader.byte_order;
         let output_width = usize::try_from(self.image().width)?;
@@ -1026,6 +1049,58 @@ impl<R: Read + Seek> Decoder<R> {
         )?;
 
         self.current_chunk += 1;
+
+        Ok(())
+    }
+
+    fn read_tile_to_buffer(
+        &mut self,
+        result: &mut DecodingBuffer,
+        tile: usize,
+        output_width: usize,
+    ) -> TiffResult<()> {
+        let file_offset = *self
+            .image()
+            .chunk_offsets
+            .get(tile)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
+
+        let compressed_bytes =
+            *self
+                .image()
+                .chunk_bytes
+                .get(tile)
+                .ok_or(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ))?;
+
+        let chunk_info = self.chunk_info(tile).unwrap();
+
+        self.expand_tile(
+            result.copy(),
+            file_offset,
+            compressed_bytes,
+            &chunk_info,
+            output_width,
+        )?;
+
+        match self.image().predictor {
+            Predictor::None => {}
+            Predictor::Horizontal => {
+                rev_hpredict(
+                    result.copy(),
+                    (
+                        u32::try_from(chunk_info.data_width)?,
+                        u32::try_from(chunk_info.data_height)?,
+                    ),
+                    output_width,
+                    self.colortype()?,
+                )?;
+            }
+            Predictor::__NonExhaustive => unreachable!(),
+        }
 
         Ok(())
     }
@@ -1104,31 +1179,21 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Read a single tile from the image and return it as a Vector
     pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
-        self.check_chunk_type(ChunkType::Tile)?;
-
-        let tile = self.current_chunk;
-
-        let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
-        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-
-        let tile_width = tile_attrs.tile_width - padding_right;
-        let tile_length = tile_attrs.tile_length - padding_down;
-
-        let mut result = self.result_buffer(tile_width, tile_length)?;
-
-        let offset = self.image.chunk_file_range(tile)?.0;
-        self.goto_offset_u64(offset)?;
-
-        let byte_order = self.reader.byte_order;
-        self.image.expand_chunk(
-            &mut self.reader,
-            result.as_buffer(0),
-            tile_width,
-            byte_order,
-            tile,
-        )?;
+        let result = self.read_tile_at(self.current_chunk);
 
         self.current_chunk += 1;
+
+        result
+    }
+
+    pub fn read_tile_at(&mut self, tile_index: usize) -> TiffResult<DecodingResult> {
+        self.check_chunk_type(ChunkType::Tile)?;
+
+        let chunk_info = self.chunk_info(tile_index).unwrap();
+
+        let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
+
+        self.read_tile_to_buffer(&mut result.as_buffer(0), tile_index, chunk_info.data_width)?;
 
         Ok(result)
     }
