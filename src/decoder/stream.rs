@@ -3,6 +3,8 @@
 use std::convert::TryFrom;
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
+use crate::tags::PhotometricInterpretation;
+
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
 pub enum ByteOrder {
@@ -189,6 +191,7 @@ impl<R: Read> Read for LZWReader<R> {
 pub(crate) struct JpegReader {
     buffer: io::Cursor<Vec<u8>>,
 }
+
 impl JpegReader {
     /// Constructs new JpegReader wrapping a SmartReader.
     /// Because JPEG compression in TIFF allows to save quantization and/or huffman tables in one
@@ -204,14 +207,16 @@ impl JpegReader {
 
     pub fn new<R>(
         reader: &mut SmartReader<R>,
-        length: u32,
+        length: u64,
         jpeg_tables: &Option<Vec<u8>>,
+        photometric_interpretation: &PhotometricInterpretation,
     ) -> io::Result<JpegReader>
     where
         R: Read + Seek,
     {
         // Read jpeg image data
         let mut segment = vec![0; length as usize];
+
         reader.read_exact(&mut segment[..])?;
 
         match jpeg_tables {
@@ -229,6 +234,10 @@ impl JpegReader {
                 );
 
                 let mut jpeg_data = tables.clone();
+                if photometric_interpretation == &PhotometricInterpretation::RGB {
+                    add_app14segment(&mut jpeg_data, JpegTagApp14Transform::App14TransformUnknown)
+                }
+
                 let truncated_length = jpeg_data.len() - 2;
                 jpeg_data.truncate(truncated_length);
                 jpeg_data.extend_from_slice(&segment[2..]);
@@ -241,6 +250,58 @@ impl JpegReader {
                 buffer: io::Cursor::new(segment),
             }),
         }
+    }
+}
+
+#[repr(u8)]
+enum JpegTagApp14Transform {
+    // App14TransformYCCK = 2,
+    // App14TransformYCbCr = 1,
+    App14TransformUnknown = 0,
+}
+
+fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform) {
+    // Add JPEG Tag APP14 Adobe segment to jpeg_tables.
+    // This segment stores image encoding information for DCT filters.
+    // When `transform` value is 0 which is defined as Unknown, jpeg-decoder interpret the
+    // color-space of image as RGB(3 channels) or CMYK(4).
+    let mut app14_offset = None;
+    let mut dht_offset = None;
+    for (offset, window) in jpeg_tables.windows(2).enumerate() {
+        if window == [0xff, 0xee] {
+            app14_offset = Some(offset);
+            break;
+        }
+        if window == [0xff, 0xc4] {
+            dht_offset = Some(offset);
+        }
+    }
+    match (app14_offset, dht_offset) {
+        (Some(i), _) => {
+            jpeg_tables[i + 16] = transform as u8;
+        }
+        (None, Some(sos_offset)) => {
+            let app14segment: [u8; 16] = [
+                0xff,
+                0xee,
+                0x00,
+                0x0e,
+                0x41,
+                0x64,
+                0x6f,
+                0x62,
+                0x65,
+                0x00,
+                0x64,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                transform as u8,
+            ];
+            jpeg_tables.splice(sos_offset..sos_offset, app14segment.iter().copied());
+        }
+        (None, None) => {}
     }
 }
 

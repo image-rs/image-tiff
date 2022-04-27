@@ -391,6 +391,10 @@ fn oom() {
 
     match err {
         tiff::TiffError::LimitsExceeded => {}
+        tiff::TiffError::UnsupportedError(tiff::TiffUnsupportedError::InterpretationWithBits(
+            _,
+            _,
+        )) => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
@@ -452,6 +456,7 @@ fn invalid_jpeg_tag_2() {
 
     match err {
         TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::JPEGTables)) => {}
+        TiffError::LimitsExceeded => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }

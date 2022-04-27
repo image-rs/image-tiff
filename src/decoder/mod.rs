@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
-use std::io::{self, Read, Seek};
+use std::io::{self, Cursor, Read, Seek};
 use std::{cmp, ops::Range};
 
 use crate::{
@@ -1030,9 +1030,8 @@ impl<R: Read + Seek> Decoder<R> {
         // Construct necessary reader to perform decompression.
         self.goto_offset_u64(offset)?;
         let byte_order = self.reader.byte_order;
-        let compression_method = self.image().compression_method;
 
-        let reader = Self::create_reader(&mut self.reader, compression_method, length)?;
+        let reader = Self::create_reader(self, length)?;
 
         // Read into output buffer.
         {
@@ -1068,9 +1067,9 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Decompresses the tile into the supplied buffer.
-    fn expand_tile<'a>(
+    fn expand_tile(
         &mut self,
-        mut buffer: DecodingBuffer<'a>,
+        mut buffer: DecodingBuffer,
         offset: u64,
         compressed_length: u64,
         tile: usize,
@@ -1089,11 +1088,9 @@ impl<R: Read + Seek> Decoder<R> {
         self.goto_offset_u64(offset)?;
 
         let line_samples = output_width * self.image().bits_per_sample.len();
-        let compression_method = self.image().compression_method;
         let photometric_interpretation = self.image().photometric_interpretation;
 
-        let mut reader =
-            Self::create_reader(&mut self.reader, compression_method, compressed_length)?;
+        let mut reader = Self::create_reader(self, compressed_length)?;
 
         for row in 0..(tile_length - padding_down) {
             let buf = match &mut buffer {
@@ -1132,18 +1129,44 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn create_reader<'r>(
-        reader: &'r mut SmartReader<R>,
-        compression_method: CompressionMethod,
+        decoder: &'r mut Self,
         compressed_length: u64,
     ) -> TiffResult<Box<dyn Read + 'r>> {
+        let compression_method = decoder.image().compression_method;
+
         Ok(match compression_method {
-            CompressionMethod::None => Box::new(reader),
-            CompressionMethod::LZW => {
-                Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
+            CompressionMethod::None => Box::new(&mut decoder.reader),
+            CompressionMethod::LZW => Box::new(LZWReader::new(
+                &mut decoder.reader,
+                usize::try_from(compressed_length)?,
+            )),
+            CompressionMethod::PackBits => {
+                Box::new(PackBitsReader::new(&mut decoder.reader, compressed_length))
             }
-            CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
-                Box::new(DeflateReader::new(reader))
+                Box::new(DeflateReader::new(&mut decoder.reader))
+            }
+            CompressionMethod::ModernJPEG => {
+                if decoder.image().jpeg_tables.is_some() && compressed_length < 2 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                    ));
+                }
+
+                // TODO: avoid this clone
+                let jpeg_tables = decoder.image().jpeg_tables.clone();
+                let photometric_interpretation = decoder.image().photometric_interpretation;
+
+                let jpeg_reader = JpegReader::new(
+                    &mut decoder.reader,
+                    compressed_length,
+                    &jpeg_tables,
+                    &photometric_interpretation,
+                )?;
+                let mut decoder = jpeg::Decoder::new(jpeg_reader);
+                let data = decoder.decode().unwrap();
+
+                Box::new(Cursor::new(data))
             }
             method => {
                 return Err(TiffError::UnsupportedError(
@@ -1227,9 +1250,14 @@ impl<R: Read + Seek> Decoder<R> {
             }
             // TODO: avoid this clone
             let jpeg_tables = self.image().jpeg_tables.clone();
+            let photometric_interpretation = self.image().photometric_interpretation;
 
-            let jpeg_reader =
-                JpegReader::new(&mut self.reader, u32::try_from(length)?, &jpeg_tables)?;
+            let jpeg_reader = JpegReader::new(
+                &mut self.reader,
+                length,
+                &jpeg_tables,
+                &photometric_interpretation,
+            )?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
 
             match decoder.decode() {
@@ -1473,6 +1501,7 @@ impl<R: Read + Seek> Decoder<R> {
                 .as_ref()
                 .unwrap()
                 .get_offset(tile);
+
             self.read_tile_to_buffer(&mut result.as_buffer(buffer_offset), tile, width)?;
         }
 
@@ -1506,7 +1535,6 @@ impl<R: Read + Seek> Decoder<R> {
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let result = match (self.image().chunk_type, self.image().compression_method) {
-            (_, CompressionMethod::ModernJPEG) => self.read_jpeg()?,
             (ChunkType::Strip, _) => self.read_stripped_image()?,
             (ChunkType::Tile, _) => self.read_tiled_image()?,
         };
