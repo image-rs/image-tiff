@@ -234,6 +234,21 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[range]),
         }
     }
+
+    fn as_u8_buf(&mut self) -> &mut [u8] {
+        match self {
+            DecodingBuffer::U8(buf) => &mut *buf,
+            DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
+            DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
+            DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
+            DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
+            DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
+            DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
+            DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
+            DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
+            DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -325,8 +340,10 @@ where
     reader: SmartReader<R>,
     bigtiff: bool,
     limits: Limits,
-    next_ifd: Option<u64>,
     current_chunk: usize,
+    next_ifd: Option<u64>,
+    next_ifd_index: usize,
+    ifds: Vec<u64>,
     seen_ifds: HashSet<u64>,
     image: Image,
 }
@@ -521,12 +538,16 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut seen_ifds = HashSet::new();
         seen_ifds.insert(*next_ifd.as_ref().unwrap());
+        let ifds = vec![*next_ifd.as_ref().unwrap()];
 
         let mut decoder = Decoder {
             reader,
             bigtiff,
             limits: Default::default(),
             next_ifd,
+            next_ifd_index: 1,
+            ifds,
+            seen_ifds,
             image: Image {
                 ifd: None,
                 width: 0,
@@ -545,7 +566,6 @@ impl<R: Read + Seek> Decoder<R> {
                 chunk_bytes: Vec::new(),
             },
             current_chunk: 0,
-            seen_ifds,
         };
         decoder.next_image()?;
         Ok(decoder)
@@ -606,6 +626,48 @@ impl<R: Read + Seek> Decoder<R> {
         &self.image
     }
 
+    /// Loads the IFD at the specified index in the list, if one exists
+    pub fn image_at(&mut self, ifd_index: usize) -> TiffResult<()> {
+        if ifd_index >= self.next_ifd_index {
+            // We possibly need to load in the next IFD
+            if self.next_ifd.is_none() {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::ImageFileDirectoryNotFound,
+                ));
+            }
+
+            loop {
+                // Follow the list until we find the one we want
+                let (ifd, next_ifd) = self.next_ifd()?;
+
+                if next_ifd.is_none() {
+                    break;
+                }
+
+                if ifd_index < self.ifds.len() {
+                    break;
+                }
+            }
+        }
+
+        if ifd_index < self.ifds.len() {
+            let (ifd, next_ifd) = Self::read_ifd(
+                &mut self.reader,
+                self.bigtiff,
+                *self.ifds.get(ifd_index).unwrap(),
+            )?;
+
+            self.current_chunk = 0;
+            self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+
+            Ok(())
+        } else {
+            Err(TiffError::FormatError(
+                TiffFormatError::ImageFileDirectoryNotFound,
+            ))
+        }
+    }
+
     /// Reset the decoder.
     #[deprecated = "Never should have been public. Only use Decoder::new()"]
     pub fn init(self) -> TiffResult<Decoder<R>> {
@@ -613,10 +675,7 @@ impl<R: Read + Seek> Decoder<R> {
         Self::new(reader.into_inner())
     }
 
-    /// Reads in the next image.
-    /// If there is no further image in the TIFF file a format error is returned.
-    /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
-    pub fn next_image(&mut self) -> TiffResult<()> {
+    fn next_ifd(&mut self) -> TiffResult<(Directory, Option<u64>)> {
         if self.next_ifd.is_none() {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
@@ -634,7 +693,18 @@ impl<R: Read + Seek> Decoder<R> {
                 return Err(TiffError::FormatError(TiffFormatError::CycleInOffsets));
             }
             self.next_ifd = Some(next);
+            self.next_ifd_index += 1;
+            self.ifds.push(next);
         }
+
+        Ok((ifd, next_ifd))
+    }
+
+    /// Reads in the next image.
+    /// If there is no further image in the TIFF file a format error is returned.
+    /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
+    pub fn next_image(&mut self) -> TiffResult<()> {
+        let (ifd, next_ifd) = self.next_ifd()?;
 
         self.current_chunk = 0;
         self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
@@ -1057,18 +1127,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         // Read into output buffer.
         {
-            let mut buffer = match &mut buffer {
-                DecodingBuffer::U8(buf) => &mut *buf,
-                DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
-                DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
-                DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
-                DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
-                DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
-                DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
-                DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
-                DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
-                DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
-            };
+            let mut buffer = buffer.as_u8_buf();
 
             // Note that writing updates the slice to point to the yet unwritten part.
             std::io::copy(&mut reader.take(buffer.len() as u64), &mut buffer)?;
@@ -1154,18 +1213,7 @@ impl<R: Read + Seek> Decoder<R> {
         let mut reader = Self::create_reader(self, compressed_length)?;
 
         for row_index in 0..chunk_info.data_height {
-            let buf = match &mut buffer {
-                DecodingBuffer::U8(buf) => &mut *buf,
-                DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
-                DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
-                DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
-                DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
-                DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
-                DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
-                DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
-                DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
-                DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
-            };
+            let buf = buffer.as_u8_buf();
 
             let row_start = row_index * line_samples;
             let row_end = row_start + row_samples;
