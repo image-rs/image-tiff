@@ -208,7 +208,7 @@ impl JpegReader {
     pub fn new<R>(
         reader: &mut SmartReader<R>,
         length: u64,
-        jpeg_tables: &Option<Vec<u8>>,
+        jpeg_tables: Option<Vec<u8>>,
         photometric_interpretation: &PhotometricInterpretation,
     ) -> io::Result<JpegReader>
     where
@@ -220,11 +220,11 @@ impl JpegReader {
         reader.read_exact(&mut segment[..])?;
 
         match jpeg_tables {
-            Some(tables) => {
+            Some(mut jpeg_data) => {
                 assert!(
-                    tables.len() >= 2,
+                    jpeg_data.len() >= 2,
                     "jpeg_tables, if given, must be at least 2 bytes long. Got {:?}",
-                    tables
+                    jpeg_data
                 );
 
                 assert!(
@@ -233,7 +233,6 @@ impl JpegReader {
                     length
                 );
 
-                let mut jpeg_data = tables.clone();
                 if photometric_interpretation == &PhotometricInterpretation::RGB {
                     add_app14segment(&mut jpeg_data, JpegTagApp14Transform::App14TransformUnknown)
                 }

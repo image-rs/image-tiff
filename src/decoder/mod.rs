@@ -1153,14 +1153,13 @@ impl<R: Read + Seek> Decoder<R> {
                     ));
                 }
 
-                // TODO: avoid this clone
                 let jpeg_tables = decoder.image().jpeg_tables.clone();
                 let photometric_interpretation = decoder.image().photometric_interpretation;
 
                 let jpeg_reader = JpegReader::new(
                     &mut decoder.reader,
                     compressed_length,
-                    &jpeg_tables,
+                    jpeg_tables,
                     &photometric_interpretation,
                 )?;
                 let mut decoder = jpeg::Decoder::new(jpeg_reader);
@@ -1248,14 +1247,14 @@ impl<R: Read + Seek> Decoder<R> {
                     TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
                 ));
             }
-            // TODO: avoid this clone
+
             let jpeg_tables = self.image().jpeg_tables.clone();
             let photometric_interpretation = self.image().photometric_interpretation;
 
             let jpeg_reader = JpegReader::new(
                 &mut self.reader,
                 length,
-                &jpeg_tables,
+                jpeg_tables,
                 &photometric_interpretation,
             )?;
             let mut decoder = jpeg::Decoder::new(jpeg_reader);
