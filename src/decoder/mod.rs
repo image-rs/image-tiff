@@ -1031,7 +1031,17 @@ impl<R: Read + Seek> Decoder<R> {
         self.goto_offset_u64(offset)?;
         let byte_order = self.reader.byte_order;
 
-        let reader = Self::create_reader(self, length)?;
+        let photometric_interpretation = self.image().photometric_interpretation;
+        let compression_method = self.image().compression_method;
+        let jpeg_tables = self.image().jpeg_tables.clone();
+
+        let reader = Self::create_reader(
+            &mut self.reader,
+            photometric_interpretation,
+            compression_method,
+            length,
+            jpeg_tables,
+        )?;
 
         // Read into output buffer.
         {
@@ -1089,8 +1099,16 @@ impl<R: Read + Seek> Decoder<R> {
 
         let line_samples = output_width * self.image().bits_per_sample.len();
         let photometric_interpretation = self.image().photometric_interpretation;
+        let compression_method = self.image().compression_method;
+        let jpeg_tables = self.image().jpeg_tables.clone();
 
-        let mut reader = Self::create_reader(self, compressed_length)?;
+        let mut reader = Self::create_reader(
+            &mut self.reader,
+            photometric_interpretation,
+            compression_method,
+            compressed_length,
+            jpeg_tables,
+        )?;
 
         for row in 0..(tile_length - padding_down) {
             let buf = match &mut buffer {
@@ -1129,35 +1147,30 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn create_reader<'r>(
-        decoder: &'r mut Self,
+        reader: &'r mut SmartReader<R>,
+        photometric_interpretation: PhotometricInterpretation,
+        compression_method: CompressionMethod,
         compressed_length: u64,
+        jpeg_tables: Option<Vec<u8>>,
     ) -> TiffResult<Box<dyn Read + 'r>> {
-        let compression_method = decoder.image().compression_method;
-
         Ok(match compression_method {
-            CompressionMethod::None => Box::new(&mut decoder.reader),
-            CompressionMethod::LZW => Box::new(LZWReader::new(
-                &mut decoder.reader,
-                usize::try_from(compressed_length)?,
-            )),
-            CompressionMethod::PackBits => {
-                Box::new(PackBitsReader::new(&mut decoder.reader, compressed_length))
+            CompressionMethod::None => Box::new(reader),
+            CompressionMethod::LZW => {
+                Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
             }
+            CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
-                Box::new(DeflateReader::new(&mut decoder.reader))
+                Box::new(DeflateReader::new(reader))
             }
             CompressionMethod::ModernJPEG => {
-                if decoder.image().jpeg_tables.is_some() && compressed_length < 2 {
+                if jpeg_tables.is_some() && compressed_length < 2 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
                     ));
                 }
 
-                let jpeg_tables = decoder.image().jpeg_tables.clone();
-                let photometric_interpretation = decoder.image().photometric_interpretation;
-
                 let jpeg_reader = JpegReader::new(
-                    &mut decoder.reader,
+                    reader,
                     compressed_length,
                     jpeg_tables,
                     &photometric_interpretation,
