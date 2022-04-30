@@ -1,4 +1,5 @@
 use super::ifd::{Directory, Value};
+use super::stream::{add_app14segment, JpegTagApp14Transform};
 use super::tag_reader::TagReader;
 use super::Limits;
 use super::{stream::SmartReader, ChunkType};
@@ -6,6 +7,7 @@ use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, Sampl
 use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 use std::convert::{TryFrom, TryInto};
 use std::io::{Read, Seek};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub(crate) struct StripDecodeState {
@@ -87,7 +89,7 @@ pub(crate) struct Image {
     pub photometric_interpretation: PhotometricInterpretation,
     pub compression_method: CompressionMethod,
     pub predictor: Predictor,
-    pub jpeg_tables: Option<Vec<u8>>,
+    pub jpeg_tables: Option<Arc<Vec<u8>>>,
     pub chunk_type: ChunkType,
     pub strip_decoder: Option<StripDecodeState>,
     pub tile_attributes: Option<TileAttributes>,
@@ -130,7 +132,7 @@ impl Image {
         let jpeg_tables = if compression_method == CompressionMethod::ModernJPEG
             && ifd.contains_key(&Tag::JPEGTables)
         {
-            let vec = tag_reader
+            let mut vec = tag_reader
                 .find_tag(Tag::JPEGTables)?
                 .unwrap()
                 .into_u8_vec()?;
@@ -139,7 +141,13 @@ impl Image {
                     TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
                 ));
             }
-            Some(vec)
+
+            // TODO: Can we avoid this somehow?
+            if photometric_interpretation == PhotometricInterpretation::RGB {
+                add_app14segment(&mut vec, JpegTagApp14Transform::App14TransformUnknown)
+            }
+
+            Some(Arc::new(vec))
         } else {
             None
         };
