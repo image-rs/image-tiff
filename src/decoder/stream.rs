@@ -192,8 +192,6 @@ impl<R: Read> Read for LZWReader<R> {
 pub(crate) struct JpegReader {
     jpeg_tables: Option<Arc<Vec<u8>>>,
 
-    photometric_interpretation: Option<PhotometricInterpretation>,
-
     buffer: io::Cursor<Vec<u8>>,
 
     offset: usize,
@@ -216,7 +214,6 @@ impl JpegReader {
         reader: &mut SmartReader<R>,
         length: u64,
         jpeg_tables: Option<Arc<Vec<u8>>>,
-        photometric_interpretation: &PhotometricInterpretation,
     ) -> io::Result<JpegReader>
     where
         R: Read + Seek,
@@ -247,14 +244,12 @@ impl JpegReader {
                 Ok(JpegReader {
                     buffer,
                     jpeg_tables: Some(jpeg_tables),
-                    photometric_interpretation: Some(*photometric_interpretation),
                     offset: 0,
                 })
             }
             None => Ok(JpegReader {
                 buffer: io::Cursor::new(segment),
                 jpeg_tables: None,
-                photometric_interpretation: None,
                 offset: 0,
             }),
         }

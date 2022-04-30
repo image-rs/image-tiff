@@ -1032,17 +1032,11 @@ impl<R: Read + Seek> Decoder<R> {
         self.goto_offset_u64(offset)?;
         let byte_order = self.reader.byte_order;
 
-        let photometric_interpretation = self.image().photometric_interpretation;
         let compression_method = self.image().compression_method;
         let jpeg_tables = self.image().jpeg_tables.clone();
 
-        let reader = Self::create_reader(
-            &mut self.reader,
-            photometric_interpretation,
-            compression_method,
-            length,
-            jpeg_tables,
-        )?;
+        let reader =
+            Self::create_reader(&mut self.reader, compression_method, length, jpeg_tables)?;
 
         // Read into output buffer.
         {
@@ -1105,7 +1099,6 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut reader = Self::create_reader(
             &mut self.reader,
-            photometric_interpretation,
             compression_method,
             compressed_length,
             jpeg_tables,
@@ -1149,7 +1142,6 @@ impl<R: Read + Seek> Decoder<R> {
 
     fn create_reader<'r>(
         reader: &'r mut SmartReader<R>,
-        photometric_interpretation: PhotometricInterpretation,
         compression_method: CompressionMethod,
         compressed_length: u64,
         jpeg_tables: Option<Arc<Vec<u8>>>,
@@ -1170,12 +1162,7 @@ impl<R: Read + Seek> Decoder<R> {
                     ));
                 }
 
-                let jpeg_reader = JpegReader::new(
-                    reader,
-                    compressed_length,
-                    jpeg_tables,
-                    &photometric_interpretation,
-                )?;
+                let jpeg_reader = JpegReader::new(reader, compressed_length, jpeg_tables)?;
                 let mut decoder = jpeg::Decoder::new(jpeg_reader);
                 let data = decoder.decode().unwrap();
 
