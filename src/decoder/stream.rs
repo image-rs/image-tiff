@@ -240,16 +240,8 @@ impl JpegReader {
                     length
                 );
 
-                // if photometric_interpretation == &PhotometricInterpretation::RGB {
-                //     add_app14segment(&mut jpeg_data, JpegTagApp14Transform::App14TransformUnknown)
-                // }
-
-                // let truncated_length = jpeg_data.len() - 2;
-                // jpeg_data.truncate(truncated_length);
-                // jpeg_data.extend_from_slice(&segment[2..]);
-
                 let mut buffer = io::Cursor::new(segment);
-                // Skip the first two bytes
+                // Skip the first two bytes (marker bytes)
                 buffer.seek(SeekFrom::Start(2))?;
 
                 Ok(JpegReader {
