@@ -1209,6 +1209,9 @@ impl<R: Read + Seek> Decoder<R> {
         self.goto_offset_u64(offset)?;
 
         let line_samples = output_width * self.image().bits_per_sample.len();
+        let padding_right_samples = chunk_info.padding_right() * self.image().bits_per_sample.len();
+        let row_samples = chunk_info.data_width * self.image().bits_per_sample.len();
+
         let photometric_interpretation = self.image().photometric_interpretation;
         let compression_method = self.image().compression_method;
         let jpeg_tables = self.image().jpeg_tables.clone();

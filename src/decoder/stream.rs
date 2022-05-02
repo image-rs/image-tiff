@@ -4,8 +4,6 @@ use std::convert::TryFrom;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Take};
 use std::sync::Arc;
 
-use crate::tags::PhotometricInterpretation;
-
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
 pub enum ByteOrder {
