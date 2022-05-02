@@ -56,6 +56,7 @@ pub enum TiffFormatError {
         actual_samples: usize,
         required_samples: usize,
     },
+    InvalidChunkIndex(usize),
     InvalidTag,
     InvalidTagValueType(Tag),
     RequiredTagNotFound(Tag),
@@ -100,6 +101,7 @@ impl fmt::Display for TiffFormatError {
                     actual_samples, required_samples
                 )
             }
+            InvalidChunkIndex(index) => write!(fmt, "Image chunk index ({}) requested.", index),
             InvalidTag => write!(fmt, "Image contains invalid tag."),
             InvalidTagValueType(ref tag) => {
                 write!(fmt, "Tag `{:?}` did not have the expected value type.", tag)
