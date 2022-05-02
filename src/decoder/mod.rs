@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::{self, Cursor, Read, Seek};
+use std::ops::Range;
 use std::sync::Arc;
-use std::{cmp, ops::Range};
 
 use crate::{
     bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -1484,22 +1484,16 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Read a single strip from the image and return it as a Vector
-    pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
+    pub fn read_strip(&mut self) -> TiffResult<(DecodingResult, ChunkInfo)> {
         self.check_chunk_type(ChunkType::Strip)?;
         let index = self.current_chunk;
 
-        let rows_per_strip =
-            usize::try_from(self.image().strip_decoder.as_ref().unwrap().rows_per_strip)?;
+        let chunk_info = self.chunk_info(index).unwrap();
 
-        let strip_height = cmp::min(
-            rows_per_strip,
-            usize::try_from(self.image().height)? - index * rows_per_strip,
-        );
-
-        let mut result = self.result_buffer(usize::try_from(self.image().width)?, strip_height)?;
+        let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
         self.read_strip_to_buffer(result.as_buffer(0))?;
 
-        Ok(result)
+        Ok((result, chunk_info))
     }
 
     /// Read a single tile from the image and return it as a Vector
