@@ -241,6 +241,7 @@ pub enum ChunkType {
     Tile,
 }
 
+#[non_exhaustive]
 pub struct ChunkInfo {
     /// Width of the chunk as specified (includes potential padding)
     pub chunk_width: usize,
@@ -649,7 +650,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
-    pub fn image_at(&mut self, ifd_index: usize) -> TiffResult<()> {
+    pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
         // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
         if ifd_index >= self.ifd_offsets.len() {
             // We possibly need to load in the next IFD
@@ -674,12 +675,8 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         // If the index is within the list of ifds then we can load the selected image/IFD
-        if ifd_index < self.ifd_offsets.len() {
-            let (ifd, _next_ifd) = Self::read_ifd(
-                &mut self.reader,
-                self.bigtiff,
-                *self.ifd_offsets.get(ifd_index).unwrap(),
-            )?;
+        if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
+            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset)?;
 
             self.current_chunk = 0;
             self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
@@ -1130,7 +1127,10 @@ impl<R: Read + Seek> Decoder<R> {
                     TiffFormatError::InconsistentSizesEncountered,
                 ))?;
 
-        let chunk_info = self.chunk_info(tile).unwrap();
+        // Return the same error as above if the chunk doesn't exist
+        let chunk_info = self.chunk_info(tile).ok_or(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ))?;
 
         self.expand_tile(
             result.copy(),
@@ -1232,7 +1232,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Read a single tile from the image and return it as a Vector
-    pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
+    pub fn read_tile(&mut self) -> TiffResult<(DecodingResult, ChunkInfo)> {
         let result = self.read_tile_at(self.current_chunk);
 
         self.current_chunk += 1;
@@ -1240,7 +1240,7 @@ impl<R: Read + Seek> Decoder<R> {
         result
     }
 
-    pub fn read_tile_at(&mut self, tile_index: usize) -> TiffResult<DecodingResult> {
+    pub fn read_tile_at(&mut self, tile_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
         self.check_chunk_type(ChunkType::Tile)?;
 
         let chunk_info = self.chunk_info(tile_index).unwrap();
@@ -1249,7 +1249,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         self.read_tile_to_buffer(&mut result.as_buffer(0), tile_index, chunk_info.data_width)?;
 
-        Ok(result)
+        Ok((result, chunk_info))
     }
 
     /// Decodes the entire image and return it as a Vector
