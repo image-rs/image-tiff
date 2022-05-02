@@ -241,6 +241,7 @@ pub enum ChunkType {
     Tile,
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct ChunkInfo {
     /// Width of the chunk as specified (includes potential padding)
@@ -1085,6 +1086,9 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
 
+        let chunk_info = self
+            .chunk_info(index)
+            .ok_or(TiffFormatError::InvalidChunkIndex(index))?;
         let offset = self.image.chunk_file_range(self.current_chunk)?.0;
         self.goto_offset_u64(offset)?;
         let chunk_info = self.chunk_info(index).ok_or(TiffError::IntSizeError)?;
@@ -1107,30 +1111,25 @@ impl<R: Read + Seek> Decoder<R> {
     fn read_tile_to_buffer(
         &mut self,
         result: &mut DecodingBuffer,
-        tile: usize,
+        tile_index: usize,
         output_width: usize,
     ) -> TiffResult<()> {
         let file_offset = *self
             .image()
             .chunk_offsets
-            .get(tile)
-            .ok_or(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ))?;
+            .get(tile_index)
+            .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
 
-        let compressed_bytes =
-            *self
-                .image()
-                .chunk_bytes
-                .get(tile)
-                .ok_or(TiffError::FormatError(
-                    TiffFormatError::InconsistentSizesEncountered,
-                ))?;
+        let compressed_bytes = *self
+            .image()
+            .chunk_bytes
+            .get(tile_index)
+            .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
 
         // Return the same error as above if the chunk doesn't exist
-        let chunk_info = self.chunk_info(tile).ok_or(TiffError::FormatError(
-            TiffFormatError::InconsistentSizesEncountered,
-        ))?;
+        let chunk_info = self
+            .chunk_info(tile_index)
+            .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
 
         self.expand_tile(
             result.copy(),
@@ -1214,10 +1213,15 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Read a single strip from the image and return it as a Vector
     pub fn read_strip(&mut self) -> TiffResult<(DecodingResult, ChunkInfo)> {
-        self.check_chunk_type(ChunkType::Strip)?;
-        let index = self.current_chunk;
+        self.read_strip_at(self.current_chunk)
+    }
 
-        let chunk_info = self.chunk_info(index).unwrap();
+    pub fn read_strip_at(&mut self, strip_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
+        self.check_chunk_type(ChunkType::Strip)?;
+
+        let chunk_info = self
+            .chunk_info(strip_index)
+            .ok_or(TiffFormatError::InvalidChunkIndex(strip_index))?;
 
         let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
         self.read_strip_to_buffer(result.as_buffer(0))?;
@@ -1237,7 +1241,9 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_tile_at(&mut self, tile_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
         self.check_chunk_type(ChunkType::Tile)?;
 
-        let chunk_info = self.chunk_info(tile_index).unwrap();
+        let chunk_info = self
+            .chunk_info(tile_index)
+            .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
 
         let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
 
