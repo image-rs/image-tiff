@@ -1,7 +1,10 @@
 //! All IO functionality needed for TIFF decoding
 
 use std::convert::TryFrom;
-use std::io::{self, BufRead, BufReader, Read, Seek, Take};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Take};
+use std::sync::Arc;
+
+use crate::tags::PhotometricInterpretation;
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -187,8 +190,13 @@ impl<R: Read> Read for LZWReader<R> {
 ///
 
 pub(crate) struct JpegReader {
+    jpeg_tables: Option<Arc<Vec<u8>>>,
+
     buffer: io::Cursor<Vec<u8>>,
+
+    offset: usize,
 }
+
 impl JpegReader {
     /// Constructs new JpegReader wrapping a SmartReader.
     /// Because JPEG compression in TIFF allows to save quantization and/or huffman tables in one
@@ -204,22 +212,23 @@ impl JpegReader {
 
     pub fn new<R>(
         reader: &mut SmartReader<R>,
-        length: u32,
-        jpeg_tables: &Option<Vec<u8>>,
+        length: u64,
+        jpeg_tables: Option<Arc<Vec<u8>>>,
     ) -> io::Result<JpegReader>
     where
         R: Read + Seek,
     {
         // Read jpeg image data
         let mut segment = vec![0; length as usize];
+
         reader.read_exact(&mut segment[..])?;
 
         match jpeg_tables {
-            Some(tables) => {
+            Some(jpeg_tables) => {
                 assert!(
-                    tables.len() >= 2,
+                    jpeg_tables.len() >= 2,
                     "jpeg_tables, if given, must be at least 2 bytes long. Got {:?}",
-                    tables
+                    jpeg_tables
                 );
 
                 assert!(
@@ -228,26 +237,105 @@ impl JpegReader {
                     length
                 );
 
-                let mut jpeg_data = tables.clone();
-                let truncated_length = jpeg_data.len() - 2;
-                jpeg_data.truncate(truncated_length);
-                jpeg_data.extend_from_slice(&segment[2..]);
+                let mut buffer = io::Cursor::new(segment);
+                // Skip the first two bytes (marker bytes)
+                buffer.seek(SeekFrom::Start(2))?;
 
                 Ok(JpegReader {
-                    buffer: io::Cursor::new(jpeg_data),
+                    buffer,
+                    jpeg_tables: Some(jpeg_tables),
+                    offset: 0,
                 })
             }
             None => Ok(JpegReader {
                 buffer: io::Cursor::new(segment),
+                jpeg_tables: None,
+                offset: 0,
             }),
         }
+    }
+}
+
+#[repr(u8)]
+pub(crate) enum JpegTagApp14Transform {
+    // App14TransformYCCK = 2,
+    // App14TransformYCbCr = 1,
+    App14TransformUnknown = 0,
+}
+
+pub(crate) fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform) {
+    // Add JPEG Tag APP14 Adobe segment to jpeg_tables.
+    // This segment stores image encoding information for DCT filters.
+    // When `transform` value is 0 which is defined as Unknown, jpeg-decoder interpret the
+    // color-space of image as RGB(3 channels) or CMYK(4).
+    let mut app14_offset = None;
+    let mut dht_offset = None;
+    for (offset, window) in jpeg_tables.windows(2).enumerate() {
+        if window == [0xff, 0xee] {
+            app14_offset = Some(offset);
+            break;
+        }
+        if window == [0xff, 0xc4] {
+            dht_offset = Some(offset);
+        }
+    }
+    match (app14_offset, dht_offset) {
+        (Some(i), _) => {
+            jpeg_tables[i + 16] = transform as u8;
+        }
+        (None, Some(sos_offset)) => {
+            let app14segment: [u8; 16] = [
+                0xff,
+                0xee,
+                0x00,
+                0x0e,
+                0x41,
+                0x64,
+                0x6f,
+                0x62,
+                0x65,
+                0x00,
+                0x64,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                transform as u8,
+            ];
+            jpeg_tables.splice(sos_offset..sos_offset, app14segment.iter().copied());
+        }
+        (None, None) => {}
     }
 }
 
 impl Read for JpegReader {
     // #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.buffer.read(buf)
+        let mut start = 0;
+
+        if let Some(jpeg_tables) = &self.jpeg_tables {
+            if jpeg_tables.len() - 2 > self.offset {
+                // Read (rest of) jpeg_tables to buf (without the last two bytes)
+                let size_remaining = jpeg_tables.len() - self.offset - 2;
+                let to_copy = size_remaining.min(buf.len());
+
+                buf[start..start + to_copy]
+                    .copy_from_slice(&jpeg_tables[self.offset..self.offset + to_copy]);
+
+                self.offset += to_copy;
+
+                if to_copy == buf.len() {
+                    return Ok(to_copy);
+                }
+
+                start += to_copy;
+            }
+        }
+
+        let read = self.buffer.read(&mut buf[start..])?;
+        self.offset += read;
+
+        Ok(read + start)
     }
 }
 

@@ -390,7 +390,9 @@ fn oom() {
     let err = decoder.read_image().unwrap_err();
 
     match err {
-        tiff::TiffError::LimitsExceeded => {}
+        tiff::TiffError::UnsupportedError(tiff::TiffUnsupportedError::InterpretationWithBits(
+            ..,
+        )) => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
@@ -452,6 +454,7 @@ fn invalid_jpeg_tag_2() {
 
     match err {
         TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::JPEGTables)) => {}
+        TiffError::LimitsExceeded => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }
 }
