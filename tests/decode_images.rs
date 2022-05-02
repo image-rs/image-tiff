@@ -390,10 +390,8 @@ fn oom() {
     let err = decoder.read_image().unwrap_err();
 
     match err {
-        tiff::TiffError::LimitsExceeded => {}
         tiff::TiffError::UnsupportedError(tiff::TiffUnsupportedError::InterpretationWithBits(
-            _,
-            _,
+            ..,
         )) => {}
         unexpected => panic!("Unexpected error {}", unexpected),
     }

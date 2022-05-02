@@ -1,7 +1,8 @@
 //! All IO functionality needed for TIFF decoding
 
 use std::convert::TryFrom;
-use std::io::{self, BufRead, BufReader, Read, Seek, Take};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Take};
+use std::sync::Arc;
 
 use crate::tags::PhotometricInterpretation;
 
@@ -189,7 +190,11 @@ impl<R: Read> Read for LZWReader<R> {
 ///
 
 pub(crate) struct JpegReader {
+    jpeg_tables: Option<Arc<Vec<u8>>>,
+
     buffer: io::Cursor<Vec<u8>>,
+
+    offset: usize,
 }
 
 impl JpegReader {
@@ -208,8 +213,7 @@ impl JpegReader {
     pub fn new<R>(
         reader: &mut SmartReader<R>,
         length: u64,
-        jpeg_tables: Option<Vec<u8>>,
-        photometric_interpretation: &PhotometricInterpretation,
+        jpeg_tables: Option<Arc<Vec<u8>>>,
     ) -> io::Result<JpegReader>
     where
         R: Read + Seek,
@@ -220,11 +224,11 @@ impl JpegReader {
         reader.read_exact(&mut segment[..])?;
 
         match jpeg_tables {
-            Some(mut jpeg_data) => {
+            Some(jpeg_tables) => {
                 assert!(
-                    jpeg_data.len() >= 2,
+                    jpeg_tables.len() >= 2,
                     "jpeg_tables, if given, must be at least 2 bytes long. Got {:?}",
-                    jpeg_data
+                    jpeg_tables
                 );
 
                 assert!(
@@ -233,33 +237,33 @@ impl JpegReader {
                     length
                 );
 
-                if photometric_interpretation == &PhotometricInterpretation::RGB {
-                    add_app14segment(&mut jpeg_data, JpegTagApp14Transform::App14TransformUnknown)
-                }
-
-                let truncated_length = jpeg_data.len() - 2;
-                jpeg_data.truncate(truncated_length);
-                jpeg_data.extend_from_slice(&segment[2..]);
+                let mut buffer = io::Cursor::new(segment);
+                // Skip the first two bytes (marker bytes)
+                buffer.seek(SeekFrom::Start(2))?;
 
                 Ok(JpegReader {
-                    buffer: io::Cursor::new(jpeg_data),
+                    buffer,
+                    jpeg_tables: Some(jpeg_tables),
+                    offset: 0,
                 })
             }
             None => Ok(JpegReader {
                 buffer: io::Cursor::new(segment),
+                jpeg_tables: None,
+                offset: 0,
             }),
         }
     }
 }
 
 #[repr(u8)]
-enum JpegTagApp14Transform {
+pub(crate) enum JpegTagApp14Transform {
     // App14TransformYCCK = 2,
     // App14TransformYCbCr = 1,
     App14TransformUnknown = 0,
 }
 
-fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform) {
+pub(crate) fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform) {
     // Add JPEG Tag APP14 Adobe segment to jpeg_tables.
     // This segment stores image encoding information for DCT filters.
     // When `transform` value is 0 which is defined as Unknown, jpeg-decoder interpret the
@@ -307,7 +311,31 @@ fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform)
 impl Read for JpegReader {
     // #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.buffer.read(buf)
+        let mut start = 0;
+
+        if let Some(jpeg_tables) = &self.jpeg_tables {
+            if jpeg_tables.len() - 2 > self.offset {
+                // Read (rest of) jpeg_tables to buf (without the last two bytes)
+                let size_remaining = jpeg_tables.len() - self.offset - 2;
+                let to_copy = size_remaining.min(buf.len());
+
+                buf[start..start + to_copy]
+                    .copy_from_slice(&jpeg_tables[self.offset..self.offset + to_copy]);
+
+                self.offset += to_copy;
+
+                if to_copy == buf.len() {
+                    return Ok(to_copy);
+                }
+
+                start += to_copy;
+            }
+        }
+
+        let read = self.buffer.read(&mut buf[start..])?;
+        self.offset += read;
+
+        Ok(read + start)
     }
 }
 
