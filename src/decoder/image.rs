@@ -1,6 +1,7 @@
 use super::ifd::{Directory, Value};
 use super::stream::{
-    add_app14segment, ByteOrder, DeflateReader, JpegTagApp14Transform, LZWReader, PackBitsReader, JpegReader,
+    add_app14segment, ByteOrder, DeflateReader, JpegReader, JpegTagApp14Transform, LZWReader,
+    PackBitsReader,
 };
 use super::tag_reader::TagReader;
 use super::{stream::SmartReader, ChunkType};
@@ -8,7 +9,7 @@ use super::{DecodingBuffer, Limits};
 use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag};
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 use std::convert::{TryFrom, TryInto};
-use std::io::{self, Read, Seek, Cursor};
+use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
 #[derive(Debug)]
