@@ -1220,13 +1220,20 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
-    /// Read a single strip from the image and return it as a Vector
+    /// Read a single strip from the image and return it as a Vector. This method does not return
+    /// information on the size of the strip read and so the caller must take care of the final
+    /// strip in the image as the data read may be less than the expected strip size. This interface
+    /// may change at a future date to reflect this.
+    ///
+    /// `read_strip_at` can be used to get both the strip data and the strip size.
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
         let result = self.read_strip_at(self.current_chunk)?;
 
         Ok(result.0)
     }
 
+    /// Read the specified strip (at index `strip_index`) and return the binary data as a Vector and
+    /// `ChunkInfo` describing the size of the strip.
     pub fn read_strip_at(&mut self, strip_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
         self.check_chunk_type(ChunkType::Strip)?;
 
@@ -1240,7 +1247,12 @@ impl<R: Read + Seek> Decoder<R> {
         Ok((result, chunk_info))
     }
 
-    /// Read a single tile from the image and return it as a Vector
+    /// Read a single tile from the image and return it as a Vector. This method does not return
+    /// information on the size of the tile read and so the caller must take care of tiles on the
+    /// rightmost column and the bottommost row in the image as the data read may be less than the
+    /// expected tile size. This interface may change at a future date to reflect this.
+    ///
+    /// `read_tile_at` can be used to get both the tile data and the tile size.
     pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
         let result = self.read_tile_at(self.current_chunk)?;
 
@@ -1249,6 +1261,8 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(result.0)
     }
 
+    /// Read the specified tile (at index `tile_index`) and return the binary data as a Vector and
+    /// `ChunkInfo` describing the size of the tile.
     pub fn read_tile_at(&mut self, tile_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
         self.check_chunk_type(ChunkType::Tile)?;
 
