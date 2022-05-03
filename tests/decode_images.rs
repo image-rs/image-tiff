@@ -276,7 +276,7 @@ fn test_tiled_incremental() {
 
     for tile in 0..tiles {
         match decoder.read_tile().unwrap() {
-            (DecodingResult::U8(res), _chunk_info) => {
+            DecodingResult::U8(res) => {
                 let sum: u64 = res.into_iter().map(<u64>::from).sum();
                 assert_eq!(sum, sums[tile as usize]);
             }

@@ -261,23 +261,32 @@ pub enum ChunkType {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// ChunkInfo describes the properties of a chunk (either tile or strip).
 pub struct ChunkInfo {
-    /// Width of the chunk as specified (includes potential padding)
+    /// Width of the chunk as specified (includes potential padding). This has the same
+    /// value for all chunks in the image.
     pub chunk_width: usize,
+    /// Height/Length of the chunk as specified (includes potential padding). This has
+    /// the same value for all chunks in the image.
     pub chunk_height: usize,
 
-    /// Width of the data (excluding potential padding)
+    /// Width of the data (excluding potential padding). This can take different values
+    /// on the right column of the image due to padding.
     pub data_width: usize,
+    /// Height/Length of the data (excluding potential padding). This can take different values
+    /// on the bottom row of the image due to padding.
     pub data_height: usize,
 }
 
 impl ChunkInfo {
     #[inline]
+    /// Returns the amount of padding (pixles) on the right-side of the chunk.
     pub fn padding_right(&self) -> usize {
         self.chunk_width - self.data_width
     }
 
     #[inline]
+    /// Returns the amount of padding (pixles) on the bottom-side of the chunk.
     pub fn padding_down(&self) -> usize {
         self.chunk_height - self.data_height
     }
@@ -1095,9 +1104,9 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Decompresses the strip into the supplied buffer.
-    fn expand_strip<'a>(
+    fn expand_strip(
         &mut self,
-        mut buffer: DecodingBuffer<'a>,
+        mut buffer: DecodingBuffer,
         offset: u64,
         length: u64,
     ) -> TiffResult<()> {
@@ -1478,8 +1487,10 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Read a single strip from the image and return it as a Vector
-    pub fn read_strip(&mut self) -> TiffResult<(DecodingResult, ChunkInfo)> {
-        self.read_strip_at(self.current_chunk)
+    pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
+        let result = self.read_strip_at(self.current_chunk)?;
+
+        Ok(result.0)
     }
 
     pub fn read_strip_at(&mut self, strip_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
@@ -1496,12 +1507,12 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Read a single tile from the image and return it as a Vector
-    pub fn read_tile(&mut self) -> TiffResult<(DecodingResult, ChunkInfo)> {
-        let result = self.read_tile_at(self.current_chunk);
+    pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
+        let result = self.read_tile_at(self.current_chunk)?;
 
         self.current_chunk += 1;
 
-        result
+        Ok(result.0)
     }
 
     pub fn read_tile_at(&mut self, tile_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
