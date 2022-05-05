@@ -1,12 +1,15 @@
 use super::ifd::{Directory, Value};
-use super::stream::{add_app14segment, JpegTagApp14Transform};
+use super::stream::{
+    add_app14segment, ByteOrder, DeflateReader, JpegReader, JpegTagApp14Transform, LZWReader,
+    PackBitsReader,
+};
 use super::tag_reader::TagReader;
-use super::Limits;
 use super::{stream::SmartReader, ChunkType};
+use super::{DecodingBuffer, Limits};
 use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag};
-use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 use std::convert::{TryFrom, TryInto};
-use std::io::{Read, Seek};
+use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -19,7 +22,6 @@ pub(crate) struct StripDecodeState {
 pub(crate) struct TileAttributes {
     pub image_width: usize,
     pub image_height: usize,
-    pub samples_per_pixel: usize,
 
     pub tile_width: usize,
     pub tile_length: usize,
@@ -37,24 +39,6 @@ impl TileAttributes {
     }
     fn padding_down(&self) -> usize {
         self.tile_length - self.image_height % self.tile_length
-    }
-    pub fn row_samples(&self) -> usize {
-        self.tile_width * self.samples_per_pixel
-    }
-    pub fn tile_samples(&self) -> usize {
-        self.tile_length * self.tile_width * self.samples_per_pixel
-    }
-    fn tile_strip_samples(&self) -> usize {
-        (self.tile_samples() * self.tiles_across())
-            - (self.padding_right() * self.tile_length * self.samples_per_pixel)
-    }
-
-    /// Returns the tile offset in the result buffer, counted in samples
-    pub fn get_offset(&self, tile: usize) -> usize {
-        let row = tile / self.tiles_across();
-        let column = tile % self.tiles_across();
-
-        (row * self.tile_strip_samples()) + (column * self.row_samples())
     }
 
     pub fn get_padding(&self, tile: usize) -> (usize, usize) {
@@ -248,7 +232,6 @@ impl Image {
                 tile_attributes = Some(TileAttributes {
                     image_width: usize::try_from(width)?,
                     image_height: usize::try_from(height)?,
-                    samples_per_pixel: bits_per_sample.len(),
                     tile_width,
                     tile_length,
                 });
@@ -294,5 +277,213 @@ impl Image {
             chunk_offsets,
             chunk_bytes,
         })
+    }
+
+    pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
+        match self.photometric_interpretation {
+            PhotometricInterpretation::RGB => match self.bits_per_sample[..] {
+                [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
+                [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
+                // FIXME: We should _ignore_ other components. In particular:
+                // > Beware of extra components. Some TIFF files may have more components per pixel
+                // than you think. A Baseline TIFF reader must skip over them gracefully,using the
+                // values of the SamplesPerPixel and BitsPerSample fields.
+                // > -- TIFF 6.0 Specification, Section 7, Additional Baseline requirements.
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        self.bits_per_sample.clone(),
+                    ),
+                )),
+            },
+            PhotometricInterpretation::CMYK => match self.bits_per_sample[..] {
+                [c, m, y, k] if [c, c, c] == [m, y, k] => Ok(ColorType::CMYK(c)),
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        self.bits_per_sample.clone(),
+                    ),
+                )),
+            },
+            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
+                if self.bits_per_sample.len() == 1 =>
+            {
+                Ok(ColorType::Gray(self.bits_per_sample[0]))
+            }
+
+            // TODO: this is bad we should not fail at this point
+            _ => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::InterpretationWithBits(
+                    self.photometric_interpretation,
+                    self.bits_per_sample.clone(),
+                ),
+            )),
+        }
+    }
+
+    fn create_reader<'r, R: 'r + Read>(
+        reader: R,
+        compression_method: CompressionMethod,
+        compressed_length: u64,
+        jpeg_tables: Option<Arc<Vec<u8>>>,
+    ) -> TiffResult<Box<dyn Read + 'r>> {
+        Ok(match compression_method {
+            CompressionMethod::None => Box::new(reader),
+            CompressionMethod::LZW => {
+                Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
+            }
+            CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
+            CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
+                Box::new(DeflateReader::new(reader))
+            }
+            CompressionMethod::ModernJPEG => {
+                if jpeg_tables.is_some() && compressed_length < 2 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
+                    ));
+                }
+
+                let jpeg_reader = JpegReader::new(reader, compressed_length, jpeg_tables)?;
+                let mut decoder = jpeg::Decoder::new(jpeg_reader);
+                let data = decoder.decode().unwrap();
+
+                Box::new(Cursor::new(data))
+            }
+            method => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedCompressionMethod(method),
+                ))
+            }
+        })
+    }
+
+    pub(crate) fn chunk_file_range(&self, chunk: usize) -> TiffResult<(u64, u64)> {
+        let file_offset = self.chunk_offsets.get(chunk).ok_or(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ))?;
+
+        let compressed_bytes = self.chunk_bytes.get(chunk).ok_or(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ))?;
+
+        Ok((*file_offset, *compressed_bytes))
+    }
+
+    pub(crate) fn chunk_dimensions(&self) -> TiffResult<(usize, usize)> {
+        match self.chunk_type {
+            ChunkType::Strip => {
+                let width = usize::try_from(self.width)?;
+                let strip_attrs = self.strip_decoder.as_ref().unwrap();
+                Ok((width, usize::try_from(strip_attrs.rows_per_strip)?))
+            }
+            ChunkType::Tile => {
+                let tile_attrs = self.tile_attributes.as_ref().unwrap();
+                Ok((tile_attrs.tile_width, tile_attrs.tile_length))
+            }
+        }
+    }
+
+    pub(crate) fn expand_chunk(
+        &self,
+        reader: impl Read,
+        mut buffer: DecodingBuffer,
+        output_width: usize,
+        byte_order: ByteOrder,
+        chunk: usize,
+    ) -> TiffResult<()> {
+        // Validate that the provided buffer is of the expected type.
+        let color_type = self.colortype()?;
+        match (color_type, &buffer) {
+            (ColorType::RGB(n), _)
+            | (ColorType::RGBA(n), _)
+            | (ColorType::CMYK(n), _)
+            | (ColorType::Gray(n), _)
+                if usize::from(n) == buffer.byte_len() * 8 => {}
+            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n <= 8 => {}
+            (type_, _) => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedColorType(type_),
+                ))
+            }
+        }
+
+        let compressed_bytes = self.chunk_bytes.get(chunk).ok_or(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ))?;
+
+        let byte_len = buffer.byte_len();
+        let compression_method = self.compression_method;
+        let photometric_interpretation = self.photometric_interpretation;
+        let predictor = self.predictor;
+        let samples = self.bits_per_sample.len();
+
+        let padding;
+        let chunk_dimensions;
+        match self.chunk_type {
+            ChunkType::Strip => {
+                let width = usize::try_from(self.width)?;
+                let height = usize::try_from(self.height)?;
+                let strip_attrs = self.strip_decoder.as_ref().unwrap();
+                chunk_dimensions = (width, usize::try_from(strip_attrs.rows_per_strip)?);
+                padding = (0, (chunk_dimensions.1 * (chunk + 1)).max(height) - height);
+            }
+            ChunkType::Tile => {
+                let tile_attrs = self.tile_attributes.as_ref().unwrap();
+                padding = tile_attrs.get_padding(chunk);
+                chunk_dimensions = (tile_attrs.tile_width, tile_attrs.tile_length);
+            }
+        }
+
+        let jpeg_tables = self.jpeg_tables.clone();
+        let mut reader =
+            Self::create_reader(reader, compression_method, *compressed_bytes, jpeg_tables)?;
+
+        if output_width == chunk_dimensions.0 && padding.0 == 0 {
+            let total_samples = chunk_dimensions.0 * (chunk_dimensions.1 - padding.1) * samples;
+            let tile = &mut buffer.as_bytes_mut()[..total_samples * byte_len];
+            reader.read_exact(tile)?;
+
+            super::fix_endianness(&mut buffer.subrange(0..total_samples), byte_order);
+            if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
+            }
+        } else {
+            for row in 0..(chunk_dimensions.1 - padding.1) {
+                let row_start = row * output_width * samples;
+                let row_end = row_start + (chunk_dimensions.0 - padding.0) * samples;
+
+                let row = &mut buffer.as_bytes_mut()[(row_start * byte_len)..(row_end * byte_len)];
+                reader.read_exact(row)?;
+
+                // Skip horizontal padding
+                if padding.0 > 0 {
+                    let len = u64::try_from(padding.0 * samples * byte_len)?;
+                    io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
+                }
+
+                super::fix_endianness(&mut buffer.subrange(row_start..row_end), byte_order);
+                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    super::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
+                }
+            }
+        }
+
+        match predictor {
+            Predictor::None => {}
+            Predictor::Horizontal => {
+                super::rev_hpredict(
+                    buffer,
+                    (
+                        u32::try_from(chunk_dimensions.0 - padding.0)?,
+                        u32::try_from(chunk_dimensions.1 - padding.1)?,
+                    ),
+                    output_width,
+                    color_type,
+                )?;
+            }
+            Predictor::__NonExhaustive => unreachable!(),
+        }
+
+        Ok(())
     }
 }
