@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
-use std::{cmp, ops::Range};
+use std::ops::Range;
 
 use crate::{
     bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 
 use self::ifd::Directory;
-use self::image::Image;
+use self::image::{ChunkInfo, Image};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
 };
@@ -239,39 +239,6 @@ impl<'a> DecodingBuffer<'a> {
 pub enum ChunkType {
     Strip,
     Tile,
-}
-
-#[derive(Debug)]
-#[non_exhaustive]
-/// ChunkInfo describes the properties of a chunk (either tile or strip).
-pub struct ChunkInfo {
-    /// Width of the chunk as specified (includes potential padding). This has the same
-    /// value for all chunks in the image.
-    pub chunk_width: usize,
-    /// Height/Length of the chunk as specified (includes potential padding). This has
-    /// the same value for all chunks in the image.
-    pub chunk_height: usize,
-
-    /// Width of the data (excluding potential padding). This can take different values
-    /// on the right column of the image due to padding.
-    pub data_width: usize,
-    /// Height/Length of the data (excluding potential padding). This can take different values
-    /// on the bottom row of the image due to padding.
-    pub data_height: usize,
-}
-
-impl ChunkInfo {
-    #[inline]
-    /// Returns the amount of padding (pixles) on the right-side of the chunk.
-    pub fn padding_right(&self) -> usize {
-        self.chunk_width - self.data_width
-    }
-
-    #[inline]
-    /// Returns the amount of padding (pixles) on the bottom-side of the chunk.
-    pub fn padding_down(&self) -> usize {
-        self.chunk_height - self.data_height
-    }
 }
 
 /// Decoding limits
@@ -1095,12 +1062,8 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
 
-        let chunk_info = self
-            .chunk_info(index)
-            .ok_or(TiffFormatError::InvalidChunkIndex(index))?;
         let offset = self.image.chunk_file_range(self.current_chunk)?.0;
         self.goto_offset_u64(offset)?;
-        let chunk_info = self.chunk_info(index).ok_or(TiffError::IntSizeError)?;
 
         let byte_order = self.reader.byte_order;
         let output_width = usize::try_from(self.image().width)?;
@@ -1119,50 +1082,24 @@ impl<R: Read + Seek> Decoder<R> {
 
     fn read_tile_to_buffer(
         &mut self,
-        result: &mut DecodingBuffer,
+        mut buffer: DecodingBuffer,
         tile_index: usize,
         output_width: usize,
     ) -> TiffResult<()> {
-        let file_offset = *self
-            .image()
-            .chunk_offsets
-            .get(tile_index)
-            .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
+        self.check_chunk_type(ChunkType::Tile)?;
 
-        let compressed_bytes = *self
-            .image()
-            .chunk_bytes
-            .get(tile_index)
-            .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
+        let offset = self.image.chunk_file_range(tile_index)?.0;
+        self.goto_offset_u64(offset)?;
 
-        // Return the same error as above if the chunk doesn't exist
-        let chunk_info = self
-            .chunk_info(tile_index)
-            .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
+        let byte_order = self.reader.byte_order;
 
-        self.expand_tile(
-            result.copy(),
-            file_offset,
-            compressed_bytes,
-            &chunk_info,
+        self.image.expand_chunk(
+            &mut self.reader,
+            buffer.copy(),
             output_width,
+            byte_order,
+            tile_index,
         )?;
-
-        match self.image().predictor {
-            Predictor::None => {}
-            Predictor::Horizontal => {
-                rev_hpredict(
-                    result.copy(),
-                    (
-                        u32::try_from(chunk_info.data_width)?,
-                        u32::try_from(chunk_info.data_height)?,
-                    ),
-                    output_width,
-                    self.colortype()?,
-                )?;
-            }
-            Predictor::__NonExhaustive => unreachable!(),
-        }
 
         Ok(())
     }
@@ -1238,6 +1175,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.check_chunk_type(ChunkType::Strip)?;
 
         let chunk_info = self
+            .image()
             .chunk_info(strip_index)
             .ok_or(TiffFormatError::InvalidChunkIndex(strip_index))?;
 
@@ -1267,12 +1205,13 @@ impl<R: Read + Seek> Decoder<R> {
         self.check_chunk_type(ChunkType::Tile)?;
 
         let chunk_info = self
+            .image()
             .chunk_info(tile_index)
             .ok_or(TiffFormatError::InvalidChunkIndex(tile_index))?;
 
         let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
 
-        self.read_tile_to_buffer(&mut result.as_buffer(0), tile_index, chunk_info.data_width)?;
+        self.read_tile_to_buffer(result.as_buffer(0), tile_index, chunk_info.data_width)?;
 
         Ok((result, chunk_info))
     }

@@ -62,6 +62,39 @@ impl TileAttributes {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
+/// ChunkInfo describes the properties of a chunk (either tile or strip).
+pub struct ChunkInfo {
+    /// Width of the chunk as specified (includes potential padding). This has the same
+    /// value for all chunks in the image.
+    pub chunk_width: usize,
+    /// Height/Length of the chunk as specified (includes potential padding). This has
+    /// the same value for all chunks in the image.
+    pub chunk_height: usize,
+
+    /// Width of the data (excluding potential padding). This can take different values
+    /// on the right column of the image due to padding.
+    pub data_width: usize,
+    /// Height/Length of the data (excluding potential padding). This can take different values
+    /// on the bottom row of the image due to padding.
+    pub data_height: usize,
+}
+
+impl ChunkInfo {
+    #[inline]
+    /// Returns the amount of padding (pixles) on the right-side of the chunk.
+    pub fn padding_right(&self) -> usize {
+        self.chunk_width - self.data_width
+    }
+
+    #[inline]
+    /// Returns the amount of padding (pixles) on the bottom-side of the chunk.
+    pub fn padding_down(&self) -> usize {
+        self.chunk_height - self.data_height
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Image {
     pub ifd: Option<Directory>,
     pub width: u32,
@@ -383,13 +416,54 @@ impl Image {
         }
     }
 
+    pub(crate) fn chunk_info(&self, chunk_index: usize) -> Option<ChunkInfo> {
+        match &self.chunk_type {
+            ChunkType::Strip => {
+                let rows_per_strip = self.strip_decoder.as_ref()?.rows_per_strip as usize;
+
+                let sized_width = self.width as usize;
+                let sized_height = self.height as usize;
+
+                let strip_height_without_padding = chunk_index
+                    .checked_mul(rows_per_strip)
+                    .and_then(|x| sized_height.checked_sub(x))?;
+
+                // Ignore potential vertical padding on the bottommost strip
+                let strip_height = rows_per_strip.min(strip_height_without_padding);
+
+                Some(ChunkInfo {
+                    chunk_width: sized_width,
+                    chunk_height: rows_per_strip,
+
+                    data_width: sized_width,
+                    data_height: strip_height,
+                })
+            }
+            ChunkType::Tile => {
+                let tile_attrs = self.tile_attributes.as_ref()?;
+                let (padding_right, padding_down) = tile_attrs.get_padding(chunk_index);
+
+                let tile_width = tile_attrs.tile_width - padding_right;
+                let tile_length = tile_attrs.tile_length - padding_down;
+
+                Some(ChunkInfo {
+                    chunk_width: tile_attrs.tile_width,
+                    chunk_height: tile_attrs.tile_length,
+
+                    data_width: tile_width,
+                    data_height: tile_length,
+                })
+            }
+        }
+    }
+
     pub(crate) fn expand_chunk(
         &self,
         reader: impl Read,
         mut buffer: DecodingBuffer,
         output_width: usize,
         byte_order: ByteOrder,
-        chunk: usize,
+        chunk_index: usize,
     ) -> TiffResult<()> {
         // Validate that the provided buffer is of the expected type.
         let color_type = self.colortype()?;
@@ -407,9 +481,12 @@ impl Image {
             }
         }
 
-        let compressed_bytes = self.chunk_bytes.get(chunk).ok_or(TiffError::FormatError(
-            TiffFormatError::InconsistentSizesEncountered,
-        ))?;
+        let compressed_bytes = self
+            .chunk_bytes
+            .get(chunk_index)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
 
         let byte_len = buffer.byte_len();
         let compression_method = self.compression_method;
@@ -417,29 +494,16 @@ impl Image {
         let predictor = self.predictor;
         let samples = self.bits_per_sample.len();
 
-        let padding;
-        let chunk_dimensions;
-        match self.chunk_type {
-            ChunkType::Strip => {
-                let width = usize::try_from(self.width)?;
-                let height = usize::try_from(self.height)?;
-                let strip_attrs = self.strip_decoder.as_ref().unwrap();
-                chunk_dimensions = (width, usize::try_from(strip_attrs.rows_per_strip)?);
-                padding = (0, (chunk_dimensions.1 * (chunk + 1)).max(height) - height);
-            }
-            ChunkType::Tile => {
-                let tile_attrs = self.tile_attributes.as_ref().unwrap();
-                padding = tile_attrs.get_padding(chunk);
-                chunk_dimensions = (tile_attrs.tile_width, tile_attrs.tile_length);
-            }
-        }
+        let chunk_info = self.chunk_info(chunk_index).ok_or(TiffError::FormatError(
+            TiffFormatError::InvalidChunkIndex(chunk_index),
+        ))?;
 
         let jpeg_tables = self.jpeg_tables.clone();
         let mut reader =
             Self::create_reader(reader, compression_method, *compressed_bytes, jpeg_tables)?;
 
-        if output_width == chunk_dimensions.0 && padding.0 == 0 {
-            let total_samples = chunk_dimensions.0 * (chunk_dimensions.1 - padding.1) * samples;
+        if output_width == chunk_info.data_width && chunk_info.padding_right() == 0 {
+            let total_samples = chunk_info.data_width * chunk_info.data_height * samples;
             let tile = &mut buffer.as_bytes_mut()[..total_samples * byte_len];
             reader.read_exact(tile)?;
 
@@ -448,16 +512,16 @@ impl Image {
                 super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
             }
         } else {
-            for row in 0..(chunk_dimensions.1 - padding.1) {
+            for row in 0..chunk_info.data_height {
                 let row_start = row * output_width * samples;
-                let row_end = row_start + (chunk_dimensions.0 - padding.0) * samples;
+                let row_end = row_start + chunk_info.data_width * samples;
 
                 let row = &mut buffer.as_bytes_mut()[(row_start * byte_len)..(row_end * byte_len)];
                 reader.read_exact(row)?;
 
                 // Skip horizontal padding
-                if padding.0 > 0 {
-                    let len = u64::try_from(padding.0 * samples * byte_len)?;
+                if chunk_info.padding_right() > 0 {
+                    let len = u64::try_from(chunk_info.padding_right() * samples * byte_len)?;
                     io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
                 }
 
@@ -474,8 +538,8 @@ impl Image {
                 super::rev_hpredict(
                     buffer,
                     (
-                        u32::try_from(chunk_dimensions.0 - padding.0)?,
-                        u32::try_from(chunk_dimensions.1 - padding.1)?,
+                        u32::try_from(chunk_info.data_width)?,
+                        u32::try_from(chunk_info.data_height)?,
                     ),
                     output_width,
                     color_type,
