@@ -241,39 +241,6 @@ pub enum ChunkType {
     Tile,
 }
 
-#[derive(Debug)]
-#[non_exhaustive]
-/// ChunkInfo describes the properties of a chunk (either tile or strip).
-pub struct ChunkInfo {
-    /// Width of the chunk as specified (includes potential padding). This has the same
-    /// value for all chunks in the image.
-    pub chunk_width: usize,
-    /// Height/Length of the chunk as specified (includes potential padding). This has
-    /// the same value for all chunks in the image.
-    pub chunk_height: usize,
-
-    /// Width of the data (excluding potential padding). This can take different values
-    /// on the right column of the image due to padding.
-    pub data_width: usize,
-    /// Height/Length of the data (excluding potential padding). This can take different values
-    /// on the bottom row of the image due to padding.
-    pub data_height: usize,
-}
-
-impl ChunkInfo {
-    #[inline]
-    /// Returns the amount of padding (pixles) on the right-side of the chunk.
-    pub fn padding_right(&self) -> usize {
-        self.chunk_width - self.data_width
-    }
-
-    #[inline]
-    /// Returns the amount of padding (pixles) on the bottom-side of the chunk.
-    pub fn padding_down(&self) -> usize {
-        self.chunk_height - self.data_height
-    }
-}
-
 /// Decoding limits
 #[derive(Clone, Debug)]
 pub struct Limits {
