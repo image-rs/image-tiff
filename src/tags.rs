@@ -214,6 +214,7 @@ tags! {
 pub enum Predictor(u16) {
     None = 1,
     Horizontal = 2,
+    FloatingPoint = 3,
 }
 }
 

@@ -365,6 +365,36 @@ fn rev_hpredict_nsamp<T: Copy + Wrapping>(image: &mut [T], samples: usize) {
     }
 }
 
+pub fn fp_predict_f32(input: &mut [u8], output: &mut [f32], samples: usize) {
+    rev_hpredict_nsamp(input, samples);
+    for i in 0..output.len() {
+        // TODO: use f32::from_be_bytes() when we can (version 1.40)
+        output[i] = f32::from_bits(u32::from_be_bytes([
+            input[input.len() / 4 * 0 + i],
+            input[input.len() / 4 * 1 + i],
+            input[input.len() / 4 * 2 + i],
+            input[input.len() / 4 * 3 + i],
+        ]));
+    }
+}
+
+pub fn fp_predict_f64(input: &mut [u8], output: &mut [f64], samples: usize) {
+    rev_hpredict_nsamp(input, samples);
+    for i in 0..output.len() {
+        // TODO: use f64::from_be_bytes() when we can (version 1.40)
+        output[i] = f64::from_bits(u64::from_be_bytes([
+            input[input.len() / 8 * 0 + i],
+            input[input.len() / 8 * 1 + i],
+            input[input.len() / 8 * 2 + i],
+            input[input.len() / 8 * 3 + i],
+            input[input.len() / 8 * 4 + i],
+            input[input.len() / 8 * 5 + i],
+            input[input.len() / 8 * 6 + i],
+            input[input.len() / 8 * 7 + i],
+        ]));
+    }
+}
+
 fn fix_endianness_and_predict(
     mut image: DecodingBuffer,
     samples: usize,
@@ -387,6 +417,14 @@ fn fix_endianness_and_predict(
                 DecodingBuffer::I32(buf) => rev_hpredict_nsamp(buf, samples),
                 DecodingBuffer::I64(buf) => rev_hpredict_nsamp(buf, samples),
                 DecodingBuffer::F32(_) | DecodingBuffer::F64(_) => unreachable!(),
+            }
+        }
+        Predictor::FloatingPoint => {
+            let mut buffer_copy = image.as_bytes_mut().to_vec();
+            match image {
+                DecodingBuffer::F32(buf) => fp_predict_f32(&mut buffer_copy, buf, samples),
+                DecodingBuffer::F64(buf) => fp_predict_f64(&mut buffer_copy, buf, samples),
+                _ => unreachable!(),
             }
         }
         Predictor::__NonExhaustive => unreachable!(),

@@ -4,8 +4,8 @@ use super::stream::{
     PackBitsReader,
 };
 use super::tag_reader::TagReader;
+use super::{fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
 use super::{stream::SmartReader, ChunkType};
-use super::{DecodingBuffer, Limits};
 use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag};
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 use std::convert::{TryFrom, TryInto};
@@ -406,6 +406,11 @@ impl Image {
                         TiffUnsupportedError::HorizontalPredictor(color_type),
                     ))
                 }
+                Predictor::FloatingPoint => {
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::FloatingPointPredictor(color_type),
+                    ));
+                }
                 Predictor::__NonExhaustive => unreachable!(),
             },
             (type_, _) => {
@@ -421,6 +426,13 @@ impl Image {
             | (Predictor::Horizontal, DecodingBuffer::F64(_)) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::HorizontalPredictor(color_type),
+                ));
+            }
+            (Predictor::FloatingPoint, DecodingBuffer::F32(_))
+            | (Predictor::FloatingPoint, DecodingBuffer::F64(_)) => {}
+            (Predictor::FloatingPoint, _) => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::FloatingPointPredictor(color_type),
                 ));
             }
             _ => {}
@@ -470,6 +482,24 @@ impl Image {
             }
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
+            }
+        } else if padding.0 > 0 && self.predictor == Predictor::FloatingPoint {
+            // The floating point predictor shuffles the padding bytes into the encoded output, so
+            // this case is handled specially when needed.
+            for row in 0..(chunk_dimensions.1 - padding.1) {
+                let row_start = row * output_width * samples;
+                let row_end = row_start + (chunk_dimensions.0 - padding.0) * samples;
+
+                let mut encoded = vec![0u8; chunk_dimensions.0 * samples * byte_len];
+                reader.read_exact(&mut encoded)?;
+                match buffer.subrange(row_start..row_end) {
+                    DecodingBuffer::F32(buf) => fp_predict_f32(&mut encoded, buf, samples),
+                    DecodingBuffer::F64(buf) => fp_predict_f64(&mut encoded, buf, samples),
+                    _ => unreachable!(),
+                }
+                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    super::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
+                }
             }
         } else {
             for row in 0..(chunk_dimensions.1 - padding.1) {
