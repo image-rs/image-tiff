@@ -359,95 +359,38 @@ impl Wrapping for i64 {
     }
 }
 
-fn rev_hpredict_nsamp<T>(
-    image: &mut [T],
-    size: (u32, u32), // Size of the block
-    img_width: usize, // Width of the image (this distinction is needed for tiles)
-    samples: usize,
-) -> TiffResult<()>
-where
-    T: Copy + Wrapping,
-{
-    let width = usize::try_from(size.0)?;
-    let height = usize::try_from(size.1)?;
-    for row in 0..height {
-        for col in samples..width * samples {
-            let prev_pixel = image[(row * img_width * samples + col - samples)];
-            let pixel = &mut image[(row * img_width * samples + col)];
-            *pixel = pixel.wrapping_add(prev_pixel);
-        }
+fn rev_hpredict_nsamp<T: Copy + Wrapping>(image: &mut [T], samples: usize) {
+    for col in samples..image.len() {
+        image[col] = image[col].wrapping_add(image[col - samples]);
     }
-    Ok(())
 }
 
-fn rev_hpredict(
-    image: DecodingBuffer,
-    size: (u32, u32),
-    img_width: usize,
-    color_type: ColorType,
-) -> TiffResult<()> {
-    // TODO: use bits_per_sample.len() after implementing type 3 predictor
-    let samples = match color_type {
-        ColorType::Gray(8) | ColorType::Gray(16) | ColorType::Gray(32) | ColorType::Gray(64) => 1,
-        ColorType::RGB(8) | ColorType::RGB(16) | ColorType::RGB(32) | ColorType::RGB(64) => 3,
-        ColorType::RGBA(8)
-        | ColorType::RGBA(16)
-        | ColorType::RGBA(32)
-        | ColorType::RGBA(64)
-        | ColorType::CMYK(8)
-        | ColorType::CMYK(16)
-        | ColorType::CMYK(32)
-        | ColorType::CMYK(64) => 4,
-        _ => {
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::HorizontalPredictor(color_type),
-            ))
+fn fix_endianness_and_predict(
+    mut image: DecodingBuffer,
+    samples: usize,
+    byte_order: ByteOrder,
+    predictor: Predictor,
+) {
+    match predictor {
+        Predictor::None => {
+            fix_endianness(&mut image, byte_order);
         }
-    };
-
-    match image {
-        DecodingBuffer::U8(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
+        Predictor::Horizontal => {
+            fix_endianness(&mut image, byte_order);
+            match image {
+                DecodingBuffer::U8(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::U16(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::U32(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::U64(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::I8(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::I16(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::I32(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::I64(buf) => rev_hpredict_nsamp(buf, samples),
+                DecodingBuffer::F32(_) | DecodingBuffer::F64(_) => unreachable!(),
+            }
         }
-        DecodingBuffer::U16(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::U32(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::U64(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::F32(_buf) => {
-            // FIXME: check how this is defined.
-            // See issue #89.
-            // rev_hpredict_nsamp(buf, size, img_width,samples)?;
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::HorizontalPredictor(color_type),
-            ));
-        }
-        DecodingBuffer::F64(_buf) => {
-            //FIXME: check how this is defined.
-            // See issue #89.
-            // rev_hpredict_nsamp(buf, size, img_width,samples)?;
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::HorizontalPredictor(color_type),
-            ));
-        }
-        DecodingBuffer::I8(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::I16(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::I32(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
-        DecodingBuffer::I64(buf) => {
-            rev_hpredict_nsamp(buf, size, img_width, samples)?;
-        }
+        Predictor::__NonExhaustive => unreachable!(),
     }
-    Ok(())
 }
 
 fn invert_colors_unsigned<T>(buffer: &mut [T], max: T)
