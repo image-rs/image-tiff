@@ -416,7 +416,9 @@ fn fix_endianness_and_predict(
                 DecodingBuffer::I16(buf) => rev_hpredict_nsamp(buf, samples),
                 DecodingBuffer::I32(buf) => rev_hpredict_nsamp(buf, samples),
                 DecodingBuffer::I64(buf) => rev_hpredict_nsamp(buf, samples),
-                DecodingBuffer::F32(_) | DecodingBuffer::F64(_) => unreachable!(),
+                DecodingBuffer::F32(_) | DecodingBuffer::F64(_) => {
+                    unreachable!("Caller should have validated arguments. Please file a bug.")
+                }
             }
         }
         Predictor::FloatingPoint => {
@@ -424,7 +426,7 @@ fn fix_endianness_and_predict(
             match image {
                 DecodingBuffer::F32(buf) => fp_predict_f32(&mut buffer_copy, buf, samples),
                 DecodingBuffer::F64(buf) => fp_predict_f64(&mut buffer_copy, buf, samples),
-                _ => unreachable!(),
+                _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
         Predictor::__NonExhaustive => unreachable!(),

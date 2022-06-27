@@ -486,11 +486,11 @@ impl Image {
         } else if padding.0 > 0 && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
+            let mut encoded = vec![0u8; chunk_dimensions.0 * samples * byte_len];
             for row in 0..(chunk_dimensions.1 - padding.1) {
                 let row_start = row * output_width * samples;
                 let row_end = row_start + (chunk_dimensions.0 - padding.0) * samples;
 
-                let mut encoded = vec![0u8; chunk_dimensions.0 * samples * byte_len];
                 reader.read_exact(&mut encoded)?;
                 match buffer.subrange(row_start..row_end) {
                     DecodingBuffer::F32(buf) => fp_predict_f32(&mut encoded, buf, samples),
