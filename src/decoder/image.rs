@@ -4,8 +4,8 @@ use super::stream::{
     PackBitsReader,
 };
 use super::tag_reader::TagReader;
+use super::{fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
 use super::{stream::SmartReader, ChunkType};
-use super::{DecodingBuffer, Limits};
 use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag};
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 use std::convert::{TryFrom, TryInto};
@@ -399,12 +399,43 @@ impl Image {
             | (ColorType::CMYK(n), _)
             | (ColorType::Gray(n), _)
                 if usize::from(n) == buffer.byte_len() * 8 => {}
-            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n <= 8 => {}
+            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n < 8 => match self.predictor {
+                Predictor::None => {}
+                Predictor::Horizontal => {
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::HorizontalPredictor(color_type),
+                    ))
+                }
+                Predictor::FloatingPoint => {
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::FloatingPointPredictor(color_type),
+                    ));
+                }
+                Predictor::__NonExhaustive => unreachable!(),
+            },
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
                 ))
             }
+        }
+
+        // Validate that the predictor is supported for the sample type.
+        match (self.predictor, &buffer) {
+            (Predictor::Horizontal, DecodingBuffer::F32(_))
+            | (Predictor::Horizontal, DecodingBuffer::F64(_)) => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::HorizontalPredictor(color_type),
+                ));
+            }
+            (Predictor::FloatingPoint, DecodingBuffer::F32(_))
+            | (Predictor::FloatingPoint, DecodingBuffer::F64(_)) => {}
+            (Predictor::FloatingPoint, _) => {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::FloatingPointPredictor(color_type),
+                ));
+            }
+            _ => {}
         }
 
         let compressed_bytes = self.chunk_bytes.get(chunk).ok_or(TiffError::FormatError(
@@ -443,9 +474,32 @@ impl Image {
             let tile = &mut buffer.as_bytes_mut()[..total_samples * byte_len];
             reader.read_exact(tile)?;
 
-            super::fix_endianness(&mut buffer.subrange(0..total_samples), byte_order);
+            for row in 0..(chunk_dimensions.1 - padding.1) {
+                let row_start = row * output_width * samples;
+                let row_end = (row + 1) * output_width * samples;
+                let row = buffer.subrange(row_start..row_end);
+                super::fix_endianness_and_predict(row, samples, byte_order, predictor);
+            }
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
+            }
+        } else if padding.0 > 0 && self.predictor == Predictor::FloatingPoint {
+            // The floating point predictor shuffles the padding bytes into the encoded output, so
+            // this case is handled specially when needed.
+            let mut encoded = vec![0u8; chunk_dimensions.0 * samples * byte_len];
+            for row in 0..(chunk_dimensions.1 - padding.1) {
+                let row_start = row * output_width * samples;
+                let row_end = row_start + (chunk_dimensions.0 - padding.0) * samples;
+
+                reader.read_exact(&mut encoded)?;
+                match buffer.subrange(row_start..row_end) {
+                    DecodingBuffer::F32(buf) => fp_predict_f32(&mut encoded, buf, samples),
+                    DecodingBuffer::F64(buf) => fp_predict_f64(&mut encoded, buf, samples),
+                    _ => unreachable!(),
+                }
+                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    super::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
+                }
             }
         } else {
             for row in 0..(chunk_dimensions.1 - padding.1) {
@@ -461,27 +515,12 @@ impl Image {
                     io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
                 }
 
-                super::fix_endianness(&mut buffer.subrange(row_start..row_end), byte_order);
+                let mut row = buffer.subrange(row_start..row_end);
+                super::fix_endianness_and_predict(row.copy(), samples, byte_order, predictor);
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
+                    super::invert_colors(&mut row, color_type);
                 }
             }
-        }
-
-        match predictor {
-            Predictor::None => {}
-            Predictor::Horizontal => {
-                super::rev_hpredict(
-                    buffer,
-                    (
-                        u32::try_from(chunk_dimensions.0 - padding.0)?,
-                        u32::try_from(chunk_dimensions.1 - padding.1)?,
-                    ),
-                    output_width,
-                    color_type,
-                )?;
-            }
-            Predictor::__NonExhaustive => unreachable!(),
         }
 
         Ok(())
