@@ -494,3 +494,13 @@ fn timeout() {
 fn test_no_rows_per_strip() {
     test_image_sum_u8("no_rows_per_strip.tiff", ColorType::RGB(8), 99448840);
 }
+
+#[test]
+fn test_predictor_3_rgb_f32() {
+    test_image_sum_f32("predictor-3-rgb-f32.tif", ColorType::RGB(32), 54004.33);
+}
+
+#[test]
+fn test_predictor_3_gray_f32() {
+    test_image_sum_f32("predictor-3-gray-f32.tif", ColorType::Gray(32), 20008.275);
+}

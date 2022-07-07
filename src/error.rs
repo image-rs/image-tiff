@@ -136,6 +136,7 @@ impl fmt::Display for TiffFormatError {
 /// stability guarantees.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TiffUnsupportedError {
+    FloatingPointPredictor(ColorType),
     HorizontalPredictor(ColorType),
     InterpretationWithBits(PhotometricInterpretation, Vec<u8>),
     UnknownInterpretation,
@@ -156,6 +157,11 @@ impl fmt::Display for TiffUnsupportedError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::TiffUnsupportedError::*;
         match *self {
+            FloatingPointPredictor(color_type) => write!(
+                fmt,
+                "Floating point predictor for {:?} is unsupported.",
+                color_type
+            ),
             HorizontalPredictor(color_type) => write!(
                 fmt,
                 "Horizontal predictor for {:?} is unsupported.",
