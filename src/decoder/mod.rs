@@ -1042,6 +1042,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.read_image()
     }
 
+    #[deprecated = "Use read_chunk_to_buffer instead"]
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
 
@@ -1063,6 +1064,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    #[deprecated = "Use read_chunk_to_buffer instead"]
     fn read_tile_to_buffer(
         &mut self,
         mut buffer: DecodingBuffer,
@@ -1071,6 +1073,28 @@ impl<R: Read + Seek> Decoder<R> {
     ) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Tile)?;
 
+        let offset = self.image.chunk_file_range(tile_index)?.0;
+        self.goto_offset_u64(offset)?;
+
+        let byte_order = self.reader.byte_order;
+
+        self.image.expand_chunk(
+            &mut self.reader,
+            buffer.copy(),
+            output_width,
+            byte_order,
+            tile_index,
+        )?;
+
+        Ok(())
+    }
+
+    fn read_chunk_to_buffer(
+        &mut self,
+        mut buffer: DecodingBuffer,
+        tile_index: usize,
+        output_width: usize,
+    ) -> TiffResult<()> {
         let offset = self.image.chunk_file_range(tile_index)?.0;
         self.goto_offset_u64(offset)?;
 
@@ -1146,6 +1170,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// may change at a future date to reflect this.
     ///
     /// `read_strip_at` can be used to get both the strip data and the strip size.
+    ///
+    #[deprecated = "Use read_chunk instead"]
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
         let result = self.read_strip_at(self.current_chunk)?;
 
@@ -1154,6 +1180,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Read the specified strip (at index `strip_index`) and return the binary data as a Vector and
     /// `ChunkInfo` describing the size of the strip.
+    ///
+    #[deprecated = "Use read_chunk instead"]
     pub fn read_strip_at(&mut self, strip_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
         self.check_chunk_type(ChunkType::Strip)?;
 
@@ -1174,6 +1202,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// expected tile size. This interface may change at a future date to reflect this.
     ///
     /// `read_tile_at` can be used to get both the tile data and the tile size.
+    #[deprecated = "Use read_chunk instead"]
     pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
         let result = self.read_tile_at(self.current_chunk)?;
 
@@ -1184,6 +1213,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Read the specified tile (at index `tile_index`) and return the binary data as a Vector and
     /// `ChunkInfo` describing the size of the tile.
+    #[deprecated = "Use read_chunk_at instead"]
     pub fn read_tile_at(&mut self, tile_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
         self.check_chunk_type(ChunkType::Tile)?;
 
@@ -1195,6 +1225,35 @@ impl<R: Read + Seek> Decoder<R> {
         let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
 
         self.read_tile_to_buffer(result.as_buffer(0), tile_index, chunk_info.data_width)?;
+
+        Ok((result, chunk_info))
+    }
+
+    /// Read a single chunk from the image and return it as a Vector. This method does not return
+    /// information on the size of the chunk read and so the caller must take care of chunks on the
+    /// rightmost column and the bottommost row in the image as the data read may be less than the
+    /// expected chunk size. This interface may change at a future date to reflect this.
+    ///
+    /// `read_chunk_at` can be used to get both the chunk data and the tile size.
+    pub fn read_chunk(&mut self) -> TiffResult<DecodingResult> {
+        let result = self.read_chunk_at(self.current_chunk)?;
+
+        self.current_chunk += 1;
+
+        Ok(result.0)
+    }
+
+    /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector and
+    /// `ChunkInfo` describing the size of the chunk.
+    pub fn read_chunk_at(&mut self, chunk_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
+        let chunk_info = self
+            .image()
+            .chunk_info(chunk_index)
+            .ok_or(TiffFormatError::InvalidChunkIndex(chunk_index))?;
+
+        let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
+
+        self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, chunk_info.data_width)?;
 
         Ok((result, chunk_info))
     }

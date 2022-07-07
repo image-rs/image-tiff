@@ -512,9 +512,12 @@ impl Image {
             _ => {}
         }
 
-        let compressed_bytes = self.chunk_bytes.get(chunk).ok_or(TiffError::FormatError(
-            TiffFormatError::InconsistentSizesEncountered,
-        ))?;
+        let compressed_bytes = self
+            .chunk_bytes
+            .get(chunk_index)
+            .ok_or(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ))?;
 
         let byte_len = buffer.byte_len();
         let compression_method = self.compression_method;
@@ -535,7 +538,7 @@ impl Image {
             let tile = &mut buffer.as_bytes_mut()[..total_samples * byte_len];
             reader.read_exact(tile)?;
 
-            for row in 0..(chunk_dimensions.1 - padding.1) {
+            for row in 0..chunk_info.data_height {
                 let row_start = row * output_width * samples;
                 let row_end = (row + 1) * output_width * samples;
                 let row = buffer.subrange(row_start..row_end);
@@ -544,13 +547,13 @@ impl Image {
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
             }
-        } else if padding.0 > 0 && self.predictor == Predictor::FloatingPoint {
+        } else if chunk_info.padding_right() > 0 && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
-            let mut encoded = vec![0u8; chunk_dimensions.0 * samples * byte_len];
-            for row in 0..(chunk_dimensions.1 - padding.1) {
+            let mut encoded = vec![0u8; chunk_info.chunk_width * samples * byte_len];
+            for row in 0..chunk_info.data_height {
                 let row_start = row * output_width * samples;
-                let row_end = row_start + (chunk_dimensions.0 - padding.0) * samples;
+                let row_end = row_start + chunk_info.data_width * samples;
 
                 reader.read_exact(&mut encoded)?;
                 match buffer.subrange(row_start..row_end) {
