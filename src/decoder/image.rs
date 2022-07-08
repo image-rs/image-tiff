@@ -7,7 +7,7 @@ use super::tag_reader::TagReader;
 use super::{fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
 use super::{stream::SmartReader, ChunkType};
 use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag};
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
+use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 use std::convert::{TryFrom, TryInto};
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
@@ -419,7 +419,7 @@ impl Image {
     pub(crate) fn chunk_info(&self, chunk_index: usize) -> Option<ChunkInfo> {
         match &self.chunk_type {
             ChunkType::Strip => {
-                let rows_per_strip = self.strip_decoder.as_ref()?.rows_per_strip as usize;
+                let rows_per_strip = self.strip_decoder.as_ref().unwrap().rows_per_strip as usize;
 
                 let sized_width = self.width as usize;
                 let sized_height = self.height as usize;
@@ -440,7 +440,7 @@ impl Image {
                 })
             }
             ChunkType::Tile => {
-                let tile_attrs = self.tile_attributes.as_ref()?;
+                let tile_attrs = self.tile_attributes.as_ref().unwrap();
                 let (padding_right, padding_down) = tile_attrs.get_padding(chunk_index);
 
                 let tile_width = tile_attrs.tile_width - padding_right;
@@ -525,8 +525,8 @@ impl Image {
         let predictor = self.predictor;
         let samples = self.bits_per_sample.len();
 
-        let chunk_info = self.chunk_info(chunk_index).ok_or(TiffError::FormatError(
-            TiffFormatError::InvalidChunkIndex(chunk_index),
+        let chunk_info = self.chunk_info(chunk_index).ok_or(TiffError::UsageError(
+            UsageError::InvalidChunkIndex(chunk_index),
         ))?;
 
         let jpeg_tables = self.jpeg_tables.clone();
