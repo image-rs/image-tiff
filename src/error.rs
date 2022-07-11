@@ -205,7 +205,7 @@ impl fmt::Display for TiffUnsupportedError {
 #[derive(Debug)]
 pub enum UsageError {
     InvalidChunkType(ChunkType, ChunkType),
-    InvalidChunkIndex(usize),
+    InvalidChunkIndex(u32),
 }
 
 impl fmt::Display for UsageError {

@@ -301,7 +301,7 @@ where
     reader: SmartReader<R>,
     bigtiff: bool,
     limits: Limits,
-    current_chunk: usize,
+    current_chunk: u32,
     next_ifd: Option<u64>,
     ifd_offsets: Vec<u64>,
     seen_ifds: HashSet<u64>,
@@ -1064,13 +1064,13 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn read_chunk_to_buffer(
+    pub fn read_chunk_to_buffer(
         &mut self,
         mut buffer: DecodingBuffer,
-        tile_index: usize,
+        chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
-        let offset = self.image.chunk_file_range(tile_index)?.0;
+        let offset = self.image.chunk_file_range(chunk_index)?.0;
         self.goto_offset_u64(offset)?;
 
         let byte_order = self.reader.byte_order;
@@ -1080,7 +1080,7 @@ impl<R: Read + Seek> Decoder<R> {
             buffer.copy(),
             output_width,
             byte_order,
-            tile_index,
+            chunk_index,
         )?;
 
         Ok(())
@@ -1143,9 +1143,9 @@ impl<R: Read + Seek> Decoder<R> {
     /// information on the size of the strip read and so the caller must take care of the final
     /// strip in the image as the data read may be less than the expected strip size. This interface
     /// may change at a future date to reflect this.
-    #[deprecated = "Use read_chunk_at instead"]
+    #[deprecated = "Use read_chunk instead"]
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
-        let result = self.read_chunk_at(self.current_chunk)?;
+        let result = self.read_chunk(self.current_chunk)?;
 
         Ok(result.0)
     }
@@ -1154,9 +1154,9 @@ impl<R: Read + Seek> Decoder<R> {
     /// information on the size of the tile read and so the caller must take care of tiles on the
     /// rightmost column and the bottommost row in the image as the data read may be less than the
     /// expected tile size. This interface may change at a future date to reflect this.
-    #[deprecated = "Use read_chunk_at instead"]
+    #[deprecated = "Use read_chunk instead"]
     pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
-        let result = self.read_chunk_at(self.current_chunk)?;
+        let result = self.read_chunk(self.current_chunk)?;
 
         self.current_chunk += 1;
 
@@ -1165,15 +1165,22 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector and
     /// `ChunkInfo` describing the size of the chunk.
-    pub fn read_chunk_at(&mut self, chunk_index: usize) -> TiffResult<(DecodingResult, ChunkInfo)> {
+    pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<(DecodingResult, ChunkInfo)> {
         let chunk_info = self
             .image()
             .chunk_info(chunk_index)
             .ok_or(UsageError::InvalidChunkIndex(chunk_index))?;
 
-        let mut result = self.result_buffer(chunk_info.data_width, chunk_info.data_height)?;
+        let mut result = self.result_buffer(
+            chunk_info.data_width as usize,
+            chunk_info.data_height as usize,
+        )?;
 
-        self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, chunk_info.data_width)?;
+        self.read_chunk_to_buffer(
+            result.as_buffer(0),
+            chunk_index,
+            chunk_info.data_width as usize,
+        )?;
 
         Ok((result, chunk_info))
     }
@@ -1220,7 +1227,7 @@ impl<R: Read + Seek> Decoder<R> {
                 result.as_buffer(buffer_offset).copy(),
                 width,
                 byte_order,
-                chunk,
+                chunk as u32,
             )?;
         }
 
