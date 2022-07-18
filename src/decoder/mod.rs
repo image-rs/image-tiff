@@ -8,7 +8,7 @@ use crate::{
 };
 
 use self::ifd::Directory;
-use self::image::{ChunkInfo, Image};
+use self::image::Image;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
 };
@@ -1147,7 +1147,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
         let result = self.read_chunk(self.current_chunk)?;
 
-        Ok(result.0)
+        Ok(result)
     }
 
     /// Read a single tile from the image and return it as a Vector. This method does not return
@@ -1160,36 +1160,37 @@ impl<R: Read + Seek> Decoder<R> {
 
         self.current_chunk += 1;
 
-        Ok(result.0)
+        Ok(result)
     }
 
-    /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector and
-    /// `ChunkInfo` describing the size of the chunk.
-    pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<(DecodingResult, ChunkInfo)> {
-        let chunk_info = self
-            .image()
-            .chunk_info(chunk_index)
-            .ok_or(UsageError::InvalidChunkIndex(chunk_index))?;
+    /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
+    pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
+        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let mut result = self.result_buffer(
-            chunk_info.data_width as usize,
-            chunk_info.data_height as usize,
-        )?;
+        let mut result = self.result_buffer(data_dims.0 as usize, data_dims.1 as usize)?;
 
-        self.read_chunk_to_buffer(
-            result.as_buffer(0),
-            chunk_index,
-            chunk_info.data_width as usize,
-        )?;
+        self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
 
-        Ok((result, chunk_info))
+        Ok(result)
+    }
+
+    /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
+    /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
+    pub fn chunk_dimensions(&self) -> TiffResult<(u32, u32)> {
+        self.image().chunk_dimensions()
+    }
+
+    /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
+    /// minus any padding.
+    pub fn chunk_data_dimensions(&self, chunk_index: u32) -> TiffResult<(u32, u32)> {
+        self.image().chunk_data_dimensions(chunk_index)
     }
 
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        let width = usize::try_from(self.image().width)?;
-        let height = usize::try_from(self.image().height)?;
-        let mut result = self.result_buffer(width, height)?;
+        let width = self.image().width;
+        let height = self.image().height;
+        let mut result = self.result_buffer(width as usize, height as usize)?;
         if width == 0 || height == 0 {
             return Ok(result);
         }
@@ -1212,20 +1213,20 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let chunks_across = (width - 1) / chunk_dimensions.0 + 1;
-        let strip_samples = width * chunk_dimensions.1 * samples;
+        let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
+        let strip_samples = width as usize * chunk_dimensions.1 as usize * samples;
 
         for chunk in 0..self.image().chunk_offsets.len() {
             self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
 
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
-            let buffer_offset = y * strip_samples + x * chunk_dimensions.0 * samples;
+            let buffer_offset = y * strip_samples + x * chunk_dimensions.0 as usize * samples;
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
                 &mut self.reader,
                 result.as_buffer(buffer_offset).copy(),
-                width,
+                width as usize,
                 byte_order,
                 chunk as u32,
             )?;

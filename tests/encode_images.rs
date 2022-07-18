@@ -513,7 +513,7 @@ fn test_rows_per_strip() {
         for i in 0..50 {
             let img2 = [i; 2 * 100];
             match decoder.read_chunk(i as u32).unwrap() {
-                (DecodingResult::U8(data), _) => assert_eq!(&img2[..], &data[..]),
+                DecodingResult::U8(data) => assert_eq!(&img2[..], &data[..]),
                 other => panic!("Incorrect strip type {:?}", other),
             }
         }
