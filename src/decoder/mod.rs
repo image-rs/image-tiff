@@ -1176,8 +1176,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
     /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
-    pub fn chunk_dimensions(&self) -> TiffResult<(u32, u32)> {
-        self.image().chunk_dimensions()
+    pub fn chunk_dimensions(&self) -> (u32, u32) {
+        self.image().chunk_dimensions().unwrap()
     }
 
     /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
