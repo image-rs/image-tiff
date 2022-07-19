@@ -1182,8 +1182,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
     /// minus any padding.
-    pub fn chunk_data_dimensions(&self, chunk_index: u32) -> TiffResult<(u32, u32)> {
-        self.image().chunk_data_dimensions(chunk_index)
+    pub fn chunk_data_dimensions(&self, chunk_index: u32) -> (u32, u32) {
+        self.image().chunk_data_dimensions(chunk_index).expect("invalid chunk_index")
     }
 
     /// Decodes the entire image and return it as a Vector
