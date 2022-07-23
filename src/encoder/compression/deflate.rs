@@ -53,7 +53,7 @@ impl Compression for Deflate {
 impl CompressionAlgorithm for Deflate {
     fn write_to<W: Write>(&mut self, writer: &mut W, bytes: &[u8]) -> Result<u64, io::Error> {
         let mut encoder = ZlibEncoder::new(writer, self.level);
-        encoder.write_all(&bytes)?;
+        encoder.write_all(bytes)?;
         encoder.try_finish()?;
         Ok(encoder.total_out())
     }

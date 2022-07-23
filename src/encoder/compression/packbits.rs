@@ -157,7 +157,7 @@ mod tests {
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
         Packbits::default()
-            .write_to(&mut writer, &UNCOMPRESSED_DATA)
+            .write_to(&mut writer, UNCOMPRESSED_DATA)
             .unwrap();
         assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
     }
@@ -207,7 +207,7 @@ mod tests {
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
         Packbits::default()
-            .write_to(&mut writer, &TEST_DATA)
+            .write_to(&mut writer, TEST_DATA)
             .unwrap();
         assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
     }

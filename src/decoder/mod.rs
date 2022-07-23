@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
-use std::{cmp, ops::Range};
+use std::ops::Range;
 
 use crate::{
     bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -301,8 +301,9 @@ where
     reader: SmartReader<R>,
     bigtiff: bool,
     limits: Limits,
+    current_chunk: u32,
     next_ifd: Option<u64>,
-    current_chunk: usize,
+    ifd_offsets: Vec<u64>,
     seen_ifds: HashSet<u64>,
     image: Image,
 }
@@ -559,12 +560,15 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut seen_ifds = HashSet::new();
         seen_ifds.insert(*next_ifd.as_ref().unwrap());
+        let ifd_offsets = vec![*next_ifd.as_ref().unwrap()];
 
         let mut decoder = Decoder {
             reader,
             bigtiff,
             limits: Default::default(),
             next_ifd,
+            ifd_offsets,
+            seen_ifds,
             image: Image {
                 ifd: None,
                 width: 0,
@@ -583,7 +587,6 @@ impl<R: Read + Seek> Decoder<R> {
                 chunk_bytes: Vec::new(),
             },
             current_chunk: 0,
-            seen_ifds,
         };
         decoder.next_image()?;
         Ok(decoder)
@@ -606,6 +609,46 @@ impl<R: Read + Seek> Decoder<R> {
         &self.image
     }
 
+    /// Loads the IFD at the specified index in the list, if one exists
+    pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
+        // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
+        if ifd_index >= self.ifd_offsets.len() {
+            // We possibly need to load in the next IFD
+            if self.next_ifd.is_none() {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::ImageFileDirectoryNotFound,
+                ));
+            }
+
+            loop {
+                // Follow the list until we find the one we want, or we reach the end, whichever happens first
+                let (_ifd, next_ifd) = self.next_ifd()?;
+
+                if next_ifd.is_none() {
+                    break;
+                }
+
+                if ifd_index < self.ifd_offsets.len() {
+                    break;
+                }
+            }
+        }
+
+        // If the index is within the list of ifds then we can load the selected image/IFD
+        if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
+            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset)?;
+
+            self.current_chunk = 0;
+            self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+
+            Ok(())
+        } else {
+            Err(TiffError::FormatError(
+                TiffFormatError::ImageFileDirectoryNotFound,
+            ))
+        }
+    }
+
     /// Reset the decoder.
     #[deprecated = "Never should have been public. Only use Decoder::new()"]
     pub fn init(self) -> TiffResult<Decoder<R>> {
@@ -613,10 +656,7 @@ impl<R: Read + Seek> Decoder<R> {
         Self::new(reader.into_inner())
     }
 
-    /// Reads in the next image.
-    /// If there is no further image in the TIFF file a format error is returned.
-    /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
-    pub fn next_image(&mut self) -> TiffResult<()> {
+    fn next_ifd(&mut self) -> TiffResult<(Directory, Option<u64>)> {
         if self.next_ifd.is_none() {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
@@ -634,7 +674,17 @@ impl<R: Read + Seek> Decoder<R> {
                 return Err(TiffError::FormatError(TiffFormatError::CycleInOffsets));
             }
             self.next_ifd = Some(next);
+            self.ifd_offsets.push(next);
         }
+
+        Ok((ifd, next_ifd))
+    }
+
+    /// Reads in the next image.
+    /// If there is no further image in the TIFF file a format error is returned.
+    /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
+    pub fn next_image(&mut self) -> TiffResult<()> {
+        let (ifd, _next_ifd) = self.next_ifd()?;
 
         self.current_chunk = 0;
         self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
@@ -992,6 +1042,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.read_image()
     }
 
+    #[deprecated = "Use read_chunk_to_buffer instead"]
     pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
         self.check_chunk_type(ChunkType::Strip)?;
 
@@ -1009,6 +1060,28 @@ impl<R: Read + Seek> Decoder<R> {
         )?;
 
         self.current_chunk += 1;
+
+        Ok(())
+    }
+
+    pub fn read_chunk_to_buffer(
+        &mut self,
+        mut buffer: DecodingBuffer,
+        chunk_index: u32,
+        output_width: usize,
+    ) -> TiffResult<()> {
+        let offset = self.image.chunk_file_range(chunk_index)?.0;
+        self.goto_offset_u64(offset)?;
+
+        let byte_order = self.reader.byte_order;
+
+        self.image.expand_chunk(
+            &mut self.reader,
+            buffer.copy(),
+            output_width,
+            byte_order,
+            chunk_index,
+        )?;
 
         Ok(())
     }
@@ -1066,61 +1139,60 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
-    /// Read a single strip from the image and return it as a Vector
+    /// Read a single strip from the image and return it as a Vector. This method does not return
+    /// information on the size of the strip read and so the caller must take care of the final
+    /// strip in the image as the data read may be less than the expected strip size. This interface
+    /// may change at a future date to reflect this.
+    #[deprecated = "Use read_chunk instead"]
     pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
-        self.check_chunk_type(ChunkType::Strip)?;
-        let index = self.current_chunk;
-
-        let rows_per_strip =
-            usize::try_from(self.image().strip_decoder.as_ref().unwrap().rows_per_strip)?;
-
-        let strip_height = cmp::min(
-            rows_per_strip,
-            usize::try_from(self.image().height)? - index * rows_per_strip,
-        );
-
-        let mut result = self.result_buffer(usize::try_from(self.image().width)?, strip_height)?;
-        self.read_strip_to_buffer(result.as_buffer(0))?;
+        let result = self.read_chunk(self.current_chunk)?;
 
         Ok(result)
     }
 
-    /// Read a single tile from the image and return it as a Vector
+    /// Read a single tile from the image and return it as a Vector. This method does not return
+    /// information on the size of the tile read and so the caller must take care of tiles on the
+    /// rightmost column and the bottommost row in the image as the data read may be less than the
+    /// expected tile size. This interface may change at a future date to reflect this.
+    #[deprecated = "Use read_chunk instead"]
     pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
-        self.check_chunk_type(ChunkType::Tile)?;
-
-        let tile = self.current_chunk;
-
-        let tile_attrs = self.image().tile_attributes.as_ref().unwrap();
-        let (padding_right, padding_down) = tile_attrs.get_padding(tile);
-
-        let tile_width = tile_attrs.tile_width - padding_right;
-        let tile_length = tile_attrs.tile_length - padding_down;
-
-        let mut result = self.result_buffer(tile_width, tile_length)?;
-
-        let offset = self.image.chunk_file_range(tile)?.0;
-        self.goto_offset_u64(offset)?;
-
-        let byte_order = self.reader.byte_order;
-        self.image.expand_chunk(
-            &mut self.reader,
-            result.as_buffer(0),
-            tile_width,
-            byte_order,
-            tile,
-        )?;
+        let result = self.read_chunk(self.current_chunk)?;
 
         self.current_chunk += 1;
 
         Ok(result)
     }
 
+    /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
+    pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
+        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+
+        let mut result = self.result_buffer(data_dims.0 as usize, data_dims.1 as usize)?;
+
+        self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
+
+        Ok(result)
+    }
+
+    /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
+    /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
+    pub fn chunk_dimensions(&self) -> (u32, u32) {
+        self.image().chunk_dimensions().unwrap()
+    }
+
+    /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
+    /// minus any padding.
+    pub fn chunk_data_dimensions(&self, chunk_index: u32) -> (u32, u32) {
+        self.image()
+            .chunk_data_dimensions(chunk_index)
+            .expect("invalid chunk_index")
+    }
+
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        let width = usize::try_from(self.image().width)?;
-        let height = usize::try_from(self.image().height)?;
-        let mut result = self.result_buffer(width, height)?;
+        let width = self.image().width;
+        let height = self.image().height;
+        let mut result = self.result_buffer(width as usize, height as usize)?;
         if width == 0 || height == 0 {
             return Ok(result);
         }
@@ -1143,22 +1215,22 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let chunks_across = (width - 1) / chunk_dimensions.0 + 1;
-        let strip_samples = width * chunk_dimensions.1 * samples;
+        let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
+        let strip_samples = width as usize * chunk_dimensions.1 as usize * samples;
 
         for chunk in 0..self.image().chunk_offsets.len() {
             self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
 
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
-            let buffer_offset = y * strip_samples + x * chunk_dimensions.0 * samples;
+            let buffer_offset = y * strip_samples + x * chunk_dimensions.0 as usize * samples;
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
                 &mut self.reader,
                 result.as_buffer(buffer_offset).copy(),
-                width,
+                width as usize,
                 byte_order,
-                chunk,
+                chunk as u32,
             )?;
         }
 

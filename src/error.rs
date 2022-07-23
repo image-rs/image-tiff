@@ -205,6 +205,7 @@ impl fmt::Display for TiffUnsupportedError {
 #[derive(Debug)]
 pub enum UsageError {
     InvalidChunkType(ChunkType, ChunkType),
+    InvalidChunkIndex(u32),
 }
 
 impl fmt::Display for UsageError {
@@ -218,6 +219,7 @@ impl fmt::Display for UsageError {
                     expected, actual
                 )
             }
+            InvalidChunkIndex(index) => write!(fmt, "Image chunk index ({}) requested.", index),
         }
     }
 }
@@ -287,6 +289,12 @@ impl From<TiffFormatError> for TiffError {
 impl From<TiffUnsupportedError> for TiffError {
     fn from(err: TiffUnsupportedError) -> TiffError {
         TiffError::UnsupportedError(err)
+    }
+}
+
+impl From<UsageError> for TiffError {
+    fn from(err: UsageError) -> TiffError {
+        TiffError::UsageError(err)
     }
 }
 

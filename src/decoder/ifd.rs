@@ -451,8 +451,8 @@ impl Entry {
         // Case 3: There is more than one value, but it fits in the offset field.
         if value_bytes <= 4 || bigtiff && value_bytes <= 8 {
             match self.type_ {
-                Type::BYTE => return Ok(offset_to_bytes(self.count as usize, self)?),
-                Type::SBYTE => return Ok(offset_to_sbytes(self.count as usize, self)?),
+                Type::BYTE => return offset_to_bytes(self.count as usize, self),
+                Type::SBYTE => return offset_to_sbytes(self.count as usize, self),
                 Type::ASCII => {
                     let mut buf = vec![0; self.count as usize];
                     self.r(bo).read_exact(&mut buf)?;
