@@ -1,3 +1,13 @@
+# Version 0.7.3
+
+New features:
+* Allow decoder to access specific tiles by index.
+* Add support for floating point predictor.
+* Tiled jpeg file support.
+
+Changes:
+* Various refactoring and performance improvements.
+
 # Version 0.7.2
 
 New features:
