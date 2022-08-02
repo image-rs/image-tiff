@@ -4,6 +4,8 @@ use std::io;
 use std::str;
 use std::string;
 
+use jpeg::UnsupportedFeature;
+
 use crate::decoder::{ifd::Value, ChunkType};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
@@ -146,6 +148,10 @@ pub enum TiffUnsupportedError {
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),
     UnsupportedDataType,
+    UnsupportedJpegFeature(UnsupportedFeature),
+    #[doc(hidden)]
+    /// Do not match against this variant. It may get removed.
+    __NonExhaustive,
 }
 
 impl fmt::Display for TiffUnsupportedError {
@@ -191,6 +197,10 @@ impl fmt::Display for TiffUnsupportedError {
                 write!(fmt, "Unsupported planar configuration “{:?}”.", config)
             }
             UnsupportedDataType => write!(fmt, "Unsupported data type."),
+            UnsupportedJpegFeature(ref unsupported_feature) => {
+                write!(fmt, "Unsupported JPEG feature {:?}", unsupported_feature)
+            }
+            __NonExhaustive => unreachable!(),
         }
     }
 }
@@ -306,6 +316,23 @@ impl From<LzwError> for TiffError {
             LzwError::InvalidCode => TiffError::FormatError(TiffFormatError::Format(String::from(
                 "LZW compressed data corrupted",
             ))),
+        }
+    }
+}
+
+impl From<jpeg::Error> for TiffError {
+    fn from(error: jpeg::Error) -> Self {
+        match error {
+            jpeg::Error::Format(format) => {
+                TiffError::FormatError(TiffFormatError::Format(format!("JPEG format: {}", format)))
+            }
+            jpeg::Error::Unsupported(unsupported) => TiffError::UnsupportedError(
+                TiffUnsupportedError::UnsupportedJpegFeature(unsupported),
+            ),
+            jpeg::Error::Io(io_error) => TiffError::IoError(io_error),
+            jpeg::Error::Internal(internal) => {
+                panic!("According to jpeg create, this is not used, so this shouldn't be reached..")
+            }
         }
     }
 }

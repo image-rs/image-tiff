@@ -250,58 +250,6 @@ impl JpegReader {
     }
 }
 
-#[repr(u8)]
-pub(crate) enum JpegTagApp14Transform {
-    // App14TransformYCCK = 2,
-    // App14TransformYCbCr = 1,
-    App14TransformUnknown = 0,
-}
-
-pub(crate) fn add_app14segment(jpeg_tables: &mut Vec<u8>, transform: JpegTagApp14Transform) {
-    // Add JPEG Tag APP14 Adobe segment to jpeg_tables.
-    // This segment stores image encoding information for DCT filters.
-    // When `transform` value is 0 which is defined as Unknown, jpeg-decoder interpret the
-    // color-space of image as RGB(3 channels) or CMYK(4).
-    let mut app14_offset = None;
-    let mut dht_offset = None;
-    for (offset, window) in jpeg_tables.windows(2).enumerate() {
-        if window == [0xff, 0xee] {
-            app14_offset = Some(offset);
-            break;
-        }
-        if window == [0xff, 0xc4] {
-            dht_offset = Some(offset);
-        }
-    }
-    match (app14_offset, dht_offset) {
-        (Some(i), _) => {
-            jpeg_tables[i + 16] = transform as u8;
-        }
-        (None, Some(sos_offset)) => {
-            let app14segment: [u8; 16] = [
-                0xff,
-                0xee,
-                0x00,
-                0x0e,
-                0x41,
-                0x64,
-                0x6f,
-                0x62,
-                0x65,
-                0x00,
-                0x64,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                transform as u8,
-            ];
-            jpeg_tables.splice(sos_offset..sos_offset, app14segment.iter().copied());
-        }
-        (None, None) => {}
-    }
-}
-
 impl Read for JpegReader {
     // #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
