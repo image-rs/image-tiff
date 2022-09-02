@@ -1224,6 +1224,13 @@ impl<R: Read + Seek> Decoder<R> {
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
             let buffer_offset = y * strip_samples + x * chunk_dimensions.0 as usize * samples;
+            if buffer_offset * result.as_buffer(0).byte_len()
+                > result.as_buffer(0).as_bytes_mut().len()
+            {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ));
+            }
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
                 &mut self.reader,
