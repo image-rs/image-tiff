@@ -345,7 +345,14 @@ impl Image {
 
                 let jpeg_reader = JpegReader::new(reader, compressed_length, jpeg_tables)?;
                 let mut decoder = jpeg::Decoder::new(jpeg_reader);
-                let data = decoder.decode().unwrap();
+                let data = match decoder.decode() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        return Err(TiffError::FormatError(TiffFormatError::Format(
+                            e.to_string(),
+                        )))
+                    }
+                };
 
                 Box::new(Cursor::new(data))
             }
