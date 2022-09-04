@@ -98,7 +98,9 @@ impl Image {
         let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
         let height = tag_reader.require_tag(Tag::ImageLength)?.into_u32()?;
         if width == 0 || height == 0 {
-            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
         }
 
         let photometric_interpretation = tag_reader
