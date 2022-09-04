@@ -208,7 +208,11 @@ impl Image {
                 strip_decoder = Some(StripDecodeState { rows_per_strip });
                 tile_attributes = None;
 
-                if chunk_offsets.len() != chunk_bytes.len() {
+                if chunk_offsets.len() != chunk_bytes.len()
+                    || rows_per_strip == 0
+                    || u32::try_from(chunk_offsets.len())?
+                        != height.saturating_sub(1) / rows_per_strip + 1
+                {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
                     ));

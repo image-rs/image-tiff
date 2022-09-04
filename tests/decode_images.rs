@@ -380,16 +380,7 @@ fn oom() {
         0, 0, 0, 40, 0, 0, 0, 23, 1, 4, 0, 1, 0, 0, 0, 178, 48, 178, 178, 178, 178, 162, 178,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        tiff::TiffError::UnsupportedError(tiff::TiffUnsupportedError::InterpretationWithBits(
-            ..,
-        )) => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]
@@ -401,14 +392,7 @@ fn fuzzer_testcase4() {
         0, 0, 0, 40, 0, 0, 0, 23, 1, 4, 0, 1, 0, 0, 0, 48, 178, 178, 178, 0, 1, 0, 13, 13,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        tiff::TiffError::IoError(_) => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]
@@ -443,15 +427,7 @@ fn invalid_jpeg_tag_2() {
         0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 36, 73, 73, 0, 42, 36, 36, 36, 36, 0, 0, 8, 0,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        TiffError::FormatError(TiffFormatError::InvalidTagValueType(tags::Tag::JPEGTables)) => {}
-        TiffError::LimitsExceeded => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]
