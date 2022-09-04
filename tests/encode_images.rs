@@ -94,7 +94,7 @@ fn test_encode_ifd() {
     {
         let mut tiff = TiffEncoder::new(&mut data).unwrap();
         let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
-        image_encoder.write_strip(&[1]);
+        image_encoder.write_strip(&[1]).unwrap();
         let encoder = image_encoder.encoder();
 
         // Use the "reusable" tags section as per the TIFF6 spec
@@ -321,7 +321,7 @@ fn test_multiple_byte() {
     {
         let mut tiff = TiffEncoder::new(&mut data).unwrap();
         let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
-        image_encoder.write_strip(&[1]);
+        image_encoder.write_strip(&[1]).unwrap();
         let encoder = image_encoder.encoder();
 
         encoder.write_tag(Tag::Unknown(65000), &[1_u8][..]).unwrap();
@@ -362,7 +362,7 @@ fn test_signed() {
     {
         let mut tiff = TiffEncoder::new(&mut data).unwrap();
         let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
-        image_encoder.write_strip(&[1]);
+        image_encoder.write_strip(&[1]).unwrap();
         let encoder = image_encoder.encoder();
 
         //Use the "reusable" tags section as per the TIFF6 spec
