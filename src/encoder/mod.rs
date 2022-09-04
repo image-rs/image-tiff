@@ -12,7 +12,7 @@ use std::{
 
 use crate::{
     error::TiffResult,
-    tags::{CompressionMethod, ResolutionUnit, Tag},
+    tags::{CompressionMethod, ResolutionUnit, Tag}, TiffError, TiffFormatError,
 };
 
 pub mod colortype;
@@ -349,6 +349,10 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         height: u32,
         compression: D,
     ) -> TiffResult<Self> {
+        if width == 0 || height == 0 {
+            return Err(TiffError::FormatError(TiffFormatError::InconsistentSizesEncountered));
+        }
+
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
 
