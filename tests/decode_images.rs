@@ -413,9 +413,6 @@ fn fuzzer_testcase2() {
 
 #[test]
 fn invalid_jpeg_tag_2() {
-    use tiff::tags;
-    use tiff::{TiffError, TiffFormatError};
-
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 16, 0, 254, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 242, 0, 1, 4, 0, 1, 0,
         0, 0, 0, 129, 16, 0, 1, 1, 4, 0, 1, 0, 0, 0, 214, 0, 0, 248, 253, 1, 3, 0, 1, 0, 0, 0, 64,
