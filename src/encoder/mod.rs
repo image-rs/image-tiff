@@ -351,9 +351,9 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         compression: D,
     ) -> TiffResult<Self> {
         if width == 0 || height == 0 {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InvalidDimensions(width, height),
-            ));
+            return Err(TiffError::FormatError(TiffFormatError::InvalidDimensions(
+                width, height,
+            )));
         }
 
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
