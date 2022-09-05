@@ -56,6 +56,7 @@ pub enum TiffFormatError {
         actual_samples: usize,
         required_samples: usize,
     },
+    InvalidDimensions(u32, u32),
     InvalidTag,
     InvalidTagValueType(Tag),
     RequiredTagNotFound(Tag),
@@ -100,6 +101,7 @@ impl fmt::Display for TiffFormatError {
                     actual_samples, required_samples
                 )
             }
+            InvalidDimensions(width, height) => write!(fmt, "Invalid dimensions: {}x{}.", width, height),
             InvalidTag => write!(fmt, "Image contains invalid tag."),
             InvalidTagValueType(ref tag) => {
                 write!(fmt, "Tag `{:?}` did not have the expected value type.", tag)

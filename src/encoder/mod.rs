@@ -352,7 +352,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
     ) -> TiffResult<Self> {
         if width == 0 || height == 0 {
             return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
+                TiffFormatError::InvalidDimensions(width, height),
             ));
         }
 
