@@ -1,3 +1,13 @@
+# Version 0.7.4
+
+New features:
+* Creating an encoder for invalid, zero-sized images is now rejected.
+
+Fixes:
+* Fix panic, in a case where decoding jpeg encoded images did not expect the
+  jpeg decoder to return an error.
+* Fix panic by validating `rows_per_strip` better, fixing a division-by-zero.
+
 # Version 0.7.3
 
 New features:
