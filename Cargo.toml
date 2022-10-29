@@ -1,6 +1,6 @@
 [package]
 name = "tiff"
-version = "0.7.3"
+version = "0.7.4"
 authors = ["The image-rs Developers"]
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
