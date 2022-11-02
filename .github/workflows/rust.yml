@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: ["1.48", stable, beta, nightly]
+        rust: ["1.61", stable, beta, nightly]
         command: [build, test]
     steps:
     - uses: actions/checkout@v2
@@ -20,7 +20,7 @@ jobs:
     - name: test
       run: >
         cargo test --tests --benches --no-default-features --features "$FEATURES"
-      if: ${{ matrix.rust != '1.48' }}
+      if: ${{ matrix.rust != '1.61' }}
       env:
         FEATURES: ${{ matrix.features }}
   rustfmt:
