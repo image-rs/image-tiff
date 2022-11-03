@@ -10,7 +10,7 @@ edition = "2018"
 
 [dependencies]
 weezl = "0.1.0"
-jpeg = { package = "jpeg-decoder", version = "0.2.4", default-features = false }
+jpeg = { package = "jpeg-decoder", version = "0.3.0", default-features = false }
 flate2 = "1.0.20"
 
 [dev-dependencies]
