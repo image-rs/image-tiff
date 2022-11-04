@@ -1,12 +1,20 @@
 [package]
 name = "tiff"
-version = "0.7.4"
-authors = ["The image-rs Developers"]
+version = "0.8.0"
+edition = "2018"
+resolver = "2"
+
+# note: when changed, also update test runner in `.github/workflows/rust.yml`
+rust-version = "1.61.0"
+
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
+authors = ["The image-rs Developers"]
+
 repository = "https://github.com/image-rs/image-tiff"
+categories = ["multimedia::images", "multimedia::encoding"]
+
 exclude = ["tests/images/*", "tests/fuzz_images/*"]
-edition = "2018"
 
 [dependencies]
 weezl = "0.1.0"

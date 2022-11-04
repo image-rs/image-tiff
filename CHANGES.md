@@ -1,3 +1,11 @@
+# Version 0.8.0
+
+Changes:
+* The minimum supported rust version is now indicated in `Cargo.toml`.
+
+Fixes:
+* Update to `jpeg_decoder = 0.3`.
+
 # Version 0.7.4
 
 New features:
