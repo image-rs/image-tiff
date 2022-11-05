@@ -43,6 +43,7 @@ pub enum TiffError {
 /// The list of variants may grow to incorporate errors of future features. Matching against this
 /// exhaustively is not covered by interface stability guarantees.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TiffFormatError {
     TiffSignatureNotFound,
     TiffSignatureInvalid,
@@ -68,9 +69,6 @@ pub enum TiffFormatError {
     RequiredTagEmpty(Tag),
     StripTileTagConflict,
     CycleInOffsets,
-    #[doc(hidden)]
-    /// Do not match against this variant. It may get removed.
-    __NonExhaustive,
 }
 
 impl fmt::Display for TiffFormatError {
@@ -121,7 +119,6 @@ impl fmt::Display for TiffFormatError {
             RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
             StripTileTagConflict => write!(fmt, "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found."),
             CycleInOffsets => write!(fmt, "File contained a cycle in the list of IFDs"),
-            __NonExhaustive => unreachable!(),
         }
     }
 }
@@ -135,6 +132,7 @@ impl fmt::Display for TiffFormatError {
 /// The list of variants may grow. Matching against this exhaustively is not covered by interface
 /// stability guarantees.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TiffUnsupportedError {
     FloatingPointPredictor(ColorType),
     HorizontalPredictor(ColorType),
@@ -148,9 +146,6 @@ pub enum TiffUnsupportedError {
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),
     UnsupportedDataType,
-    #[doc(hidden)]
-    /// Do not match against this variant. It may get removed.
-    __NonExhaustive,
 }
 
 impl fmt::Display for TiffUnsupportedError {
@@ -196,7 +191,6 @@ impl fmt::Display for TiffUnsupportedError {
                 write!(fmt, "Unsupported planar configuration “{:?}”.", config)
             }
             UnsupportedDataType => write!(fmt, "Unsupported data type."),
-            __NonExhaustive => unreachable!(),
         }
     }
 }
