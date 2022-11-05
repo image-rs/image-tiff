@@ -301,7 +301,6 @@ where
     reader: SmartReader<R>,
     bigtiff: bool,
     limits: Limits,
-    current_chunk: u32,
     next_ifd: Option<u64>,
     ifd_offsets: Vec<u64>,
     seen_ifds: HashSet<u64>,
@@ -586,7 +585,6 @@ impl<R: Read + Seek> Decoder<R> {
                 chunk_offsets: Vec::new(),
                 chunk_bytes: Vec::new(),
             },
-            current_chunk: 0,
         };
         decoder.next_image()?;
         Ok(decoder)
@@ -638,7 +636,6 @@ impl<R: Read + Seek> Decoder<R> {
         if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
             let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset)?;
 
-            self.current_chunk = 0;
             self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
 
             Ok(())
@@ -647,13 +644,6 @@ impl<R: Read + Seek> Decoder<R> {
                 TiffFormatError::ImageFileDirectoryNotFound,
             ))
         }
-    }
-
-    /// Reset the decoder.
-    #[deprecated = "Never should have been public. Only use Decoder::new()"]
-    pub fn init(self) -> TiffResult<Decoder<R>> {
-        let Self { reader, .. } = self;
-        Self::new(reader.into_inner())
     }
 
     fn next_ifd(&mut self) -> TiffResult<(Directory, Option<u64>)> {
@@ -686,7 +676,6 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn next_image(&mut self) -> TiffResult<()> {
         let (ifd, _next_ifd) = self.next_ifd()?;
 
-        self.current_chunk = 0;
         self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
         Ok(())
     }
@@ -1037,33 +1026,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(u32::try_from(self.image().chunk_offsets.len())?)
     }
 
-    #[deprecated = "Use read_image instead"]
-    pub fn read_jpeg(&mut self) -> TiffResult<DecodingResult> {
-        self.read_image()
-    }
-
-    #[deprecated = "Use read_chunk_to_buffer instead"]
-    pub fn read_strip_to_buffer(&mut self, mut buffer: DecodingBuffer) -> TiffResult<()> {
-        self.check_chunk_type(ChunkType::Strip)?;
-
-        let offset = self.image.chunk_file_range(self.current_chunk)?.0;
-        self.goto_offset_u64(offset)?;
-
-        let byte_order = self.reader.byte_order;
-        let output_width = usize::try_from(self.image().width)?;
-        self.image.expand_chunk(
-            &mut self.reader,
-            buffer.copy(),
-            output_width,
-            byte_order,
-            self.current_chunk,
-        )?;
-
-        self.current_chunk += 1;
-
-        Ok(())
-    }
-
     pub fn read_chunk_to_buffer(
         &mut self,
         mut buffer: DecodingBuffer,
@@ -1137,30 +1099,6 @@ impl<R: Read + Seek> Decoder<R> {
                 Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format.clone()]).into())
             }
         }
-    }
-
-    /// Read a single strip from the image and return it as a Vector. This method does not return
-    /// information on the size of the strip read and so the caller must take care of the final
-    /// strip in the image as the data read may be less than the expected strip size. This interface
-    /// may change at a future date to reflect this.
-    #[deprecated = "Use read_chunk instead"]
-    pub fn read_strip(&mut self) -> TiffResult<DecodingResult> {
-        let result = self.read_chunk(self.current_chunk)?;
-
-        Ok(result)
-    }
-
-    /// Read a single tile from the image and return it as a Vector. This method does not return
-    /// information on the size of the tile read and so the caller must take care of tiles on the
-    /// rightmost column and the bottommost row in the image as the data read may be less than the
-    /// expected tile size. This interface may change at a future date to reflect this.
-    #[deprecated = "Use read_chunk instead"]
-    pub fn read_tile(&mut self) -> TiffResult<DecodingResult> {
-        let result = self.read_chunk(self.current_chunk)?;
-
-        self.current_chunk += 1;
-
-        Ok(result)
     }
 
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
