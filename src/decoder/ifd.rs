@@ -17,6 +17,7 @@ use self::Value::{
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Value {
     Byte(u8),
     Short(u16),
@@ -34,8 +35,6 @@ pub enum Value {
     Ascii(String),
     Ifd(u32),
     IfdBig(u64),
-    #[doc(hidden)] // Do not match against this.
-    __NonExhaustive,
 }
 
 impl Value {
@@ -361,7 +360,6 @@ impl Entry {
             | Type::RATIONAL
             | Type::SRATIONAL
             | Type::IFD8 => 8,
-            Type::__NonExhaustive => unreachable!(),
         };
 
         let value_bytes = match self.count.checked_mul(tag_size) {
@@ -398,7 +396,6 @@ impl Entry {
                     | Type::SLONG
                     | Type::FLOAT
                     | Type::IFD => unreachable!(),
-                    Type::__NonExhaustive => unreachable!(),
                 });
             }
 
@@ -444,7 +441,6 @@ impl Entry {
                     reader.goto_offset(self.r(bo).read_u32()?.into())?;
                     IfdBig(reader.read_u64()?)
                 }
-                Type::__NonExhaustive => unreachable!(),
             });
         }
 
@@ -528,7 +524,6 @@ impl Entry {
                 | Type::IFD8 => {
                     unreachable!()
                 }
-                Type::__NonExhaustive => unreachable!(),
             }
         }
 
@@ -611,7 +606,6 @@ impl Entry {
                 }
                 Ok(Ascii(String::from_utf8(out)?))
             }
-            Type::__NonExhaustive => unreachable!(),
         }
     }
 

@@ -464,7 +464,6 @@ impl Image {
                         TiffUnsupportedError::FloatingPointPredictor(color_type),
                     ));
                 }
-                Predictor::__NonExhaustive => unreachable!(),
             },
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(

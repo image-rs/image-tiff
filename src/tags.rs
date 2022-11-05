@@ -9,11 +9,9 @@ macro_rules! tags {
     } => {
         $( #[$enum_attr] )*
         #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+        #[non_exhaustive]
         pub enum $name {
             $($(#[$ident_attr])* $tag,)*
-            // FIXME: switch to non_exhaustive once stabilized and compiler requirement new enough
-            #[doc(hidden)]
-            __NonExhaustive,
             $(
                 #[doc = $unknown_doc]
                 Unknown($ty),
@@ -34,7 +32,6 @@ macro_rules! tags {
                 match *self {
                     $( $name::$tag => $val, )*
                     $( $name::Unknown(n) => { $unknown_doc; n }, )*
-                    $name::__NonExhaustive => unreachable!(),
                 }
             }
         }
