@@ -429,7 +429,6 @@ fn fix_endianness_and_predict(
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
-        Predictor::__NonExhaustive => unreachable!(),
     }
 }
 
