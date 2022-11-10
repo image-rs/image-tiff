@@ -1,3 +1,23 @@
+# Version 0.8.0
+
+Changes:
+* The minimum supported rust version is now indicated in `Cargo.toml`.
+* The enums `TiffFormatError` and `TiffUnsupportedError` are now
+  marked with the `#[non_exhaustive]` attribute. 
+* Additionally, tag related enums `Value`, `Tags`, `Type`, `CompressionMethod`,
+  `PhotometricInterpretation`, `PlanarConfiguration`, `Predictor`,
+  `ResolutionUnit`, `SampleFormat` are also changed.
+
+Removals:
+* Removed deprecated methods of `Decoder`: `init`, `read_jpeg`,
+  `read_strip_to_buffer`, `read_strip`, `read_tile`. The implicit chunk (row or
+  tile) index order could not be easily tracked by the caller. New separate
+  utility interfaces may be introduced at a later point, for now callers are
+  obligated to choose their own.
+
+Fixes:
+* Update to `jpeg_decoder = 0.3`.
+
 # Version 0.7.4
 
 New features:
