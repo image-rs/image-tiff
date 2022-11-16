@@ -313,6 +313,16 @@ impl Image {
                         self.bits_per_sample.clone(),
                     ),
                 )),
+            }
+            ,
+            PhotometricInterpretation::YCbCr => match self.bits_per_sample[..] {
+                [y, cb, cr] if [y, y] == [cb, cr]=> Ok(ColorType::YCbCr(y)),
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        self.bits_per_sample.clone(),
+                    ),
+                )),
             },
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
                 if self.bits_per_sample.len() == 1 =>
@@ -450,6 +460,7 @@ impl Image {
             (ColorType::RGB(n), _)
             | (ColorType::RGBA(n), _)
             | (ColorType::CMYK(n), _)
+            | (ColorType::YCbCr(n), _)
             | (ColorType::Gray(n), _)
                 if usize::from(n) == buffer.byte_len() * 8 => {}
             (ColorType::Gray(n), DecodingBuffer::U8(_)) if n < 8 => match self.predictor {
