@@ -1,8 +1,5 @@
 use super::ifd::{Directory, Value};
-use super::stream::{
-    add_app14segment, ByteOrder, DeflateReader, JpegReader, JpegTagApp14Transform, LZWReader,
-    PackBitsReader,
-};
+use super::stream::{ByteOrder, DeflateReader, JpegReader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
 use super::{fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
 use super::{stream::SmartReader, ChunkType};
@@ -121,7 +118,7 @@ impl Image {
         let jpeg_tables = if compression_method == CompressionMethod::ModernJPEG
             && ifd.contains_key(&Tag::JPEGTables)
         {
-            let mut vec = tag_reader
+            let vec = tag_reader
                 .find_tag(Tag::JPEGTables)?
                 .unwrap()
                 .into_u8_vec()?;
@@ -129,11 +126,6 @@ impl Image {
                 return Err(TiffError::FormatError(
                     TiffFormatError::InvalidTagValueType(Tag::JPEGTables),
                 ));
-            }
-
-            // TODO: Can we avoid this somehow?
-            if photometric_interpretation == PhotometricInterpretation::RGB {
-                add_app14segment(&mut vec, JpegTagApp14Transform::App14TransformUnknown)
             }
 
             Some(Arc::new(vec))
@@ -332,6 +324,7 @@ impl Image {
 
     fn create_reader<'r, R: 'r + Read>(
         reader: R,
+        photometric_interpretation: PhotometricInterpretation,
         compression_method: CompressionMethod,
         compressed_length: u64,
         jpeg_tables: Option<Arc<Vec<u8>>>,
@@ -354,14 +347,36 @@ impl Image {
 
                 let jpeg_reader = JpegReader::new(reader, compressed_length, jpeg_tables)?;
                 let mut decoder = jpeg::Decoder::new(jpeg_reader);
-                let data = match decoder.decode() {
-                    Ok(data) => data,
-                    Err(e) => {
-                        return Err(TiffError::FormatError(TiffFormatError::Format(
-                            e.to_string(),
-                        )))
+
+                match photometric_interpretation {
+                    PhotometricInterpretation::RGB => {
+                        decoder.set_color_transform(jpeg::ColorTransform::RGB)
                     }
-                };
+                    PhotometricInterpretation::WhiteIsZero => {
+                        decoder.set_color_transform(jpeg::ColorTransform::None)
+                    }
+                    PhotometricInterpretation::BlackIsZero => {
+                        decoder.set_color_transform(jpeg::ColorTransform::None)
+                    }
+                    PhotometricInterpretation::TransparencyMask => {
+                        decoder.set_color_transform(jpeg::ColorTransform::None)
+                    }
+                    PhotometricInterpretation::CMYK => {
+                        decoder.set_color_transform(jpeg::ColorTransform::CMYK)
+                    }
+                    PhotometricInterpretation::YCbCr => {
+                        decoder.set_color_transform(jpeg::ColorTransform::YCbCr)
+                    }
+                    photometric_interpretation => {
+                        return Err(TiffError::UnsupportedError(
+                            TiffUnsupportedError::UnsupportedInterpretation(
+                                photometric_interpretation,
+                            ),
+                        ));
+                    }
+                }
+
+                let data = decoder.decode()?;
 
                 Box::new(Cursor::new(data))
             }
@@ -509,8 +524,13 @@ impl Image {
         let padding_right = chunk_dims.0 - data_dims.0;
 
         let jpeg_tables = self.jpeg_tables.clone();
-        let mut reader =
-            Self::create_reader(reader, compression_method, *compressed_bytes, jpeg_tables)?;
+        let mut reader = Self::create_reader(
+            reader,
+            photometric_interpretation,
+            compression_method,
+            *compressed_bytes,
+            jpeg_tables,
+        )?;
 
         if output_width == data_dims.0 as usize && padding_right == 0 {
             let total_samples = data_dims.0 as usize * data_dims.1 as usize * samples;

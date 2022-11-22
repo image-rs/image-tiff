@@ -1,8 +1,12 @@
 use std::error::Error;
 use std::fmt;
+use std::fmt::Display;
 use std::io;
 use std::str;
 use std::string;
+use std::sync::Arc;
+
+use jpeg::UnsupportedFeature;
 
 use crate::decoder::{ifd::Value, ChunkType};
 use crate::tags::{
@@ -69,6 +73,7 @@ pub enum TiffFormatError {
     RequiredTagEmpty(Tag),
     StripTileTagConflict,
     CycleInOffsets,
+    JpegDecoder(JpegDecoderError),
 }
 
 impl fmt::Display for TiffFormatError {
@@ -119,6 +124,7 @@ impl fmt::Display for TiffFormatError {
             RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
             StripTileTagConflict => write!(fmt, "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found."),
             CycleInOffsets => write!(fmt, "File contained a cycle in the list of IFDs"),
+            JpegDecoder(ref error) => write!(fmt, "{}",  error),
         }
     }
 }
@@ -146,6 +152,8 @@ pub enum TiffUnsupportedError {
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),
     UnsupportedDataType,
+    UnsupportedInterpretation(PhotometricInterpretation),
+    UnsupportedJpegFeature(UnsupportedFeature),
 }
 
 impl fmt::Display for TiffUnsupportedError {
@@ -191,6 +199,16 @@ impl fmt::Display for TiffUnsupportedError {
                 write!(fmt, "Unsupported planar configuration “{:?}”.", config)
             }
             UnsupportedDataType => write!(fmt, "Unsupported data type."),
+            UnsupportedInterpretation(interpretation) => {
+                write!(
+                    fmt,
+                    "Unsupported photometric interpretation \"{:?}\".",
+                    interpretation
+                )
+            }
+            UnsupportedJpegFeature(ref unsupported_feature) => {
+                write!(fmt, "Unsupported JPEG feature {:?}", unsupported_feature)
+            }
         }
     }
 }
@@ -307,6 +325,43 @@ impl From<LzwError> for TiffError {
                 "LZW compressed data corrupted",
             ))),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JpegDecoderError {
+    inner: Arc<jpeg::Error>,
+}
+
+impl JpegDecoderError {
+    fn new(error: jpeg::Error) -> Self {
+        Self {
+            inner: Arc::new(error),
+        }
+    }
+}
+
+impl PartialEq for JpegDecoderError {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Display for JpegDecoderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl From<JpegDecoderError> for TiffError {
+    fn from(error: JpegDecoderError) -> Self {
+        TiffError::FormatError(TiffFormatError::JpegDecoder(error))
+    }
+}
+
+impl From<jpeg::Error> for TiffError {
+    fn from(error: jpeg::Error) -> Self {
+        JpegDecoderError::new(error).into()
     }
 }
 
