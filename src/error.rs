@@ -148,10 +148,8 @@ pub enum TiffUnsupportedError {
     UnsupportedBitsPerChannel(u8),
     UnsupportedPlanarConfig(Option<PlanarConfiguration>),
     UnsupportedDataType,
+    UnsupportedInterpretation(PhotometricInterpretation),
     UnsupportedJpegFeature(UnsupportedFeature),
-    #[doc(hidden)]
-    /// Do not match against this variant. It may get removed.
-    __NonExhaustive,
 }
 
 impl fmt::Display for TiffUnsupportedError {
@@ -197,10 +195,16 @@ impl fmt::Display for TiffUnsupportedError {
                 write!(fmt, "Unsupported planar configuration “{:?}”.", config)
             }
             UnsupportedDataType => write!(fmt, "Unsupported data type."),
+            UnsupportedInterpretation(interpretation) => {
+                write!(
+                    fmt,
+                    "Unsupported photometric interpretation \"{:?}\".",
+                    interpretation
+                )
+            }
             UnsupportedJpegFeature(ref unsupported_feature) => {
                 write!(fmt, "Unsupported JPEG feature {:?}", unsupported_feature)
             }
-            __NonExhaustive => unreachable!(),
         }
     }
 }

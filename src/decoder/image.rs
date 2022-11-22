@@ -358,7 +358,6 @@ impl Image {
                     PhotometricInterpretation::BlackIsZero => {
                         decoder.set_color_transform(jpeg::ColorTransform::None)
                     }
-                    PhotometricInterpretation::RGBPalette => todo!(),
                     PhotometricInterpretation::TransparencyMask => {
                         decoder.set_color_transform(jpeg::ColorTransform::None)
                     }
@@ -368,8 +367,13 @@ impl Image {
                     PhotometricInterpretation::YCbCr => {
                         decoder.set_color_transform(jpeg::ColorTransform::YCbCr)
                     }
-                    PhotometricInterpretation::CIELab => todo!(),
-                    _ => todo!(),
+                    photometric_interpretation => {
+                        return Err(TiffError::UnsupportedError(
+                            TiffUnsupportedError::UnsupportedInterpretation(
+                                photometric_interpretation,
+                            ),
+                        ));
+                    }
                 }
 
                 let data = decoder.decode()?;
