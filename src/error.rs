@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::fmt::Display;
 use std::io;
 use std::str;
 use std::string;
@@ -71,6 +72,7 @@ pub enum TiffFormatError {
     RequiredTagEmpty(Tag),
     StripTileTagConflict,
     CycleInOffsets,
+    JpegDecoder(JpegDecoderError),
 }
 
 impl fmt::Display for TiffFormatError {
@@ -121,6 +123,7 @@ impl fmt::Display for TiffFormatError {
             RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
             StripTileTagConflict => write!(fmt, "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found."),
             CycleInOffsets => write!(fmt, "File contained a cycle in the list of IFDs"),
+            JpegDecoder(error) => write!(fmt, "{}",  error),
         }
     }
 }
@@ -324,20 +327,32 @@ impl From<LzwError> for TiffError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct JpegDecoderError {
+    inner: jpeg::Error,
+}
+
+impl From<jpeg::Error> for JpegDecoderError {
+    fn from(error: jpeg::Error) -> Self {
+        Self { inner: error }
+    }
+}
+
+impl Display for JpegDecoderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl From<JpegDecoderError> for TiffError {
+    fn from(error: JpegDecoderError) -> Self {
+        TiffError::FormatError(TiffFormatError::JpegDecoder(error))
+    }
+}
+
 impl From<jpeg::Error> for TiffError {
     fn from(error: jpeg::Error) -> Self {
-        match error {
-            jpeg::Error::Format(format) => {
-                TiffError::FormatError(TiffFormatError::Format(format!("JPEG format: {}", format)))
-            }
-            jpeg::Error::Unsupported(unsupported) => TiffError::UnsupportedError(
-                TiffUnsupportedError::UnsupportedJpegFeature(unsupported),
-            ),
-            jpeg::Error::Io(io_error) => TiffError::IoError(io_error),
-            jpeg::Error::Internal(internal) => {
-                panic!("According to jpeg create, this is not used, so this shouldn't be reached..")
-            }
-        }
+        JpegDecoderError::from(error).into()
     }
 }
 
