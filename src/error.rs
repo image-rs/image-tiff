@@ -4,6 +4,7 @@ use std::fmt::Display;
 use std::io;
 use std::str;
 use std::string;
+use std::sync::Arc;
 
 use jpeg::UnsupportedFeature;
 
@@ -123,7 +124,7 @@ impl fmt::Display for TiffFormatError {
             RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
             StripTileTagConflict => write!(fmt, "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found."),
             CycleInOffsets => write!(fmt, "File contained a cycle in the list of IFDs"),
-            JpegDecoder(error) => write!(fmt, "{}",  error),
+            JpegDecoder(ref error) => write!(fmt, "{}",  error),
         }
     }
 }
@@ -327,14 +328,22 @@ impl From<LzwError> for TiffError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct JpegDecoderError {
-    inner: jpeg::Error,
+#[derive(Debug, Clone)]
+pub struct JpegDecoderError {
+    inner: Arc<jpeg::Error>,
 }
 
-impl From<jpeg::Error> for JpegDecoderError {
-    fn from(error: jpeg::Error) -> Self {
-        Self { inner: error }
+impl JpegDecoderError {
+    fn new(error: jpeg::Error) -> Self {
+        Self {
+            inner: Arc::new(error),
+        }
+    }
+}
+
+impl PartialEq for JpegDecoderError {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
@@ -352,7 +361,7 @@ impl From<JpegDecoderError> for TiffError {
 
 impl From<jpeg::Error> for TiffError {
     fn from(error: jpeg::Error) -> Self {
-        JpegDecoderError::from(error).into()
+        JpegDecoderError::new(error).into()
     }
 }
 
