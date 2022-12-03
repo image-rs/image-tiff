@@ -332,23 +332,23 @@ impl<R: Read> Read for PackBitsReader<R> {
         }
 
         let length = buf.len().min(self.count);
-        match self.state {
-            PackBitsReaderState::Literal => {
-                self.reader.read(&mut buf[..length])?;
-            }
+        let actual = match self.state {
+            PackBitsReaderState::Literal => self.reader.read(&mut buf[..length])?,
             PackBitsReaderState::Repeat { value } => {
                 for b in &mut buf[..length] {
                     *b = value;
                 }
+
+                length
             }
             PackBitsReaderState::Header => unreachable!(),
-        }
+        };
 
-        self.count -= length;
+        self.count -= actual;
         if self.count == 0 {
             self.state = PackBitsReaderState::Header;
         }
-        return Ok(length);
+        return Ok(actual);
     }
 }
 
