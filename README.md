@@ -24,6 +24,7 @@ This table lists photometric interpretations and sample formats which are suppor
 | `RGBPalette`                |                                         |                           |
 | `Mask`                      |                                         |                           |
 | `CMYK`                      | CMYK(8\|16\|32\|64)                     | CMYK(32\|64)              |
+| `CMYKA`                     | CMYKA(8)                                |                           |
 | `YCbCr`                     |                                         |                           |
 | `CIELab`                    |                                         |                           |
 

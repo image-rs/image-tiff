@@ -16,6 +16,7 @@ pub use self::error::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedErr
 
 /// An enumeration over supported color types and their bit depths
 #[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]
+#[non_exhaustive]
 pub enum ColorType {
     /// Pixel is grayscale
     Gray(u8),
@@ -35,6 +36,9 @@ pub enum ColorType {
     /// Pixel is CMYK
     CMYK(u8),
 
+    /// Pixel is CMYK with an alpha channel
+    CMYKA(u8),
+
     /// Pixel is YCbCr
     YCbCr(u8),
 
@@ -50,6 +54,7 @@ impl ColorType {
             | ColorType::GrayA(b)
             | ColorType::RGBA(b)
             | ColorType::CMYK(b)
+            | ColorType::CMYKA(b)
             | ColorType::YCbCr(b)
             | ColorType::Multiband { bit_depth: b, .. } => b,
         }
