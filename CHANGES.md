@@ -1,3 +1,16 @@
+# Version 0.8.1
+
+Changes:
+* The jpeg decoder gained to ability to utilize the Photometric Interpretation
+  directly instead of relying on a custom APP segment.
+
+Fixes:
+* A spurious error within the PackBits decoder lead to the incorrect results
+  (wrong bits or errors), based on the maximum size of reads from the
+  underlying reader.
+* Removed a panic path in jpeg decoding, when a feature such as photometric
+  interpretation is not supported. An error is returned instead.
+
 # Version 0.8.0
 
 Changes:
