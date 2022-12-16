@@ -32,12 +32,11 @@ impl TileAttributes {
         (self.image_height + self.tile_length - 1) / self.tile_length
     }
     fn padding_right(&self) -> usize {
-        self.tile_width - self.image_width % self.tile_width
+        (self.tile_width - self.image_width % self.tile_width) % self.tile_width
     }
     fn padding_down(&self) -> usize {
-        self.tile_length - self.image_height % self.tile_length
+        (self.tile_length - self.image_height % self.tile_length) % self.tile_length
     }
-
     pub fn get_padding(&self, tile: usize) -> (usize, usize) {
         let row = tile / self.tiles_across();
         let column = tile % self.tiles_across();
