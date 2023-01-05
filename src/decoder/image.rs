@@ -313,10 +313,9 @@ impl Image {
                         self.bits_per_sample.clone(),
                     ),
                 )),
-            }
-            ,
+            },
             PhotometricInterpretation::YCbCr => match self.bits_per_sample[..] {
-                [y, cb, cr] if [y, y] == [cb, cr]=> Ok(ColorType::YCbCr(y)),
+                [y, cb, cr] if [y, y] == [cb, cr] => Ok(ColorType::YCbCr(y)),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
