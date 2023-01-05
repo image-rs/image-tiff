@@ -39,5 +39,5 @@ pub enum ColorType {
     CMYK(u8),
 
     /// Pixel is YCbCr
-    YCbCr(u8)
+    YCbCr(u8),
 }
