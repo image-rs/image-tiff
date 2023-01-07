@@ -264,6 +264,11 @@ fn test_gray_f64_roundtrip() {
     test_f64_roundtrip::<colortype::Gray64Float>("gradient-1c-64b-float.tiff", ColorType::Gray(64));
 }
 
+#[test]
+fn test_ycbcr_u8_roundtrip() {
+    test_u8_roundtrip::<colortype::YCbCr8>("tiled-jpeg-ycbcr.tif", ColorType::YCbCr(8));
+}
+
 trait AssertDecode {
     fn assert_tag_u32(&mut self, tag: u16) -> u32;
     fn assert_tag_u32_vec(&mut self, tag: u16) -> Vec<u32>;
