@@ -3,7 +3,9 @@ use super::stream::{ByteOrder, DeflateReader, JpegReader, LZWReader, PackBitsRea
 use super::tag_reader::TagReader;
 use super::{fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
 use super::{stream::SmartReader, ChunkType};
-use crate::tags::{CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag};
+use crate::tags::{
+    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
+};
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 use std::convert::{TryFrom, TryInto};
 use std::io::{self, Cursor, Read, Seek};
@@ -71,6 +73,7 @@ pub(crate) struct Image {
     pub predictor: Predictor,
     pub jpeg_tables: Option<Arc<Vec<u8>>>,
     pub chunk_type: ChunkType,
+    pub planar_config: PlanarConfiguration,
     pub strip_decoder: Option<StripDecodeState>,
     pub tile_attributes: Option<TileAttributes>,
     pub chunk_offsets: Vec<u64>,
@@ -174,6 +177,18 @@ impl Image {
             .transpose()?
             .unwrap_or(Predictor::None);
 
+        let planar_config = tag_reader
+            .find_tag(Tag::PlanarConfiguration)?
+            .map(Value::into_u16)
+            .transpose()?
+            .map(|p| {
+                PlanarConfiguration::from_u16(p).ok_or(TiffError::FormatError(
+                    TiffFormatError::UnknownPlanarConfiguration(p),
+                ))
+            })
+            .transpose()?
+            .unwrap_or(PlanarConfiguration::Chunky);
+
         let chunk_type;
         let chunk_offsets;
         let chunk_bytes;
@@ -201,13 +216,22 @@ impl Image {
                     .map(Value::into_u32)
                     .transpose()?
                     .unwrap_or(height);
+                if rows_per_strip == 0 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+                let num_chunks = match planar_config {
+                    PlanarConfiguration::Chunky => height.saturating_sub(1) / rows_per_strip + 1,
+                    PlanarConfiguration::Planar => {
+                        (height.saturating_sub(1) / rows_per_strip + 1) * samples as u32
+                    }
+                };
                 strip_decoder = Some(StripDecodeState { rows_per_strip });
                 tile_attributes = None;
 
                 if chunk_offsets.len() != chunk_bytes.len()
-                    || rows_per_strip == 0
-                    || u32::try_from(chunk_offsets.len())?
-                        != height.saturating_sub(1) / rows_per_strip + 1
+                    || u32::try_from(chunk_offsets.len())? != num_chunks
                 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
@@ -272,6 +296,7 @@ impl Image {
             jpeg_tables,
             predictor,
             chunk_type,
+            planar_config,
             strip_decoder,
             tile_attributes,
             chunk_offsets,
@@ -396,6 +421,28 @@ impl Image {
         })
     }
 
+    /// Samples per pixel within chunk.
+    ///
+    /// In planar config, samples are stored in separate strips/chunks, also called bands.
+    ///
+    /// Example with `bits_per_sample = [8, 8, 8]` and `PhotometricInterpretation::RGB`:
+    /// * `PlanarConfiguration::Chunky` -> 3 (RGBRGBRGB...)
+    /// * `PlanarConfiguration::Planar` -> 1 (RRR...) (GGG...) (BBB...)
+    pub(crate) fn samples_per_pixel(&self) -> usize {
+        match self.planar_config {
+            PlanarConfiguration::Chunky => self.bits_per_sample.len(),
+            PlanarConfiguration::Planar => 1,
+        }
+    }
+
+    /// Number of strips per pixel.
+    pub(crate) fn strips_per_pixel(&self) -> usize {
+        match self.planar_config {
+            PlanarConfiguration::Chunky => 1,
+            PlanarConfiguration::Planar => self.bits_per_sample.len(),
+        }
+    }
+
     pub(crate) fn chunk_file_range(&self, chunk: u32) -> TiffResult<(u64, u64)> {
         let file_offset = self
             .chunk_offsets
@@ -435,7 +482,10 @@ impl Image {
 
         match self.chunk_type {
             ChunkType::Strip => {
-                let strip_height_without_padding = chunk_index
+                let strip_attrs = self.strip_decoder.as_ref().unwrap();
+                let strips_per_band =
+                    self.height.saturating_sub(1) / strip_attrs.rows_per_strip + 1;
+                let strip_height_without_padding = (chunk_index % strips_per_band)
                     .checked_mul(dims.1)
                     .and_then(|x| self.height.checked_sub(x))
                     .ok_or(TiffError::UsageError(UsageError::InvalidChunkIndex(
@@ -525,7 +575,7 @@ impl Image {
         let compression_method = self.compression_method;
         let photometric_interpretation = self.photometric_interpretation;
         let predictor = self.predictor;
-        let samples = self.bits_per_sample.len();
+        let samples = self.samples_per_pixel();
 
         let chunk_dims = self.chunk_dimensions()?;
         let data_dims = self.chunk_data_dimensions(chunk_index)?;

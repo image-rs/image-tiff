@@ -286,6 +286,48 @@ fn test_tiled_incremental() {
 }
 
 #[test]
+fn test_planar_rgb_u8() {
+    // gdal_translate tiled-rgb-u8.tif planar-rgb-u8.tif -co INTERLEAVE=BAND -co COMPRESS=LZW -co PROFILE=BASELINE
+    let file = "planar-rgb-u8.tif";
+    let expected_type = ColorType::RGB(8);
+
+    let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), expected_type);
+
+    let chunks = decoder.strip_count().unwrap();
+    assert_eq!(chunks as usize, 72);
+
+    // convert -quiet planar-rgb-u8.tif[0] -crop 1x1+0+0 txt:
+    // 0,0: (73,51,30)  #49331E  srgb(73,51,30)
+
+    // 1st band (red)
+    match decoder.read_chunk(0).unwrap() {
+        DecodingResult::U8(chunk) => {
+            assert_eq!(chunk[0], 73);
+        }
+        _ => panic!("Wrong bit depth"),
+    }
+    // 2nd band (green)
+    match decoder.read_chunk(chunks / 3).unwrap() {
+        DecodingResult::U8(chunk) => {
+            assert_eq!(chunk[0], 51);
+        }
+        _ => panic!("Wrong bit depth"),
+    }
+    // 3rd band (blue)
+    match decoder.read_chunk(chunks / 3 * 2).unwrap() {
+        DecodingResult::U8(chunk) => {
+            assert_eq!(chunk[0], 30);
+        }
+        _ => panic!("Wrong bit depth"),
+    }
+
+    test_image_sum_u8(file, ColorType::RGB(8), 15417630);
+}
+
+#[test]
 fn test_div_zero() {
     use tiff::{TiffError, TiffFormatError};
 
