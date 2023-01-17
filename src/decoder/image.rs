@@ -189,6 +189,11 @@ impl Image {
             .transpose()?
             .unwrap_or(PlanarConfiguration::Chunky);
 
+        let planes = match planar_config {
+            PlanarConfiguration::Chunky => 1,
+            PlanarConfiguration::Planar => samples,
+        };
+
         let chunk_type;
         let chunk_offsets;
         let chunk_bytes;
@@ -216,22 +221,13 @@ impl Image {
                     .map(Value::into_u32)
                     .transpose()?
                     .unwrap_or(height);
-                if rows_per_strip == 0 {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InconsistentSizesEncountered,
-                    ));
-                }
-                let num_chunks = match planar_config {
-                    PlanarConfiguration::Chunky => height.saturating_sub(1) / rows_per_strip + 1,
-                    PlanarConfiguration::Planar => {
-                        (height.saturating_sub(1) / rows_per_strip + 1) * samples as u32
-                    }
-                };
                 strip_decoder = Some(StripDecodeState { rows_per_strip });
                 tile_attributes = None;
 
                 if chunk_offsets.len() != chunk_bytes.len()
-                    || u32::try_from(chunk_offsets.len())? != num_chunks
+                    || rows_per_strip == 0
+                    || u32::try_from(chunk_offsets.len())?
+                        != (height.saturating_sub(1) / rows_per_strip + 1) * planes as u32
                 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
@@ -270,7 +266,8 @@ impl Image {
 
                 let tile = tile_attributes.as_ref().unwrap();
                 if chunk_offsets.len() != chunk_bytes.len()
-                    || chunk_offsets.len() != tile.tiles_down() * tile.tiles_across()
+                    || chunk_offsets.len()
+                        != tile.tiles_down() * tile.tiles_across() * planes as usize
                 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
