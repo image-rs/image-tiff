@@ -1042,6 +1042,7 @@ impl<R: Read + Seek> Decoder<R> {
             output_width,
             byte_order,
             chunk_index,
+            &self.limits,
         )?;
 
         Ok(())
@@ -1168,6 +1169,7 @@ impl<R: Read + Seek> Decoder<R> {
                 width as usize,
                 byte_order,
                 chunk as u32,
+                &self.limits,
             )?;
         }
 
