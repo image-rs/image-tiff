@@ -1,3 +1,14 @@
+# Version 0.9.0
+
+New features:
+* Added support for photometric interpretation `YCbCr` and added related
+  `ColorType`.
+
+Fixes:
+* Decoding tiled images calculates padding correctly when image width or height
+  is a multiple of tile size. It could previously corrupt the last tile per row
+  by skipping over data.
+
 # Version 0.8.1
 
 Changes:
