@@ -466,6 +466,7 @@ impl Image {
         output_width: usize,
         byte_order: ByteOrder,
         chunk_index: u32,
+        limits: &Limits,
     ) -> TiffResult<()> {
         // Validate that the provided buffer is of the expected type.
         let color_type = self.colortype()?;
@@ -520,6 +521,9 @@ impl Image {
                 .ok_or(TiffError::FormatError(
                     TiffFormatError::InconsistentSizesEncountered,
                 ))?;
+        if *compressed_bytes > limits.intermediate_buffer_size as u64 {
+            return Err(TiffError::LimitsExceeded);
+        }
 
         let byte_len = buffer.byte_len();
         let compression_method = self.compression_method;
