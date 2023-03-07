@@ -109,8 +109,7 @@ impl Image {
         // Try to parse both the compression method and the number, format, and bits of the included samples.
         // If they are not explicitly specified, those tags are reset to their default values and not carried from previous images.
         let compression_method = match tag_reader.find_tag(Tag::Compression)? {
-            Some(val) => CompressionMethod::from_u16(val.into_u16()?)
-                .ok_or(TiffUnsupportedError::UnknownCompressionMethod)?,
+            Some(val) => CompressionMethod::from_u16_exhaustive(val.into_u16()?),
             None => CompressionMethod::None,
         };
 
