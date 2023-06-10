@@ -10,7 +10,8 @@ use crate::{
 use self::ifd::Directory;
 use self::image::Image;
 use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, Predictor, SampleFormat, Tag, Type,
+    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
+    Tag, Type,
 };
 
 use self::stream::{ByteOrder, EndianReader, SmartReader};
@@ -579,6 +580,7 @@ impl<R: Read + Seek> Decoder<R> {
                 jpeg_tables: None,
                 predictor: Predictor::None,
                 chunk_type: ChunkType::Strip,
+                planar_config: PlanarConfiguration::Chunky,
                 strip_decoder: None,
                 tile_attributes: None,
                 chunk_offsets: Vec::new(),
@@ -1016,7 +1018,12 @@ impl<R: Read + Seek> Decoder<R> {
             None => return Err(TiffError::IntSizeError),
         };
 
-        Ok(height / rows_per_strip)
+        let strips = match self.image().planar_config {
+            PlanarConfiguration::Chunky => height / rows_per_strip,
+            PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
+        };
+
+        Ok(strips)
     }
 
     /// Number of tiles in image
@@ -1051,7 +1058,7 @@ impl<R: Read + Seek> Decoder<R> {
     fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
         let buffer_size = match width
             .checked_mul(height)
-            .and_then(|x| x.checked_mul(self.image().bits_per_sample.len()))
+            .and_then(|x| x.checked_mul(self.image().samples_per_pixel()))
         {
             Some(s) => s,
             None => return Err(TiffError::LimitsExceeded),
@@ -1146,7 +1153,7 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let samples = self.image().bits_per_sample.len();
+        let samples = self.image().samples_per_pixel();
         if samples == 0 {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
@@ -1156,7 +1163,12 @@ impl<R: Read + Seek> Decoder<R> {
         let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
         let strip_samples = width as usize * chunk_dimensions.1 as usize * samples;
 
-        for chunk in 0..self.image().chunk_offsets.len() {
+        let image_chunks = self.image().chunk_offsets.len() / self.image().strips_per_pixel();
+        // For multi-band images, only the first band is read.
+        // Possible improvements:
+        // * pass requested band as parameter
+        // * collect bands to a RGB encoding result in case of RGB bands
+        for chunk in 0..image_chunks {
             self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
 
             let x = chunk % chunks_across;
