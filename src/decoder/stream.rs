@@ -1,8 +1,7 @@
 //! All IO functionality needed for TIFF decoding
 
 use std::convert::TryFrom;
-use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Take};
-use std::sync::Arc;
+use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
@@ -180,104 +179,6 @@ impl<R: Read> Read for LZWReader<R> {
                 Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
             }
         }
-    }
-}
-
-///
-/// ## JPEG Reader (for "new-style" JPEG format (TIFF compression tag 7))
-///
-
-pub(crate) struct JpegReader {
-    jpeg_tables: Option<Arc<Vec<u8>>>,
-
-    buffer: io::Cursor<Vec<u8>>,
-
-    offset: usize,
-}
-
-impl JpegReader {
-    /// Constructs new JpegReader wrapping a SmartReader.
-    /// Because JPEG compression in TIFF allows to save quantization and/or huffman tables in one
-    /// central location, the constructor accepts this data as `jpeg_tables` here containing either
-    /// or both.
-    /// These `jpeg_tables` are simply prepended to the remaining jpeg image data.
-    /// Because these `jpeg_tables` start with a `SOI` (HEX: `0xFFD8`) or __start of image__ marker
-    /// which is also at the beginning of the remaining JPEG image data and would
-    /// confuse the JPEG renderer, one of these has to be taken off. In this case the first two
-    /// bytes of the remaining JPEG data is removed because it follows `jpeg_tables`.
-    /// Similary, `jpeg_tables` ends with a `EOI` (HEX: `0xFFD9`) or __end of image__ marker,
-    /// this has to be removed as well (last two bytes of `jpeg_tables`).
-    pub fn new<R: Read>(
-        mut reader: R,
-        length: u64,
-        jpeg_tables: Option<Arc<Vec<u8>>>,
-    ) -> io::Result<JpegReader> {
-        // Read jpeg image data
-        let mut segment = vec![0; length as usize];
-
-        reader.read_exact(&mut segment[..])?;
-
-        match jpeg_tables {
-            Some(jpeg_tables) => {
-                assert!(
-                    jpeg_tables.len() >= 2,
-                    "jpeg_tables, if given, must be at least 2 bytes long. Got {:?}",
-                    jpeg_tables
-                );
-
-                assert!(
-                    length >= 2,
-                    "if jpeg_tables is given, length must be at least 2 bytes long, got {}",
-                    length
-                );
-
-                let mut buffer = io::Cursor::new(segment);
-                // Skip the first two bytes (marker bytes)
-                buffer.seek(SeekFrom::Start(2))?;
-
-                Ok(JpegReader {
-                    buffer,
-                    jpeg_tables: Some(jpeg_tables),
-                    offset: 0,
-                })
-            }
-            None => Ok(JpegReader {
-                buffer: io::Cursor::new(segment),
-                jpeg_tables: None,
-                offset: 0,
-            }),
-        }
-    }
-}
-
-impl Read for JpegReader {
-    // #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut start = 0;
-
-        if let Some(jpeg_tables) = &self.jpeg_tables {
-            if jpeg_tables.len() - 2 > self.offset {
-                // Read (rest of) jpeg_tables to buf (without the last two bytes)
-                let size_remaining = jpeg_tables.len() - self.offset - 2;
-                let to_copy = size_remaining.min(buf.len());
-
-                buf[start..start + to_copy]
-                    .copy_from_slice(&jpeg_tables[self.offset..self.offset + to_copy]);
-
-                self.offset += to_copy;
-
-                if to_copy == buf.len() {
-                    return Ok(to_copy);
-                }
-
-                start += to_copy;
-            }
-        }
-
-        let read = self.buffer.read(&mut buf[start..])?;
-        self.offset += read;
-
-        Ok(read + start)
     }
 }
 
