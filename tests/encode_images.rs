@@ -299,6 +299,11 @@ fn test_cmyk_u8_roundtrip() {
 }
 
 #[test]
+fn test_cmyka_u8_roundtrip() {
+    test_u8_roundtrip::<colortype::CMYKA8>("cmyk-4c-8b.tiff", ColorType::CMYKA(8));
+}
+
+#[test]
 fn test_gray_u16_roundtrip() {
     test_u16_roundtrip::<colortype::Gray16>("minisblack-1c-16b.tiff", ColorType::Gray(16));
 }
