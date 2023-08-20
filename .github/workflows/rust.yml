@@ -10,31 +10,29 @@ jobs:
     strategy:
       matrix:
         rust: ["1.61", stable, beta, nightly]
-        command: [build, test]
     steps:
     - uses: actions/checkout@v2
-    - run: rustup default ${{ matrix.rust }}
+    - uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+    - name: Cache Cargo Dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+    - name: Install MSRV Cargo.lock
+      if: ${{ matrix.rust == '1.61.0' }}
+      run: mv Cargo.lock.msrv Cargo.lock
     - name: build
-      run: >
-        cargo build --verbose --no-default-features --features "$FEATURES"
+      run: cargo build -v
     - name: test
-      run: >
-        cargo test --tests --benches --no-default-features --features "$FEATURES"
-      if: ${{ matrix.rust != '1.61' }}
-      env:
-        FEATURES: ${{ matrix.features }}
+      if: ${{ matrix.rust != '1.61.0' }}
+      run: cargo test -v && cargo doc -v
   rustfmt:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        override: true
         components: rustfmt
     - name: Run rustfmt check
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: -- --check
-
+      run: cargo fmt -- --check
