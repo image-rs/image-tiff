@@ -14,7 +14,7 @@ authors = ["The image-rs Developers"]
 repository = "https://github.com/image-rs/image-tiff"
 categories = ["multimedia::images", "multimedia::encoding"]
 
-exclude = ["tests/images/*", "tests/fuzz_images/*"]
+exclude = ["tests/images/*", "tests/fuzz_images/*", "examples/*"]
 
 [dependencies]
 weezl = "0.1.0"
