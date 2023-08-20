@@ -41,7 +41,7 @@ mod tests {
 
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
-        Lzw::default().write_to(&mut writer, TEST_DATA).unwrap();
+        Lzw.write_to(&mut writer, TEST_DATA).unwrap();
         assert_eq!(EXPECTED_COMPRESSED_DATA, compressed_data.as_slice());
     }
 }

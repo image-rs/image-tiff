@@ -46,7 +46,7 @@ impl Compression for Deflate {
     const COMPRESSION_METHOD: CompressionMethod = CompressionMethod::Deflate;
 
     fn get_algorithm(&self) -> Compressor {
-        Compressor::Deflate(self.clone())
+        Compressor::Deflate(*self)
     }
 }
 

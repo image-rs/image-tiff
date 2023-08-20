@@ -38,7 +38,7 @@ pub enum Compressor {
 impl Default for Compressor {
     /// The default compression strategy does not apply any compression.
     fn default() -> Self {
-        Compressor::Uncompressed(Uncompressed::default())
+        Compressor::Uncompressed(Uncompressed)
     }
 }
 
@@ -55,6 +55,6 @@ impl CompressionAlgorithm for Compressor {
 
 #[cfg(test)]
 mod tests {
-    pub const TEST_DATA: &'static [u8] =
+    pub const TEST_DATA: &[u8] =
         b"This is a string for checking various compression algorithms.";
 }

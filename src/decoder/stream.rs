@@ -219,7 +219,7 @@ impl<R: Read> Read for PackBitsReader<R> {
             let mut header: [u8; 1] = [0];
             self.reader.read_exact(&mut header)?;
             let h = header[0] as i8;
-            if h >= -127 && h <= -1 {
+            if (-127..=-1).contains(&h) {
                 let mut data: [u8; 1] = [0];
                 self.reader.read_exact(&mut data)?;
                 self.state = PackBitsReaderState::Repeat { value: data[0] };
@@ -249,7 +249,7 @@ impl<R: Read> Read for PackBitsReader<R> {
         if self.count == 0 {
             self.state = PackBitsReaderState::Header;
         }
-        return Ok(actual);
+        Ok(actual)
     }
 }
 

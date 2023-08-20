@@ -618,8 +618,8 @@ impl Image {
             reader.read_exact(tile)?;
 
             for row in 0..data_dims.1 as usize {
-                let row_start = row as usize * output_width as usize * samples;
-                let row_end = (row + 1) * output_width as usize * samples;
+                let row_start = row * output_width * samples;
+                let row_end = (row + 1) * output_width * samples;
                 let row = buffer.subrange(row_start..row_end);
                 super::fix_endianness_and_predict(row, samples, byte_order, predictor);
             }
@@ -632,7 +632,7 @@ impl Image {
             let mut encoded = vec![0u8; chunk_dims.0 as usize * samples * byte_len];
 
             for row in 0..data_dims.1 as usize {
-                let row_start = row * output_width as usize * samples;
+                let row_start = row * output_width * samples;
                 let row_end = row_start + data_dims.0 as usize * samples;
 
                 reader.read_exact(&mut encoded)?;
@@ -647,7 +647,7 @@ impl Image {
             }
         } else {
             for row in 0..data_dims.1 as usize {
-                let row_start = row * output_width as usize * samples;
+                let row_start = row * output_width * samples;
                 let row_end = row_start + data_dims.0 as usize * samples;
 
                 let row = &mut buffer.as_bytes_mut()[(row_start * byte_len)..(row_end * byte_len)];

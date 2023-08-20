@@ -221,7 +221,7 @@ impl<'a> DecodingBuffer<'a> {
 
     fn as_bytes_mut(&mut self) -> &mut [u8] {
         match self {
-            DecodingBuffer::U8(buf) => &mut *buf,
+            DecodingBuffer::U8(ref mut buf) => buf,
             DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
             DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
             DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
@@ -371,8 +371,8 @@ pub fn fp_predict_f32(input: &mut [u8], output: &mut [f32], samples: usize) {
     for i in 0..output.len() {
         // TODO: use f32::from_be_bytes() when we can (version 1.40)
         output[i] = f32::from_bits(u32::from_be_bytes([
-            input[input.len() / 4 * 0 + i],
-            input[input.len() / 4 * 1 + i],
+            input[i],
+            input[input.len() / 4 + i],
             input[input.len() / 4 * 2 + i],
             input[input.len() / 4 * 3 + i],
         ]));
@@ -384,8 +384,8 @@ pub fn fp_predict_f64(input: &mut [u8], output: &mut [f64], samples: usize) {
     for i in 0..output.len() {
         // TODO: use f64::from_be_bytes() when we can (version 1.40)
         output[i] = f64::from_bits(u64::from_be_bytes([
-            input[input.len() / 8 * 0 + i],
-            input[input.len() / 8 * 1 + i],
+            input[i],
+            input[input.len() / 8 + i],
             input[input.len() / 8 * 2 + i],
             input[input.len() / 8 * 3 + i],
             input[input.len() / 8 * 4 + i],
@@ -1103,7 +1103,7 @@ impl<R: Read + Seek> Decoder<R> {
                 )),
             },
             format => {
-                Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format.clone()]).into())
+                Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![*format]).into())
             }
         }
     }

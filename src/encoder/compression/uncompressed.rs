@@ -29,7 +29,7 @@ mod tests {
     fn test_no_compression() {
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
-        Uncompressed::default()
+        Uncompressed
             .write_to(&mut writer, TEST_DATA)
             .unwrap();
         assert_eq!(TEST_DATA, compressed_data);
