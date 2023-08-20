@@ -40,13 +40,12 @@ jobs:
 
   clippy:
     runs-on: ubuntu-latest
-    continue-on-error: true # Until we fix all clippy warnings
     steps:
     - uses: actions/checkout@v2
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
-    - run: cargo clippy --all-features -- -D warnings
+    - run: cargo clippy --all-features # TODO: enable "-- -D warnings" once all outstanding clippy lints are fixed
 
   verify_msrv:
     runs-on: ubuntu-latest
