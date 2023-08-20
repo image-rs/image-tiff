@@ -40,4 +40,7 @@ pub enum ColorType {
 
     /// Pixel is YCbCr
     YCbCr(u8),
+
+    /// Pixel is CMYK with an alpha channel
+    CMYKA(u8),
 }

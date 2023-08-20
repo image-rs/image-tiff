@@ -243,3 +243,11 @@ impl ColorType for YCbCr8 {
     const BITS_PER_SAMPLE: &'static [u16] = &[8, 8, 8];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint; 3];
 }
+
+pub struct CMYKA8;
+impl ColorType for CMYKA8 {
+    type Inner = u8;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::CMYK;
+    const BITS_PER_SAMPLE: &'static [u16] = &[8, 8, 8, 8, 8];
+    const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint; 5];
+}
