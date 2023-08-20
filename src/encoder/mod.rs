@@ -219,19 +219,19 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
         let offset = self.writer.offset();
 
-        K::write_entry_count(&mut self.writer, self.ifd.len())?;
+        K::write_entry_count(self.writer, self.ifd.len())?;
         for (
             tag,
-            &DirectoryEntry {
-                data_type: ref field_type,
-                ref count,
-                data: ref offset,
+            DirectoryEntry {
+                data_type: field_type,
+                count,
+                data: offset,
             },
         ) in self.ifd.iter()
         {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(*field_type)?;
-            (*count).write(&mut self.writer)?;
+            (*count).write(self.writer)?;
             self.writer.write_bytes(offset)?;
         }
 
@@ -243,7 +243,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     /// This could be used to write tiff strips.
     pub fn write_data<T: TiffValue>(&mut self, value: T) -> TiffResult<u64> {
         let offset = self.writer.offset();
-        value.write(&mut self.writer)?;
+        value.write(self.writer)?;
         Ok(offset)
     }
 
@@ -257,9 +257,9 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         let curr_pos = self.writer.offset();
 
         self.writer.goto_offset(self.ifd_pointer_pos)?;
-        K::write_offset(&mut self.writer, ifd_pointer)?;
+        K::write_offset(self.writer, ifd_pointer)?;
         self.writer.goto_offset(curr_pos)?;
-        K::write_offset(&mut self.writer, 0)?;
+        K::write_offset(self.writer, 0)?;
 
         self.dropped = true;
 
@@ -400,7 +400,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
             strip_offsets: Vec::new(),
             strip_byte_count: Vec::new(),
             dropped: false,
-            compression: compression,
+            compression,
             _phantom: ::std::marker::PhantomData,
         })
     }

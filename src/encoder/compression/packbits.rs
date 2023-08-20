@@ -80,33 +80,31 @@ impl CompressionAlgorithm for Packbits {
                     run_index = 0;
                     in_run = false;
                 }
-            } else {
-                if bytes_pending > MAX_BYTES {
-                    // We have as much differing data as we can output in one chunk.
-                    // Output MAX_BYTES leaving one byte.
-                    offset.get_or_insert(write_u8(&mut bufwriter, encode_diff(MAX_BYTES))?);
-                    bufwriter.write(&bytes[pending_index..pending_index + MAX_BYTES as usize])?;
-                    bytes_written += 1 + MAX_BYTES as u64;
+            } else if bytes_pending > MAX_BYTES {
+                // We have as much differing data as we can output in one chunk.
+                // Output MAX_BYTES leaving one byte.
+                offset.get_or_insert(write_u8(&mut bufwriter, encode_diff(MAX_BYTES))?);
+                bufwriter.write_all(&bytes[pending_index..pending_index + MAX_BYTES as usize])?;
+                bytes_written += 1 + MAX_BYTES as u64;
 
-                    pending_index += MAX_BYTES as usize;
-                    bytes_pending -= MAX_BYTES;
-                    run_index = bytes_pending - 1; // A run could start here
-                } else if curr_byte == last_byte {
-                    if (bytes_pending - run_index >= MIN_REPT) || (run_index == 0) {
-                        // This is a worthwhile run
-                        if run_index != 0 {
-                            // Flush differing data out of input buffer
-                            offset.get_or_insert(write_u8(&mut bufwriter, encode_diff(run_index))?);
-                            bufwriter
-                                .write(&bytes[pending_index..pending_index + run_index as usize])?;
-                            bytes_written += 1 + run_index as u64;
-                        }
-                        bytes_pending -= run_index; // Length of run
-                        in_run = true;
+                pending_index += MAX_BYTES as usize;
+                bytes_pending -= MAX_BYTES;
+                run_index = bytes_pending - 1; // A run could start here
+            } else if curr_byte == last_byte {
+                if (bytes_pending - run_index >= MIN_REPT) || (run_index == 0) {
+                    // This is a worthwhile run
+                    if run_index != 0 {
+                        // Flush differing data out of input buffer
+                        offset.get_or_insert(write_u8(&mut bufwriter, encode_diff(run_index))?);
+                        bufwriter
+                            .write_all(&bytes[pending_index..pending_index + run_index as usize])?;
+                        bytes_written += 1 + run_index as u64;
                     }
-                } else {
-                    run_index = bytes_pending - 1; // A run could start here
+                    bytes_pending -= run_index; // Length of run
+                    in_run = true;
                 }
+            } else {
+                run_index = bytes_pending - 1; // A run could start here
             }
             last_byte = curr_byte;
         }
@@ -119,7 +117,7 @@ impl CompressionAlgorithm for Packbits {
         } else {
             bytes_written += 1 + bytes_pending as u64;
             offset.get_or_insert(write_u8(&mut bufwriter, encode_diff(bytes_pending))?);
-            bufwriter.write(&bytes[pending_index..pending_index + bytes_pending as usize])?;
+            bufwriter.write_all(&bytes[pending_index..pending_index + bytes_pending as usize])?;
         }
 
         bufwriter.flush()?;
@@ -141,24 +139,20 @@ mod tests {
 
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
-        Packbits::default()
-            .write_to(&mut writer, &UNCOMPRESSED_DATA)
-            .unwrap();
+        Packbits.write_to(&mut writer, &UNCOMPRESSED_DATA).unwrap();
         assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
     }
 
     #[test]
     fn test_packbits_rept() {
         // compress buffer with repetitive sequence
-        const UNCOMPRESSED_DATA: &'static [u8] =
+        const UNCOMPRESSED_DATA: &[u8] =
             b"This strrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrring hangs.";
-        const EXPECTED_COMPRESSED_DATA: &'static [u8] = b"\x06This st\xD1r\x09ing hangs.";
+        const EXPECTED_COMPRESSED_DATA: &[u8] = b"\x06This st\xD1r\x09ing hangs.";
 
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
-        Packbits::default()
-            .write_to(&mut writer, UNCOMPRESSED_DATA)
-            .unwrap();
+        Packbits.write_to(&mut writer, UNCOMPRESSED_DATA).unwrap();
         assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
     }
 
@@ -192,23 +186,19 @@ mod tests {
 
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
-        Packbits::default()
-            .write_to(&mut writer, data.as_slice())
-            .unwrap();
+        Packbits.write_to(&mut writer, data.as_slice()).unwrap();
         assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
     }
 
     #[test]
     fn test_packbits() {
         // compress teststring
-        const EXPECTED_COMPRESSED_DATA: &'static [u8] =
+        const EXPECTED_COMPRESSED_DATA: &[u8] =
             b"\x3CThis is a string for checking various compression algorithms.";
 
         let mut compressed_data = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut compressed_data);
-        Packbits::default()
-            .write_to(&mut writer, TEST_DATA)
-            .unwrap();
+        Packbits.write_to(&mut writer, TEST_DATA).unwrap();
         assert_eq!(compressed_data, EXPECTED_COMPRESSED_DATA);
     }
 }

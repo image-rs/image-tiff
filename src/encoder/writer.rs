@@ -182,7 +182,7 @@ impl<W: Write> TiffWriter<W> {
 impl<W: Seek> TiffWriter<W> {
     pub fn goto_offset(&mut self, offset: u64) -> Result<(), io::Error> {
         self.offset = offset;
-        self.writer.seek(SeekFrom::Start(offset as u64))?;
+        self.writer.seek(SeekFrom::Start(offset))?;
         Ok(())
     }
 }

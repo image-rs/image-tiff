@@ -537,7 +537,7 @@ impl Entry {
                 Ok(UnsignedBig(u64::from(buf[0])))
             }),
             Type::SBYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(SignedBig(i64::from(reader.read_i8()? as i8)))
+                Ok(SignedBig(i64::from(reader.read_i8()?)))
             }),
             Type::SHORT => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 Ok(UnsignedBig(u64::from(reader.read_u16()?)))
