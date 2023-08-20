@@ -55,6 +55,5 @@ impl CompressionAlgorithm for Compressor {
 
 #[cfg(test)]
 mod tests {
-    pub const TEST_DATA: &[u8] =
-        b"This is a string for checking various compression algorithms.";
+    pub const TEST_DATA: &[u8] = b"This is a string for checking various compression algorithms.";
 }

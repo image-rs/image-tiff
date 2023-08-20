@@ -1102,9 +1102,7 @@ impl<R: Read + Seek> Decoder<R> {
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
             },
-            format => {
-                Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![*format]).into())
-            }
+            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![*format]).into()),
         }
     }
 
