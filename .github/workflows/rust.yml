@@ -27,6 +27,7 @@ jobs:
     - name: test
       if: ${{ matrix.rust != '1.61.0' }}
       run: cargo test -v && cargo doc -v
+
   rustfmt:
     runs-on: ubuntu-latest
     steps:
@@ -36,3 +37,26 @@ jobs:
         components: rustfmt
     - name: Run rustfmt check
       run: cargo fmt -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    continue-on-error: true # Until we fix all clippy warnings
+    steps:
+    - uses: actions/checkout@v2
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - run: cargo clippy --all-features -- -D warnings
+
+  verify_msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install or use cached `cargo-msrv`
+        uses: baptiste0928/cargo-install@v1
+        with:
+          crate: cargo-msrv
+      - name: Install MSRV Cargo.lock
+        run: mv Cargo.lock.msrv Cargo.lock
+      - name: Verify Minimum Rust Version
+        run: cargo-msrv verify
