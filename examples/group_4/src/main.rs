@@ -48,7 +48,7 @@ fn image_preprocess_fax(bytes:Vec<u8>) -> Result<GrayImage, Box<dyn std::error::
 }
 
 pub fn read_bytes_to_png_bytes(bytes:Vec<u8>,) -> Result<Vec<u8>, ImageError>{
-    if bytes.len() > 3 && bytes[0] == 73 && bytes[1] == 73 // big endian, fine for POC
+    if bytes.len() > 3 && bytes[0] == 73 && bytes[1] == 73 // little endian, fine for POC
         && bytes[2] == 42{
             let image = image_preprocess_fax(bytes).unwrap();
             return resize_dyn_img_to_png_bytes(image.into());

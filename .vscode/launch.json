@@ -1,0 +1,141 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'tiff'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=tiff"
+                ],
+                "filter": {
+                    "name": "tiff",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'decode_images'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=decode_images",
+                    "--package=tiff"
+                ],
+                "filter": {
+                    "name": "decode_images",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'decode_bigtiff_images'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=decode_bigtiff_images",
+                    "--package=tiff"
+                ],
+                "filter": {
+                    "name": "decode_bigtiff_images",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'encode_images'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=encode_images",
+                    "--package=tiff"
+                ],
+                "filter": {
+                    "name": "encode_images",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'fuzz_tests'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=fuzz_tests",
+                    "--package=tiff"
+                ],
+                "filter": {
+                    "name": "fuzz_tests",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'encode_images_with_compression'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=encode_images_with_compression",
+                    "--package=tiff"
+                ],
+                "filter": {
+                    "name": "encode_images_with_compression",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug benchmark 'lzw'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bench=lzw",
+                    "--package=tiff"
+                ],
+                "filter": {
+                    "name": "lzw",
+                    "kind": "bench"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
