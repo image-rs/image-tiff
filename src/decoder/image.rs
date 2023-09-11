@@ -159,7 +159,7 @@ impl Image {
         };
 
         let bits_per_sample = match samples {
-            1 | 3 | 4 => tag_reader
+            1..=255 => tag_reader
                 .find_tag_uint_vec(Tag::BitsPerSample)?
                 .unwrap_or_else(|| vec![1]),
             _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(samples).into()),
@@ -276,7 +276,7 @@ impl Image {
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
-                ))
+                ));
             }
         };
 
@@ -336,7 +336,7 @@ impl Image {
                 )),
             },
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                if self.bits_per_sample.len() == 1 =>
+                if self.bits_per_sample.len() <= 64 =>
             {
                 Ok(ColorType::Gray(self.bits_per_sample[0]))
             }
@@ -434,7 +434,7 @@ impl Image {
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),
-                ))
+                ));
             }
         })
     }
@@ -550,7 +550,7 @@ impl Image {
                 Predictor::Horizontal => {
                     return Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::HorizontalPredictor(color_type),
-                    ))
+                    ));
                 }
                 Predictor::FloatingPoint => {
                     return Err(TiffError::UnsupportedError(
@@ -561,7 +561,7 @@ impl Image {
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
-                ))
+                ));
             }
         }
 
