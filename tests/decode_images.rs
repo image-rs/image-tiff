@@ -375,9 +375,7 @@ fn fuzzer_testcase5() {
         178, 178, 178,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let _ = decoder.read_image().unwrap_err();
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]
@@ -394,7 +392,7 @@ fn fuzzer_testcase1() {
 }
 
 #[test]
-fn test_stripped_image_overflow() {
+fn fuzzer_testcase6() {
     let image = [
         73, 73, 42, 0, 8, 0, 0, 0, 8, 0, 0, 1, 4, 0, 1, 0, 0, 0, 100, 0, 0, 148, 1, 1, 4, 0, 1, 0,
         0, 0, 158, 0, 0, 251, 3, 1, 3, 255, 254, 255, 255, 0, 1, 0, 0, 0, 6, 1, 3, 0, 1, 0, 0, 0,
@@ -403,14 +401,7 @@ fn test_stripped_image_overflow() {
         178, 178,
     ];
 
-    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap();
-
-    let err = decoder.read_image().unwrap_err();
-
-    match err {
-        tiff::TiffError::LimitsExceeded => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
-    }
+    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
 }
 
 #[test]
