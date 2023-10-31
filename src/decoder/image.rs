@@ -557,7 +557,7 @@ impl Image {
             | (ColorType::YCbCr(n), _)
             | (ColorType::Gray(n), _)
                 if usize::from(n) == buffer.byte_len() * 8 => {}
-            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n < 8 => match self.predictor {
+            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n % 8 > 0 => match self.predictor {
                 Predictor::None => {}
                 Predictor::Horizontal => {
                     return Err(TiffError::UnsupportedError(
@@ -624,19 +624,25 @@ impl Image {
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
+        // Polyfil for usize::div_ceil added in rust 1.73+
+        fn usize_div_ceil(numerator: usize, denominator: usize) -> usize {
+            (numerator + denominator - 1) / denominator
+        }
+
         if output_width == data_dims.0 as usize && padding_right == 0 {
-            let total_samples = data_dims.0 as usize * data_dims.1 as usize * samples;
-            let tile = &mut buffer.as_bytes_mut()[..total_samples * byte_len];
+            let row_buffer_units: usize = usize_div_ceil(data_dims.0 as usize * samples * self.bits_per_sample as usize, byte_len * 8);
+            let total_buffer_units = row_buffer_units * data_dims.1 as usize;
+            let tile = &mut buffer.as_bytes_mut()[..total_buffer_units * byte_len];
             reader.read_exact(tile)?;
 
             for row in 0..data_dims.1 as usize {
-                let row_start = row * output_width * samples;
-                let row_end = (row + 1) * output_width * samples;
+                let row_start = row * row_buffer_units;
+                let row_end = (row + 1) * row_buffer_units;
                 let row = buffer.subrange(row_start..row_end);
                 super::fix_endianness_and_predict(row, samples, byte_order, predictor);
             }
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
+                super::invert_colors(&mut buffer.subrange(0..total_buffer_units), color_type);
             }
         } else if padding_right > 0 && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
@@ -658,16 +664,19 @@ impl Image {
                 }
             }
         } else {
+            let row_buffer_units: usize = usize_div_ceil(data_dims.0 as usize * samples * self.bits_per_sample as usize, byte_len * 8);
+            let output_buffer_units = usize_div_ceil(output_width * samples * self.bits_per_sample as usize, byte_len * 8);
+            let row_with_padding_buffer_units = usize_div_ceil((data_dims.0 as usize + padding_right as usize) * samples * self.bits_per_sample as usize, byte_len * 8);
             for row in 0..data_dims.1 as usize {
-                let row_start = row * output_width * samples;
-                let row_end = row_start + data_dims.0 as usize * samples;
+                let row_start = row * output_buffer_units;
+                let row_end = row_start + row_buffer_units;
 
                 let row = &mut buffer.as_bytes_mut()[(row_start * byte_len)..(row_end * byte_len)];
                 reader.read_exact(row)?;
 
                 // Skip horizontal padding
                 if padding_right > 0 {
-                    let len = u64::try_from(padding_right as usize * samples * byte_len)?;
+                    let len = u64::try_from((row_with_padding_buffer_units - row_buffer_units) * byte_len)?;
                     io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
                 }
 

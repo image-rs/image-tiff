@@ -1055,6 +1055,19 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    /// TODO: this over-allocates when (bits_per_sample * samples) % 8 != 0.
+    /// If we leave in per-tile bit padding, then we cannot do it without knowing the number of tiles across this image is.
+    /// 
+    /// We have two options basically for precise allocation without knowing the number of tiles across:
+    ///  * Ban tiles where tile_dim % (bits_per_sample * samples) == 0
+    ///  * Bitshift data to remove any padding bits between tiles
+    /// 
+    /// At this point, we don't support tiles when tile_dim % (bits_per_sample * samples) == 0,
+    /// But I could see it being beneficial to add support for a buffer output format that tracks padding bits and provides an iter over
+    /// intra-byte sized numbers.
+    /// 
+    /// But also, this method is used for both allocating a buffer for a single chunk, 
+    /// and for an entire image, which influences how that implementation will go
     fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
         let buffer_size = match width
             .checked_mul(height)
@@ -1152,8 +1165,16 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
+        /// Named such to avoid conflict when compiling on rust 1.73+
+        fn usize_div_ceil(numerator: usize, denominator: usize) -> usize {
+            (numerator + denominator - 1) / denominator
+        }
+
+        let byte_len = result.as_buffer(0).byte_len();
         let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
-        let strip_samples = width as usize * chunk_dimensions.1 as usize * samples;
+        // Calculate the number of strips to be round up such that the next row starts on a buffer unit boundary
+        // This assumes that non-end-of-row chunks fit exactly in their chunks; e.g. no extra unused bits within an unpadded chunk
+        let strip_samples = usize_div_ceil(width as usize * samples * self.image.bits_per_sample  as usize, 8 * byte_len)  * chunk_dimensions.1 as usize;
 
         let image_chunks = self.image().chunk_offsets.len() / self.image().strips_per_pixel();
         // For multi-band images, only the first band is read.
@@ -1165,7 +1186,8 @@ impl<R: Read + Seek> Decoder<R> {
 
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
-            let buffer_offset = y * strip_samples + x * chunk_dimensions.0 as usize * samples;
+            let row_buffer_len = usize_div_ceil(chunk_dimensions.0 as usize * samples * self.image.bits_per_sample as usize, 8 * byte_len);
+            let buffer_offset = y * strip_samples + x * row_buffer_len;
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
                 &mut self.reader,
