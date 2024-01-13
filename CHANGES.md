@@ -1,3 +1,12 @@
+# Version 0.9.1
+
+New features:
+- Basic support for planar configuration.
+- Allow arbitrary number of samples as long as all have the same bit depth.
+
+Fixes:
+- Don't panic when parsing metadata when custom compression is used.
+
 # Version 0.9.0
 
 New features:
