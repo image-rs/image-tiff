@@ -1,7 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::Decoder;
-use tiff::TiffResult;
+use tiff::{decoder::TiffDecoder, TiffResult};
 
 use std::fs::File;
 
@@ -13,7 +12,7 @@ fn test_directory<F: Fn(File) -> bool>(path: &str, f: F) {
 }
 
 fn decode_tiff(file: File) -> TiffResult<()> {
-    let mut decoder = Decoder::new(file)?;
+    let mut decoder = TiffDecoder::new(file)?;
     decoder.read_image()?;
     Ok(())
 }

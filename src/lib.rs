@@ -10,9 +10,12 @@ mod bytecast;
 pub mod decoder;
 pub mod encoder;
 mod error;
+pub mod ifd;
 pub mod tags;
+mod tiff_kind;
 
 pub use self::error::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
+pub use tiff_kind::*;
 
 /// An enumeration over supported color types and their bit depths
 #[derive(Copy, PartialEq, Eq, Debug, Clone, Hash)]

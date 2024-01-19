@@ -1,7 +1,7 @@
 extern crate tiff;
 
-use tiff::decoder::{Decoder, DecodingResult};
-use tiff::encoder::{colortype, Compression, Predictor, TiffEncoder};
+use tiff::decoder::{DecodingResult, TiffDecoder};
+use tiff::encoder::{colortype, Predictor, TiffEncoder};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -18,7 +18,7 @@ macro_rules! test_predict {
         ) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::new(file).expect("Cannot create decoder!");
+            let mut decoder = TiffDecoder::new(file).expect("Cannot create decoder!");
 
             assert_eq!(decoder.colortype().unwrap(), expected_type);
             let image_data = match decoder.read_image().unwrap() {
@@ -123,7 +123,7 @@ macro_rules! test_predict_roundtrip {
         ) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let img_file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+            let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
             assert_eq!(decoder.colortype().unwrap(), expected_type);
 
             let image_data = match decoder.read_image().unwrap() {
@@ -142,7 +142,7 @@ macro_rules! test_predict_roundtrip {
             }
             file.seek(SeekFrom::Start(0)).unwrap();
             {
-                let mut decoder = Decoder::new(&mut file).unwrap();
+                let mut decoder = TiffDecoder::new(&mut file).unwrap();
                 if let DecodingResult::$buffer(img_res) =
                     decoder.read_image().expect("Decoding image failed")
                 {

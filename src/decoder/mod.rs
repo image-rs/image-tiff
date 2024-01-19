@@ -1,20 +1,29 @@
-use std::collections::{HashMap, HashSet};
-use std::io::{self, Read, Seek};
-
-use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
-    Tag, Type,
+use self::{
+    decoded_entry::DecodedEntry,
+    image::Image,
+    stream::{ByteOrder, EndianReader},
 };
 use crate::{
-    bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
+    ColorType, TiffError, TiffFormatError, TiffKind, TiffKindBig, TiffKindStandard, TiffResult,
+    TiffUnsupportedError, UsageError, bytecast,
+    encoder::{DirectoryEncoder, GenericTiffEncoder},
+    ifd::{BufferedEntry, Directory, ImageFileDirectory, Value},
+    tags::{
+        CompressionMethod, GpsTag, PhotometricInterpretation, PlanarConfiguration, Predictor,
+        SampleFormat, Tag, Type,
+    },
 };
 use half::f16;
+use std::{
+    collections::HashSet,
+    convert::TryFrom,
+    io::{self, Cursor, Read, Seek, Write},
+};
 
-use self::ifd::Directory;
-use self::image::Image;
-use self::stream::{ByteOrder, EndianReader};
+pub type TiffDecoder<W> = GenericTiffDecoder<W, TiffKindStandard>;
+pub type BigTiffDecoder<W> = GenericTiffDecoder<W, TiffKindBig>;
 
-pub mod ifd;
+mod decoded_entry;
 mod image;
 mod stream;
 mod tag_reader;
@@ -201,10 +210,12 @@ impl<'a> DecodingBuffer<'a> {
 pub enum ChunkType {
     Strip,
     Tile,
+    None,
 }
 
 /// Decoding limits
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// The maximum size of any `DecodingResult` in bytes, the default is
     /// 256MiB. If the entire image is decoded at once, then this will
@@ -217,10 +228,6 @@ pub struct Limits {
     /// Maximum size for intermediate buffer which may be used to limit the amount of data read per
     /// segment even if the entire image is decoded at once.
     pub intermediate_buffer_size: usize,
-    /// The purpose of this is to prevent all the fields of the struct from
-    /// being public, as this would make adding new fields a major version
-    /// bump.
-    _non_exhaustive: (),
 }
 
 impl Limits {
@@ -233,10 +240,9 @@ impl Limits {
     /// naturally, the machine running the program does not have infinite memory.
     pub fn unlimited() -> Limits {
         Limits {
-            decoding_buffer_size: usize::max_value(),
-            ifd_value_size: usize::max_value(),
-            intermediate_buffer_size: usize::max_value(),
-            _non_exhaustive: (),
+            decoding_buffer_size: usize::MAX,
+            ifd_value_size: usize::MAX,
+            intermediate_buffer_size: usize::MAX,
         }
     }
 }
@@ -247,7 +253,6 @@ impl Default for Limits {
             decoding_buffer_size: 256 * 1024 * 1024,
             intermediate_buffer_size: 128 * 1024 * 1024,
             ifd_value_size: 1024 * 1024,
-            _non_exhaustive: (),
         }
     }
 }
@@ -256,17 +261,17 @@ impl Default for Limits {
 ///
 /// Currently does not support decoding of interlaced images
 #[derive(Debug)]
-pub struct Decoder<R>
+pub struct GenericTiffDecoder<R, K>
 where
     R: Read + Seek,
+    K: TiffKind,
 {
     reader: EndianReader<R>,
-    bigtiff: bool,
     limits: Limits,
     next_ifd: Option<u64>,
     ifd_offsets: Vec<u64>,
     seen_ifds: HashSet<u64>,
-    image: Image,
+    pub(crate) image: Image<K>,
 }
 
 fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
@@ -356,7 +361,7 @@ fn fix_endianness_and_predict(
     samples: usize,
     byte_order: ByteOrder,
     predictor: Predictor,
-) {
+) -> TiffResult<()> {
     match predictor {
         Predictor::None => {
             fix_endianness(buf, byte_order, bit_depth);
@@ -374,7 +379,14 @@ fn fix_endianness_and_predict(
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
+        Predictor::Unknown(code) => {
+            return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
+                code,
+            )));
+        }
     }
+
+    Ok(())
 }
 
 fn invert_colors(buf: &mut [u8], color_type: ColorType, sample_format: SampleFormat) {
@@ -448,9 +460,9 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     };
 }
 
-impl<R: Read + Seek> Decoder<R> {
+impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
     /// Create a new decoder that decodes from the stream ```r```
-    pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
+    pub fn new(mut r: R) -> TiffResult<GenericTiffDecoder<R, K>> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
@@ -459,7 +471,7 @@ impl<R: Read + Seek> Decoder<R> {
             _ => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::TiffSignatureNotFound,
-                ))
+                ));
             }
         };
         let mut reader = EndianReader::new(r, byte_order);
@@ -484,9 +496,12 @@ impl<R: Read + Seek> Decoder<R> {
             _ => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::TiffSignatureInvalid,
-                ))
+                ));
             }
         };
+
+        assert!(K::is_big() == bigtiff, "Tiff format is invalid !");
+
         let next_ifd = if bigtiff {
             Some(reader.read_u64()?)
         } else {
@@ -497,9 +512,8 @@ impl<R: Read + Seek> Decoder<R> {
         seen_ifds.insert(*next_ifd.as_ref().unwrap());
         let ifd_offsets = vec![*next_ifd.as_ref().unwrap()];
 
-        let mut decoder = Decoder {
+        let mut decoder = GenericTiffDecoder {
             reader,
-            bigtiff,
             limits: Default::default(),
             next_ifd,
             ifd_offsets,
@@ -527,7 +541,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(decoder)
     }
 
-    pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
+    pub fn with_limits(mut self, limits: Limits) -> GenericTiffDecoder<R, K> {
         self.limits = limits;
         self
     }
@@ -540,8 +554,12 @@ impl<R: Read + Seek> Decoder<R> {
         self.image().colortype()
     }
 
-    fn image(&self) -> &Image {
+    fn image(&self) -> &Image<K> {
         &self.image
+    }
+
+    pub fn inner(&mut self) -> &mut EndianReader<R> {
+        &mut self.reader
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
@@ -571,9 +589,9 @@ impl<R: Read + Seek> Decoder<R> {
 
         // If the index is within the list of ifds then we can load the selected image/IFD
         if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset)?;
+            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, *ifd_offset)?;
 
-            self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+            self.image = Image::from_reader(&mut self.reader, ifd, &self.limits)?;
 
             Ok(())
         } else {
@@ -583,18 +601,14 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
-    fn next_ifd(&mut self) -> TiffResult<(Directory, Option<u64>)> {
+    fn next_ifd(&mut self) -> TiffResult<(Directory<DecodedEntry<K>>, Option<u64>)> {
         if self.next_ifd.is_none() {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
         }
 
-        let (ifd, next_ifd) = Self::read_ifd(
-            &mut self.reader,
-            self.bigtiff,
-            self.next_ifd.take().unwrap(),
-        )?;
+        let (ifd, next_ifd) = Self::read_ifd(&mut self.reader, self.next_ifd.take().unwrap())?;
 
         if let Some(next) = next_ifd {
             if !self.seen_ifds.insert(next) {
@@ -613,7 +627,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn next_image(&mut self) -> TiffResult<()> {
         let (ifd, _next_ifd) = self.next_ifd()?;
 
-        self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+        self.image = Image::from_reader(&mut self.reader, ifd, &self.limits)?;
         Ok(())
     }
 
@@ -629,7 +643,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     #[inline]
     pub fn read_ifd_offset(&mut self) -> Result<u64, io::Error> {
-        if self.bigtiff {
+        if K::is_big() {
             self.read_long8()
         } else {
             self.read_long().map(u64::from)
@@ -705,7 +719,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Reads a TIFF IFA offset/value field
     #[inline]
     pub fn read_offset(&mut self) -> TiffResult<[u8; 4]> {
-        if self.bigtiff {
+        if K::is_big() {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
@@ -741,10 +755,7 @@ impl<R: Read + Seek> Decoder<R> {
     // Type  2 bytes
     // Count 4 bytes
     // Value 4 bytes either a pointer the value itself
-    fn read_entry(
-        reader: &mut EndianReader<R>,
-        bigtiff: bool,
-    ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
+    fn read_entry(reader: &mut EndianReader<R>) -> TiffResult<Option<(Tag, DecodedEntry<K>)>> {
         let tag = Tag::from_u16_exhaustive(reader.read_u16()?);
         let type_ = match Type::from_u16(reader.read_u16()?) {
             Some(t) => t,
@@ -755,39 +766,38 @@ impl<R: Read + Seek> Decoder<R> {
                 return Ok(None);
             }
         };
-        let entry = if bigtiff {
-            let mut offset = [0; 8];
 
+        let entry = if K::is_big() {
+            let mut offset = [0; 8];
             let count = reader.read_u64()?;
             reader.inner().read_exact(&mut offset)?;
-            ifd::Entry::new_u64(type_, count, offset)
+            DecodedEntry::new(type_, K::convert_offset(count)?, &offset)
         } else {
             let mut offset = [0; 4];
-
             let count = reader.read_u32()?;
             reader.inner().read_exact(&mut offset)?;
-            ifd::Entry::new(type_, count, offset)
+            DecodedEntry::new(type_, count.into(), &offset)
         };
+
         Ok(Some((tag, entry)))
     }
 
     /// Reads the IFD starting at the indicated location.
-    fn read_ifd(
+    pub fn read_ifd(
         reader: &mut EndianReader<R>,
-        bigtiff: bool,
         ifd_location: u64,
-    ) -> TiffResult<(Directory, Option<u64>)> {
+    ) -> TiffResult<(Directory<DecodedEntry<K>>, Option<u64>)> {
         reader.goto_offset(ifd_location)?;
+        let mut dir = Directory::new();
 
-        let mut dir: Directory = HashMap::new();
-
-        let num_tags = if bigtiff {
+        let num_tags = if K::is_big() {
             reader.read_u64()?
         } else {
             reader.read_u16()?.into()
         };
+
         for _ in 0..num_tags {
-            let (tag, entry) = match Self::read_entry(reader, bigtiff)? {
+            let (tag, entry) = match Self::read_entry(reader)? {
                 Some(val) => val,
                 None => {
                     continue;
@@ -796,7 +806,7 @@ impl<R: Read + Seek> Decoder<R> {
             dir.insert(tag, entry);
         }
 
-        let next_ifd = if bigtiff {
+        let next_ifd = if K::is_big() {
             reader.read_u64()?
         } else {
             reader.read_u32()?.into()
@@ -810,19 +820,19 @@ impl<R: Read + Seek> Decoder<R> {
         Ok((dir, next_ifd))
     }
 
+    pub fn find_tag_entry(&self, tag: Tag) -> Option<DecodedEntry<K>> {
+        self.image().ifd.as_ref().and_then(|i| i.get(&tag).cloned())
+    }
+
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
-    pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        let entry = match self.image().ifd.as_ref().unwrap().get(&tag) {
+    pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
+        let entry = match self.find_tag_entry(tag) {
             None => return Ok(None),
             Some(entry) => entry.clone(),
         };
 
-        Ok(Some(entry.val(
-            &self.limits,
-            self.bigtiff,
-            &mut self.reader,
-        )?))
+        Ok(Some(entry.val(&self.limits, &mut self.reader)?))
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
@@ -864,7 +874,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a tag.
     /// Returns an error if the tag is not present
-    pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
+    pub fn get_tag(&mut self, tag: Tag) -> TiffResult<Value> {
         match self.find_tag(tag)? {
             Some(val) => Ok(val),
             None => Err(TiffError::FormatError(
@@ -877,6 +887,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
     }
+
     pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
         self.get_tag(tag)?.into_u64()
     }
@@ -899,6 +910,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
         self.get_tag(tag)?.into_u16_vec()
     }
+
     pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
         self.get_tag(tag)?.into_u64_vec()
     }
@@ -924,10 +936,10 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Returns an iterator over all tags in the current image, along with their values.
-    pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
+    pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, Value)>> + '_ {
         self.image.ifd.as_ref().unwrap().iter().map(|(tag, entry)| {
             entry
-                .val(&self.limits, self.bigtiff, &mut self.reader)
+                .val(&self.limits, &mut self.reader)
                 .map(|value| (*tag, value))
         })
     }
@@ -966,6 +978,11 @@ impl<R: Read + Seek> Decoder<R> {
         let strips = match self.image().planar_config {
             PlanarConfiguration::Chunky => height / rows_per_strip,
             PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
+            PlanarConfiguration::Unknown(code) => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::UnknownPlanarConfiguration(code),
+                ));
+            }
         };
 
         Ok(strips)
@@ -1147,5 +1164,112 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         Ok(result)
+    }
+
+    pub fn get_exif_data(&mut self) -> TiffResult<Directory<BufferedEntry>> {
+        // create new IFD
+        let mut ifd = Directory::new();
+
+        // copy Exif tags from main IFD
+        if let Some(ref main_ifd) = self.image.ifd {
+            for (tag, entry) in main_ifd.iter() {
+                ifd.insert(*tag, entry.as_buffered(&mut self.reader)?);
+            }
+        }
+
+        Ok(ifd)
+    }
+
+    pub fn get_exif_ifd(&mut self, tag: Tag) -> TiffResult<Directory<BufferedEntry>> {
+        // create new IFD
+        let mut ifd = Directory::new();
+
+        if let Some(offset) = self.find_tag(tag)? {
+            let offset = if K::is_big() {
+                offset.into_u64()?
+            } else {
+                offset.into_u32()?.into()
+            };
+
+            let (fetched, _) = Self::read_ifd(&mut self.reader, offset)?;
+
+            // loop through entries
+            for (tag, value) in fetched.into_iter() {
+                let b_entry = value.as_buffered(&mut self.reader)?;
+                ifd.insert(tag, b_entry);
+            }
+        }
+
+        Ok(ifd)
+    }
+
+    pub fn get_gps_ifd(&mut self) -> TiffResult<ImageFileDirectory<GpsTag, BufferedEntry>> {
+        let ifd = self.get_exif_ifd(Tag::GpsIfd)?;
+
+        let mut gps_ifd = ImageFileDirectory::<GpsTag, BufferedEntry>::new();
+        ifd.into_iter().for_each(|(t, e)| {
+            gps_ifd.insert(GpsTag::from_u16(t.to_u16()).unwrap(), e);
+        });
+
+        Ok(gps_ifd)
+    }
+
+    /// Extracts the EXIF metadata (if present) and returns it in a light TIFF format
+    pub fn read_exif<T: TiffKind>(&mut self) -> TiffResult<Vec<u8>> {
+        // create tiff encoder for result
+        let mut exifdata = Cursor::new(Vec::new());
+        let mut encoder = GenericTiffEncoder::<_, T>::new(Write::by_ref(&mut exifdata))?;
+
+        // create new IFD
+        let mut ifd0 = encoder.new_directory()?;
+
+        // copy Exif tags from main IFD
+        if let Some(ref main_ifd) = self.image.ifd {
+            for (tag, entry) in main_ifd.iter() {
+                let b_entry = entry.as_buffered(&mut self.reader)?;
+                ifd0.write_tag(*tag, b_entry)?;
+            }
+        }
+
+        // copy sub-ifds
+        self.copy_ifd(Tag::ExifIfd, &mut ifd0)?;
+        self.copy_ifd(Tag::GpsIfd, &mut ifd0)?;
+        self.copy_ifd(Tag::InteropIfd, &mut ifd0)?;
+
+        ifd0.finish()?;
+
+        Ok(exifdata.into_inner())
+    }
+
+    fn copy_ifd<W: Seek + Write, T: TiffKind>(
+        &mut self,
+        tag: Tag,
+        new_ifd: &mut DirectoryEncoder<W, T>,
+    ) -> TiffResult<()> {
+        let exif_ifd_offset = self.find_tag(tag)?;
+        if exif_ifd_offset.is_some() {
+            let offset = if K::is_big() {
+                exif_ifd_offset.unwrap().into_u64()?
+            } else {
+                exif_ifd_offset.unwrap().into_u32()?.into()
+            };
+
+            // create sub-ifd
+            new_ifd.subdirectory_start();
+
+            let (ifd, _trash1) = Self::read_ifd(&mut self.reader, offset)?;
+
+            // loop through entries
+            ifd.into_iter().for_each(|(tag, value)| {
+                let b_entry = value.as_buffered(&mut self.reader).unwrap();
+                new_ifd.write_tag(tag, b_entry).unwrap();
+            });
+
+            // return to ifd0 and write offset
+            let ifd_offset = new_ifd.subdirectory_close()?;
+            new_ifd.write_tag(tag, ifd_offset as u32)?;
+        }
+
+        Ok(())
     }
 }
