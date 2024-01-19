@@ -1,18 +1,24 @@
-use std::collections::{HashMap, HashSet};
-use std::io::{self, Read, Seek};
-
-use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
-    Tag, Type,
+use self::{
+    ifd::Directory,
+    image::Image,
+    stream::{ByteOrder, EndianReader, SmartReader},
 };
 use crate::{
-    bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
+    bytecast,
+    decoder::ifd::Entry,
+    encoder::{DirectoryEncoder, TiffEncoder, TiffKind},
+    tags::{
+        CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
+        Tag, Type, EXIF_TAGS,
+    },
+    ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 use half::f16;
-
-use self::ifd::Directory;
-use self::image::Image;
-use self::stream::{ByteOrder, EndianReader, SmartReader};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+    io::{self, Cursor, Read, Seek, Write},
+};
 
 pub mod ifd;
 mod image;
@@ -201,6 +207,7 @@ impl<'a> DecodingBuffer<'a> {
 pub enum ChunkType {
     Strip,
     Tile,
+    None,
 }
 
 /// Decoding limits
@@ -459,7 +466,7 @@ impl<R: Read + Seek> Decoder<R> {
             _ => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::TiffSignatureNotFound,
-                ))
+                ));
             }
         };
         let mut reader = SmartReader::wrap(r, byte_order);
@@ -484,7 +491,7 @@ impl<R: Read + Seek> Decoder<R> {
             _ => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::TiffSignatureInvalid,
-                ))
+                ));
             }
         };
         let next_ifd = if bigtiff {
@@ -542,6 +549,10 @@ impl<R: Read + Seek> Decoder<R> {
 
     fn image(&self) -> &Image {
         &self.image
+    }
+
+    pub fn inner(&mut self) -> &mut SmartReader<R> {
+        &mut self.reader
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
@@ -772,7 +783,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Reads the IFD starting at the indicated location.
-    fn read_ifd(
+    pub fn read_ifd(
         reader: &mut SmartReader<R>,
         bigtiff: bool,
         ifd_location: u64,
@@ -810,10 +821,14 @@ impl<R: Read + Seek> Decoder<R> {
         Ok((dir, next_ifd))
     }
 
+    pub fn find_tag_entry(&self, tag: Tag) -> Option<Entry> {
+        self.image().ifd.as_ref().unwrap().get(&tag).cloned()
+    }
+
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        let entry = match self.image().ifd.as_ref().unwrap().get(&tag) {
+        let entry = match self.find_tag_entry(tag) {
             None => return Ok(None),
             Some(entry) => entry.clone(),
         };
@@ -1147,5 +1162,71 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         Ok(result)
+    }
+
+    /// Extracts the EXIF metadata (if present) and returns it in a light TIFF format
+    pub fn read_exif(&mut self) -> TiffResult<Vec<u8>> {
+        // create tiff encoder for result
+        let mut exifdata = Cursor::new(Vec::new());
+        let mut encoder = TiffEncoder::new(Write::by_ref(&mut exifdata))?;
+
+        // create new IFD
+        let mut ifd0 = encoder.new_directory()?;
+
+        // copy Exif tags from main IFD
+        let exif_tags = EXIF_TAGS;
+        exif_tags.into_iter().for_each(|tag| {
+            let entry = self.find_tag_entry(tag);
+            if entry.is_some() {
+                let b_entry = entry
+                    .unwrap()
+                    .as_buffered(self.bigtiff.clone(), &mut self.reader)
+                    .unwrap();
+                ifd0.write_tag(tag, b_entry).unwrap();
+            }
+        });
+
+        // copy sub-ifds
+        self.copy_ifd(Tag::ExifIfd, &mut ifd0)?;
+        self.copy_ifd(Tag::GpsIfd, &mut ifd0)?;
+        self.copy_ifd(Tag::InteropIfd, &mut ifd0)?;
+
+        ifd0.finish()?;
+
+        Ok(exifdata.into_inner())
+    }
+
+    fn copy_ifd<W: Seek + Write, K: TiffKind>(
+        &mut self,
+        tag: Tag,
+        new_ifd: &mut DirectoryEncoder<W, K>,
+    ) -> TiffResult<()> {
+        let exif_ifd_offset = self.find_tag(tag)?;
+        if exif_ifd_offset.is_some() {
+            let offset = if self.bigtiff {
+                exif_ifd_offset.unwrap().into_u64()?
+            } else {
+                exif_ifd_offset.unwrap().into_u32()?.into()
+            };
+
+            // create sub-ifd
+            new_ifd.subdirectory_start();
+
+            let (ifd, _trash1) = Self::read_ifd(&mut self.reader, self.bigtiff.clone(), offset)?;
+
+            // loop through entries
+            ifd.into_iter().for_each(|(tag, value)| {
+                let b_entry = value
+                    .as_buffered(self.bigtiff.clone(), &mut self.reader)
+                    .unwrap();
+                new_ifd.write_tag(tag, b_entry).unwrap();
+            });
+
+            // return to ifd0 and write offset
+            let ifd_offset = new_ifd.subirectory_close()?;
+            new_ifd.write_tag(tag, ifd_offset as u32)?;
+        }
+
+        Ok(())
     }
 }

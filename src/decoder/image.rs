@@ -284,6 +284,13 @@ impl Image {
                     ));
                 }
             }
+            (false,false,false,false) => { // allow reading Tiff without image data
+                chunk_type = ChunkType::None; // the ChunkType will make sure an error is thrown later if trying to read image data
+                strip_decoder = None;
+                tile_attributes = None;
+                chunk_offsets = Vec::new();
+                chunk_bytes = Vec::new();
+            },
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
@@ -510,6 +517,11 @@ impl Image {
                     u32::try_from(tile_attrs.tile_length)?,
                 ))
             }
+            ChunkType::None => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::StripTileTagConflict,
+                ))
+            }
         }
     }
 
@@ -541,6 +553,11 @@ impl Image {
                 let tile_length = tile_attrs.tile_length - padding_down;
 
                 Ok((u32::try_from(tile_width)?, u32::try_from(tile_length)?))
+            }
+            ChunkType::None => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::StripTileTagConflict,
+                ))
             }
         }
     }

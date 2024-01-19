@@ -25,6 +25,7 @@ zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.1"
+kamadak-exif = "0.5.5"
 
 [features]
 zstd = ["dep:zstd"]
