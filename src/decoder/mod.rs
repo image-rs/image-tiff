@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
-use std::io::{self, Read, Seek};
+use std::io::{self, Cursor, Read, Seek, Write};
 use std::ops::Range;
 
 use crate::{
     bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
+use crate::encoder::{DirectoryEncoder, TiffEncoder, TiffKind};
 
 use self::ifd::Directory;
 use self::image::Image;
@@ -1178,5 +1179,63 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         Ok(result)
+    }
+
+    /// Extracts the EXIF metadata (if present) and returns it in a light TIFF format
+    pub fn read_exif(&mut self) -> TiffResult<Vec<u8>> {
+        // create tiff encoder for result
+        let mut exifdata = Cursor::new(Vec::new());
+        let mut encoder = TiffEncoder::new(Write::by_ref(&mut exifdata))?;
+
+        // create new IFD
+        let mut ifd0 = encoder.new_directory()?;
+        let ifd = self.image.ifd.as_ref().unwrap();
+
+        // copy Exif tags from main IFD
+        let exif_tags = [Tag::ImageWidth,Tag::ImageLength,Tag::PhotometricInterpretation,
+            Tag::ImageDescription,Tag::Make,Tag::Model,Tag::Orientation,Tag::XResolution,
+            Tag::YResolution,Tag::ResolutionUnit,Tag::Software,Tag::DateTime,Tag::Artist,
+            Tag::HostComputer,Tag::Unknown(33432)];
+        exif_tags.into_iter().for_each(| tag | {
+            let entry = ifd.get(&tag);
+            if entry.is_some() {
+                let b_entry = entry.unwrap().as_buffered(self.bigtiff.clone(), &mut self.reader).unwrap();
+                ifd0.write_tag(tag, b_entry).unwrap();
+            }
+        });
+
+        // find Exif sub-IFD and copy it whole
+        let exif_ifd_offset = self.find_tag(Tag::Unknown(34665))?;
+        if exif_ifd_offset.is_some() {
+            let offset = if self.bigtiff {
+                exif_ifd_offset.unwrap().into_u64()?
+            } else {
+                exif_ifd_offset.unwrap().into_u32()?.into()
+            };
+
+            // create sub-ifd
+            ifd0.subdirectory_start();
+            // copy entries
+            self.copy_ifd(offset, &mut ifd0)?;
+            // return to ifd0 and write offset
+            let ifd_offset = ifd0.subirectory_close()?;
+            ifd0.write_tag(Tag::Unknown(34665), ifd_offset as u32)?;
+        }
+        ifd0.finish()?;
+
+        Ok(exifdata.into_inner())
+    }
+
+    fn copy_ifd<W: Seek+Write, K: TiffKind>(&mut self, offset: u64, new_ifd: &mut DirectoryEncoder<W,K>) -> TiffResult<()> {
+        let (ifd, _trash1) =
+            Self::read_ifd(&mut self.reader, self.bigtiff.clone(), offset)?;
+
+        // loop through entries
+        ifd.into_iter().for_each(|(tag, value)| {
+           let b_entry = value.as_buffered(self.bigtiff.clone(), &mut self.reader).unwrap();
+            new_ifd.write_tag(tag, b_entry).unwrap();
+        });
+
+        Ok(())
     }
 }

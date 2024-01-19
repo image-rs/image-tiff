@@ -160,6 +160,7 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     // We use BTreeMap to make sure tags are written in correct order
     ifd_pointer_pos: u64,
     ifd: BTreeMap<u16, DirectoryEntry<K::OffsetType>>,
+    sub_ifd: Option<BTreeMap<u16, DirectoryEntry<K::OffsetType>>>,
 }
 
 impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
@@ -172,7 +173,20 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             dropped: false,
             ifd_pointer_pos,
             ifd: BTreeMap::new(),
+            sub_ifd: None,
         })
+    }
+
+    /// Start writing to sub-IFD
+    pub fn subdirectory_start(&mut self) {
+        self.sub_ifd = Some(BTreeMap::new());
+    }
+
+    /// Stop writing to sub-IFD and resume master IFD, returns offset of sub-IFD
+    pub fn subirectory_close(&mut self) -> TiffResult<u64> {
+        let offset = self.write_directory()?;
+        self.sub_ifd = None;
+        Ok(offset)
     }
 
     /// Write a single ifd tag.
@@ -183,10 +197,15 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             value.write(&mut writer)?;
         }
 
-        self.ifd.insert(
+        let active_ifd = match &self.sub_ifd {
+            None => &mut self.ifd,
+            Some(_v) => self.sub_ifd.as_mut().unwrap(),
+        };
+
+        active_ifd.insert(
             tag.to_u16(),
             DirectoryEntry {
-                data_type: <T>::FIELD_TYPE.to_u16(),
+                data_type: value.is_type().to_u16(),
                 count: value.count().try_into()?,
                 data: bytes,
             },
@@ -196,11 +215,16 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
+        let active_ifd = match &self.sub_ifd {
+            None => &mut self.ifd,
+            Some(_v) => self.sub_ifd.as_mut().unwrap(),
+        };
+
         // Start by writing out all values
         for &mut DirectoryEntry {
             data: ref mut bytes,
             ..
-        } in self.ifd.values_mut()
+        } in active_ifd.values_mut()
         {
             let data_bytes = mem::size_of::<K::OffsetType>();
 
@@ -219,7 +243,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
         let offset = self.writer.offset();
 
-        K::write_entry_count(self.writer, self.ifd.len())?;
+        K::write_entry_count(self.writer, active_ifd.len())?;
         for (
             tag,
             DirectoryEntry {
@@ -227,7 +251,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
                 count,
                 data: offset,
             },
-        ) in self.ifd.iter()
+        ) in active_ifd.iter()
         {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(*field_type)?;
@@ -253,6 +277,9 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     fn finish_internal(&mut self) -> TiffResult<()> {
+        if self.sub_ifd.is_some() {
+           self.subirectory_close()?;
+        }
         let ifd_pointer = self.write_directory()?;
         let curr_pos = self.writer.offset();
 

@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
 /// Byte order of the TIFF file.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ByteOrder {
     /// little endian byte order
     LittleEndian,

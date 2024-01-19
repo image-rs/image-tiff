@@ -1,5 +1,6 @@
 //! Function for reading TIFF tags
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::io::{self, Read, Seek};
@@ -9,6 +10,7 @@ use std::str;
 use super::stream::{ByteOrder, EndianReader, SmartReader};
 use crate::tags::{Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult};
+use crate::encoder::TiffValue;
 
 use self::Value::{
     Ascii, Byte, Double, Float, Ifd, IfdBig, List, Rational, RationalBig, SRational, SRationalBig,
@@ -642,7 +644,144 @@ impl Entry {
         }
         Ok(List(v))
     }
+
+    pub fn as_buffered<R: Read+Seek>(&self,
+                       bigtiff: bool,
+                       reader: &mut SmartReader<R> ) -> TiffResult<BufferedEntry> {
+        let bo = reader.byte_order();
+
+        let tag_size = match self.type_ {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
+            Type::SHORT | Type::SSHORT => 2,
+            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+            Type::LONG8
+            | Type::SLONG8
+            | Type::DOUBLE
+            | Type::RATIONAL
+            | Type::SRATIONAL
+            | Type::IFD8 => 8,
+        };
+
+        let value_bytes = match self.count.checked_mul(tag_size) {
+            Some(n) => n,
+            None => {
+                return Err(TiffError::LimitsExceeded);
+            }
+        };
+
+        let native_bo;
+        #[cfg(target_endian = "little")]
+        {native_bo = ByteOrder::LittleEndian;}
+        #[cfg(not(target_endian = "little"))]
+        {native_bo = ByteOrder::BigEndian;}
+
+        let mut buf = vec![0; value_bytes as usize];
+        if value_bytes <= 4 || (bigtiff && value_bytes <= 8) {
+            self.r(bo).read(&mut buf)?;
+
+
+            match self.type_ { // for multi-byte values
+                Type::SHORT | Type::SSHORT | Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD
+                | Type::LONG8 | Type::SLONG8 | Type::DOUBLE | Type::IFD8 =>
+                    if native_bo != bo { // if byte-order is non-native
+                        // reverse byte order
+                        let mut new_buf = vec![0; value_bytes as usize];
+                        for i in 0..value_bytes {
+                            new_buf[i as usize] = buf[(value_bytes - 1 - i) as usize];
+                        }
+                        buf = new_buf;
+                    }
+                _=>{}
+            }
+
+        } else {
+            if bigtiff {
+                reader.goto_offset(self.r(bo).read_u64()?.into())?;
+            } else {
+                reader.goto_offset(self.r(bo).read_u32()?.into())?;
+            }
+            reader.read_exact(&mut buf)?;
+
+            match self.type_ { // for multi-byte values
+                Type::LONG8 | Type::SLONG8 | Type::DOUBLE  =>
+                    if native_bo != bo { // if byte-order is non-native
+                        // reverse byte order
+                        let mut new_buf = vec![0; value_bytes as usize];
+                        for i in 0..value_bytes {
+                            new_buf[i as usize] = buf[(value_bytes - 1 - i) as usize];
+                        }
+                        buf = new_buf;
+                    }
+                Type::RATIONAL | Type::SRATIONAL =>
+                    if native_bo != bo { // if byte-order is non-native
+                        // reverse byte order
+                        let mut new_buf = vec![0; 8];
+                        new_buf[0] = buf[3];
+                        new_buf[1] = buf[2];
+                        new_buf[2] = buf[1];
+                        new_buf[3] = buf[0];
+                        new_buf[4] = buf[7];
+                        new_buf[5] = buf[6];
+                        new_buf[6] = buf[5];
+                        new_buf[7] = buf[4];
+                        buf = new_buf;
+                    }
+                _=>{}
+            }
+        }
+
+        Ok(BufferedEntry{
+            type_: self.type_,
+            count: self.count.clone(),
+            data: buf
+        })
+    }
 }
+
+#[derive(Clone)]
+pub struct BufferedEntry {
+    type_: Type,
+    count: u64,
+    data: Vec<u8>,
+}
+
+impl TiffValue for BufferedEntry {
+    const BYTE_LEN: u8 = 1;
+
+    fn is_type(&self) -> Type {
+        self.type_
+    }
+
+    fn count(&self) -> usize {
+        self.count.clone() as usize
+    }
+
+    fn bytes(&self) -> usize {
+        let tag_size = match self.type_ {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
+            Type::SHORT | Type::SSHORT => 2,
+            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+            Type::LONG8
+            | Type::SLONG8
+            | Type::DOUBLE
+            | Type::RATIONAL
+            | Type::SRATIONAL
+            | Type::IFD8 => 8,
+        };
+
+        let value_bytes = match self.count.checked_mul(tag_size) {
+            Some(n) => n,
+            None => 0,
+        };
+        value_bytes as usize
+    }
+
+    fn data(&self) -> Cow<[u8]> {
+        Cow::Borrowed(&self.data)
+    }
+}
+
+
 
 /// Extracts a list of BYTE tags stored in an offset
 #[inline]
