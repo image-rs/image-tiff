@@ -645,11 +645,19 @@ impl Entry {
         Ok(List(v))
     }
 
+    /// retrieve entry with data read into a buffer (to cache it for writing)
     pub fn as_buffered<R: Read+Seek>(&self,
                        bigtiff: bool,
                        reader: &mut SmartReader<R> ) -> TiffResult<BufferedEntry> {
+        // establish byte order
         let bo = reader.byte_order();
+        let native_bo;
+        #[cfg(target_endian = "little")]
+        {native_bo = ByteOrder::LittleEndian;}
+        #[cfg(not(target_endian = "little"))]
+        {native_bo = ByteOrder::BigEndian;}
 
+        // establish size
         let tag_size = match self.type_ {
             Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
             Type::SHORT | Type::SSHORT => 2,
@@ -661,7 +669,6 @@ impl Entry {
             | Type::SRATIONAL
             | Type::IFD8 => 8,
         };
-
         let value_bytes = match self.count.checked_mul(tag_size) {
             Some(n) => n,
             None => {
@@ -669,16 +676,10 @@ impl Entry {
             }
         };
 
-        let native_bo;
-        #[cfg(target_endian = "little")]
-        {native_bo = ByteOrder::LittleEndian;}
-        #[cfg(not(target_endian = "little"))]
-        {native_bo = ByteOrder::BigEndian;}
-
         let mut buf = vec![0; value_bytes as usize];
+        // read values that fit within the IFD entry
         if value_bytes <= 4 || (bigtiff && value_bytes <= 8) {
             self.r(bo).read(&mut buf)?;
-
 
             match self.type_ { // for multi-byte values
                 Type::SHORT | Type::SSHORT | Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD
@@ -694,7 +695,8 @@ impl Entry {
                 _=>{}
             }
 
-        } else {
+        } else { // values that use a pointer
+            // read pointed data
             if bigtiff {
                 reader.goto_offset(self.r(bo).read_u64()?.into())?;
             } else {
@@ -738,6 +740,7 @@ impl Entry {
     }
 }
 
+/// Entry with buffered instead of read data
 #[derive(Clone)]
 pub struct BufferedEntry {
     type_: Type,
@@ -745,6 +748,7 @@ pub struct BufferedEntry {
     data: Vec<u8>,
 }
 
+/// Implement TiffValue to allow writing this data with encoder
 impl TiffValue for BufferedEntry {
     const BYTE_LEN: u8 = 1;
 
@@ -780,8 +784,6 @@ impl TiffValue for BufferedEntry {
         Cow::Borrowed(&self.data)
     }
 }
-
-
 
 /// Extracts a list of BYTE tags stored in an offset
 #[inline]

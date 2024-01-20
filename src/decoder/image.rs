@@ -285,13 +285,13 @@ impl Image {
                     ));
                 }
             }
-            (false,false,false,false) => {
-                chunk_type = ChunkType::None;
+            (false,false,false,false) => { // allow reading Tiff without image data
+                chunk_type = ChunkType::None; // the ChunkType will make sure an error is thrown later if trying to read image data
                 strip_decoder = None;
                 tile_attributes = None;
                 chunk_offsets = Vec::new();
                 chunk_bytes = Vec::new();
-            }, // Tiff without image data
+            },
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
