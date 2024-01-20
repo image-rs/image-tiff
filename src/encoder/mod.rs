@@ -188,6 +188,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     /// Stop writing to sub-IFD and resume master IFD, returns offset of sub-IFD
     pub fn subirectory_close(&mut self) -> TiffResult<u64> {
         let offset = self.write_directory()?;
+        K::write_offset(self.writer, 0)?;
         self.sub_ifd = None;
         Ok(offset)
     }

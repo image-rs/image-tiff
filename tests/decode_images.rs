@@ -4,8 +4,9 @@ use tiff::decoder::{ifd, Decoder, DecodingResult};
 use tiff::ColorType;
 
 use std::fs::File;
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::path::PathBuf;
+use tiff::decoder::ifd::Value;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
 
@@ -519,8 +520,46 @@ fn test_exif_decoding() {
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     let raw_exif = decoder.read_exif().expect("Unable to read Exif data");
 
-    let mut output = File::create(PathBuf::from(TEST_IMAGE_DIR).join("exif.out"))
-        .expect("Unable to open output file");
+    let mut output = Cursor::new(Vec::new());
     output.write(&raw_exif).expect("Unable to write output");
     output.flush().expect("Unable to flush writer");
+
+    output.set_position(0);
+    let sum : u64 =  output.into_inner().into_iter().map(u64::from).sum();
+    assert_eq!(sum, 4177);
+}
+
+extern crate exif;
+#[test]
+fn test_exif_parsing() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("exif.tif");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    let raw_exif = decoder.read_exif().expect("Unable to read Exif data");
+
+    let exifreader = exif::Reader::new();
+    let exif_data = exifreader.read_raw(raw_exif).expect("Unable to parse Exif data");
+
+    match exif_data.get_field(exif::Tag::Orientation, exif::In::PRIMARY) {
+        Some(orientation) =>
+            { assert_eq!(orientation.value.get_uint(0).unwrap(), 1); },
+        None => panic!("Orientation tag missing"),
+    }
+
+    match exif_data.get_field(exif::Tag::ColorSpace, exif::In::PRIMARY) {
+        Some(colourspace) =>
+            { assert_eq!(colourspace.value.get_uint(0).unwrap(), 1); },
+        None => panic!("Colourspace tag missing"),
+    }
+
+    match exif_data.get_field(exif::Tag::ExposureBiasValue, exif::In::PRIMARY) {
+        Some(exposurecomp) => match exposurecomp.value {
+            exif::Value::SRational(ref v) if !v.is_empty() => {
+                let value = v[0];
+                assert_eq!(value.to_f32(), -2.0f32)
+            }
+            _ => panic!("ExposureCompensation has wrong type"),
+        }
+        None => panic!("ExposureCompensation tag missing"),
+    }
 }
