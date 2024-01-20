@@ -128,8 +128,17 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     GeoDoubleParamsTag = 34736, // (SPOT)
     GeoAsciiParamsTag = 34737, // (SPOT)
     GdalNodata = 42113, // Contains areas with missing data
+    GpsIfd = 34853,
+    ExifIfd = 34665,
+    InteropIfd = 40965,
 }
 }
+
+/// List of Tiff tags in the image IFD read as part of the Exif metadata
+pub const EXIF_TAGS: [Tag; 15] = [Tag::ImageWidth,Tag::ImageLength,Tag::PhotometricInterpretation,
+Tag::ImageDescription,Tag::Make,Tag::Model,Tag::Orientation,Tag::XResolution,
+Tag::YResolution,Tag::ResolutionUnit,Tag::Software,Tag::DateTime,Tag::Artist,
+Tag::HostComputer,Tag::Unknown(33432)];
 
 tags! {
 /// The type of an IFD entry (a 2 byte field).
