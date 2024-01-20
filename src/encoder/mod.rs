@@ -9,12 +9,15 @@ use std::{
     mem,
     num::TryFromIntError,
 };
+use std::io::{Cursor, Read};
 
 use crate::{
     error::TiffResult,
     tags::{CompressionMethod, ResolutionUnit, Tag},
     TiffError, TiffFormatError,
 };
+use crate::decoder::Decoder;
+use crate::tags::EXIF_TAGS;
 
 pub mod colortype;
 pub mod compression;
@@ -533,6 +536,53 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
     /// Set image y-resolution
     pub fn y_resolution(&mut self, value: Rational) {
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
+    }
+
+    /// Write Exif data from TIFF encoded byte block
+    pub fn exif_tags(&mut self, source: Vec<u8>) -> TiffResult<()> {
+        let mut decoder = Decoder::new(Cursor::new(source))?;
+
+        // copy Exif tags to main IFD
+        let exif_tags = EXIF_TAGS;
+        exif_tags.into_iter().for_each(| tag | {
+            let entry = decoder.find_tag_entry(tag);
+            if entry.is_some() && !self.encoder.ifd.contains_key(&tag.to_u16()) {
+                let b_entry = entry.unwrap().as_buffered(false, decoder.inner()).unwrap();
+                self.encoder.write_tag(tag, b_entry).unwrap();
+            }
+        });
+
+        // copy sub-ifds
+        self.copy_ifd(Tag::ExifIfd, &mut decoder)?;
+        self.copy_ifd(Tag::GpsIfd, &mut decoder)?;
+        self.copy_ifd(Tag::InteropIfd, &mut decoder)?;
+
+        Ok(())
+    }
+
+    fn copy_ifd<R: Read+Seek>(&mut self, tag: Tag, decoder: &mut Decoder<R>) -> TiffResult<()> {
+        let exif_ifd_offset = decoder.find_tag(tag)?;
+        if exif_ifd_offset.is_some() {
+            let offset = exif_ifd_offset.unwrap().into_u32()?.into();
+
+            // create sub-ifd
+            self.encoder.subdirectory_start();
+
+            let (ifd, _trash1) =
+                Decoder::read_ifd(decoder.inner(), false, offset)?;
+
+            // loop through entries
+            ifd.into_iter().for_each(|(tag, value)| {
+                let b_entry = value.as_buffered(false, decoder.inner()).unwrap();
+                self.encoder.write_tag(tag, b_entry).unwrap();
+            });
+
+            // return to ifd0 and write offset
+            let ifd_offset = self.encoder.subirectory_close()?;
+            self.encoder.write_tag(tag, ifd_offset as u32)?;
+        }
+
+        Ok(())
     }
 
     /// Set image number of lines per strip

@@ -6,7 +6,7 @@ use tiff::tags::Tag;
 use tiff::ColorType;
 
 use std::fs::File;
-use std::io::{Cursor, Seek, SeekFrom};
+use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 #[test]
@@ -525,5 +525,27 @@ fn test_rows_per_strip() {
                 other => panic!("Incorrect strip type {:?}", other),
             }
         }
+    }
+}
+
+#[test]
+fn recode_exif_data () {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("exif.tif");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    let raw_exif = decoder.read_exif().expect("Unable to read Exif data");
+    let image_data = decoder.read_image().expect("Unable to decode");
+
+    //let output = Cursor::new(Vec::new());
+    let mut output = File::create(PathBuf::from(TEST_IMAGE_DIR).join("exif.out.tiff"))
+        .expect("Unable to open output file");
+
+    let mut tiff = TiffEncoder::new(&mut output).expect("Unable to create TIFF");
+    let (width, heigth) = decoder.dimensions().expect("Unable to read dimension");
+    let mut image = tiff.new_image::<colortype::RGB8>(width,heigth).expect("Unable to create encoder");
+    image.exif_tags(raw_exif).expect("Unable to write Exif data");
+    if let DecodingResult::U8(vec) = image_data {
+        image.write_data(vec.as_slice()).expect("Unable to write image data");
+        output.flush().expect("Unable to flush output");
     }
 }
