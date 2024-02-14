@@ -7,7 +7,7 @@ use super::writer::TiffWriter;
 /// Trait for types that can be encoded in a tiff file
 pub trait TiffValue {
     const BYTE_LEN: u8;
-    const FIELD_TYPE: Type;
+    fn is_type(&self) -> Type;
     fn count(&self) -> usize;
     fn bytes(&self) -> usize {
         self.count() * usize::from(Self::BYTE_LEN)
@@ -28,7 +28,7 @@ pub trait TiffValue {
 
 impl TiffValue for [u8] {
     const BYTE_LEN: u8 = 1;
-    const FIELD_TYPE: Type = Type::BYTE;
+    fn is_type(&self) -> Type { Type::BYTE }
 
     fn count(&self) -> usize {
         self.len()
@@ -41,8 +41,8 @@ impl TiffValue for [u8] {
 
 impl TiffValue for [i8] {
     const BYTE_LEN: u8 = 1;
-    const FIELD_TYPE: Type = Type::SBYTE;
-
+    fn is_type(&self) -> Type { Type::SBYTE }
+    
     fn count(&self) -> usize {
         self.len()
     }
@@ -54,8 +54,8 @@ impl TiffValue for [i8] {
 
 impl TiffValue for [u16] {
     const BYTE_LEN: u8 = 2;
-    const FIELD_TYPE: Type = Type::SHORT;
-
+    fn is_type(&self) -> Type { Type::SHORT }
+    
     fn count(&self) -> usize {
         self.len()
     }
@@ -67,8 +67,8 @@ impl TiffValue for [u16] {
 
 impl TiffValue for [i16] {
     const BYTE_LEN: u8 = 2;
-    const FIELD_TYPE: Type = Type::SSHORT;
-
+    fn is_type(&self) -> Type { Type::SSHORT }
+    
     fn count(&self) -> usize {
         self.len()
     }
@@ -80,7 +80,7 @@ impl TiffValue for [i16] {
 
 impl TiffValue for [u32] {
     const BYTE_LEN: u8 = 4;
-    const FIELD_TYPE: Type = Type::LONG;
+    fn is_type(&self) -> Type { Type::LONG }
 
     fn count(&self) -> usize {
         self.len()
@@ -93,7 +93,7 @@ impl TiffValue for [u32] {
 
 impl TiffValue for [i32] {
     const BYTE_LEN: u8 = 4;
-    const FIELD_TYPE: Type = Type::SLONG;
+    fn is_type(&self) -> Type { Type::SLONG}
 
     fn count(&self) -> usize {
         self.len()
@@ -106,7 +106,7 @@ impl TiffValue for [i32] {
 
 impl TiffValue for [u64] {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::LONG8;
+    fn is_type(&self) -> Type { Type::LONG8}
 
     fn count(&self) -> usize {
         self.len()
@@ -119,7 +119,7 @@ impl TiffValue for [u64] {
 
 impl TiffValue for [i64] {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::SLONG8;
+    fn is_type(&self) -> Type { Type::SLONG8}
 
     fn count(&self) -> usize {
         self.len()
@@ -132,7 +132,7 @@ impl TiffValue for [i64] {
 
 impl TiffValue for [f32] {
     const BYTE_LEN: u8 = 4;
-    const FIELD_TYPE: Type = Type::FLOAT;
+    fn is_type(&self) -> Type { Type::FLOAT}
 
     fn count(&self) -> usize {
         self.len()
@@ -146,7 +146,7 @@ impl TiffValue for [f32] {
 
 impl TiffValue for [f64] {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::DOUBLE;
+    fn is_type(&self) -> Type { Type::DOUBLE}
 
     fn count(&self) -> usize {
         self.len()
@@ -160,7 +160,7 @@ impl TiffValue for [f64] {
 
 impl TiffValue for u8 {
     const BYTE_LEN: u8 = 1;
-    const FIELD_TYPE: Type = Type::BYTE;
+    fn is_type(&self) -> Type { Type::BYTE}
 
     fn count(&self) -> usize {
         1
@@ -178,7 +178,7 @@ impl TiffValue for u8 {
 
 impl TiffValue for i8 {
     const BYTE_LEN: u8 = 1;
-    const FIELD_TYPE: Type = Type::SBYTE;
+    fn is_type(&self) -> Type { Type::SBYTE}
 
     fn count(&self) -> usize {
         1
@@ -196,7 +196,7 @@ impl TiffValue for i8 {
 
 impl TiffValue for u16 {
     const BYTE_LEN: u8 = 2;
-    const FIELD_TYPE: Type = Type::SHORT;
+    fn is_type(&self) -> Type { Type::SHORT}
 
     fn count(&self) -> usize {
         1
@@ -214,7 +214,7 @@ impl TiffValue for u16 {
 
 impl TiffValue for i16 {
     const BYTE_LEN: u8 = 2;
-    const FIELD_TYPE: Type = Type::SSHORT;
+    fn is_type(&self) -> Type { Type::SSHORT}
 
     fn count(&self) -> usize {
         1
@@ -232,7 +232,7 @@ impl TiffValue for i16 {
 
 impl TiffValue for u32 {
     const BYTE_LEN: u8 = 4;
-    const FIELD_TYPE: Type = Type::LONG;
+    fn is_type(&self) -> Type { Type::LONG}
 
     fn count(&self) -> usize {
         1
@@ -250,7 +250,7 @@ impl TiffValue for u32 {
 
 impl TiffValue for i32 {
     const BYTE_LEN: u8 = 4;
-    const FIELD_TYPE: Type = Type::SLONG;
+    fn is_type(&self) -> Type { Type::SLONG}
 
     fn count(&self) -> usize {
         1
@@ -268,7 +268,7 @@ impl TiffValue for i32 {
 
 impl TiffValue for u64 {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::LONG8;
+    fn is_type(&self) -> Type { Type::LONG8}
 
     fn count(&self) -> usize {
         1
@@ -286,7 +286,7 @@ impl TiffValue for u64 {
 
 impl TiffValue for i64 {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::SLONG8;
+    fn is_type(&self) -> Type { Type::SLONG8}
 
     fn count(&self) -> usize {
         1
@@ -304,7 +304,7 @@ impl TiffValue for i64 {
 
 impl TiffValue for f32 {
     const BYTE_LEN: u8 = 4;
-    const FIELD_TYPE: Type = Type::FLOAT;
+    fn is_type(&self) -> Type { Type::FLOAT}
 
     fn count(&self) -> usize {
         1
@@ -322,7 +322,7 @@ impl TiffValue for f32 {
 
 impl TiffValue for f64 {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::DOUBLE;
+    fn is_type(&self) -> Type { Type::DOUBLE}
 
     fn count(&self) -> usize {
         1
@@ -340,7 +340,7 @@ impl TiffValue for f64 {
 
 impl TiffValue for Ifd {
     const BYTE_LEN: u8 = 4;
-    const FIELD_TYPE: Type = Type::IFD;
+    fn is_type(&self) -> Type { Type::IFD}
 
     fn count(&self) -> usize {
         1
@@ -358,7 +358,7 @@ impl TiffValue for Ifd {
 
 impl TiffValue for Ifd8 {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::IFD8;
+    fn is_type(&self) -> Type { Type::IFD8}
 
     fn count(&self) -> usize {
         1
@@ -376,7 +376,7 @@ impl TiffValue for Ifd8 {
 
 impl TiffValue for Rational {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::RATIONAL;
+    fn is_type(&self) -> Type { Type::RATIONAL}
 
     fn count(&self) -> usize {
         1
@@ -399,7 +399,7 @@ impl TiffValue for Rational {
 
 impl TiffValue for SRational {
     const BYTE_LEN: u8 = 8;
-    const FIELD_TYPE: Type = Type::SRATIONAL;
+    fn is_type(&self) -> Type { Type::SRATIONAL}
 
     fn count(&self) -> usize {
         1
@@ -422,7 +422,7 @@ impl TiffValue for SRational {
 
 impl TiffValue for str {
     const BYTE_LEN: u8 = 1;
-    const FIELD_TYPE: Type = Type::ASCII;
+    fn is_type(&self) -> Type { Type::ASCII}
 
     fn count(&self) -> usize {
         self.len() + 1
@@ -452,7 +452,7 @@ impl TiffValue for str {
 
 impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
     const BYTE_LEN: u8 = T::BYTE_LEN;
-    const FIELD_TYPE: Type = T::FIELD_TYPE;
+    fn is_type(&self) -> Type { (*self).is_type() }
 
     fn count(&self) -> usize {
         (*self).count()
@@ -471,7 +471,7 @@ macro_rules! impl_tiff_value_for_contiguous_sequence {
     ($inner_type:ty; $bytes:expr; $field_type:expr) => {
         impl $crate::encoder::TiffValue for [$inner_type] {
             const BYTE_LEN: u8 = $bytes;
-            const FIELD_TYPE: Type = $field_type;
+            fn is_type(&self) -> Type { $field_type }
 
             fn count(&self) -> usize {
                 self.len()

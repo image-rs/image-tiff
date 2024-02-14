@@ -9,12 +9,15 @@ use std::{
     mem,
     num::TryFromIntError,
 };
+use std::io::{Cursor, Read};
 
 use crate::{
     error::TiffResult,
     tags::{CompressionMethod, ResolutionUnit, Tag},
     TiffError, TiffFormatError,
 };
+use crate::decoder::Decoder;
+use crate::tags::EXIF_TAGS;
 
 pub mod colortype;
 pub mod compression;
@@ -160,6 +163,7 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     // We use BTreeMap to make sure tags are written in correct order
     ifd_pointer_pos: u64,
     ifd: BTreeMap<u16, DirectoryEntry<K::OffsetType>>,
+    sub_ifd: Option<BTreeMap<u16, DirectoryEntry<K::OffsetType>>>,
 }
 
 impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
@@ -172,7 +176,21 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             dropped: false,
             ifd_pointer_pos,
             ifd: BTreeMap::new(),
+            sub_ifd: None,
         })
+    }
+
+    /// Start writing to sub-IFD
+    pub fn subdirectory_start(&mut self) {
+        self.sub_ifd = Some(BTreeMap::new());
+    }
+
+    /// Stop writing to sub-IFD and resume master IFD, returns offset of sub-IFD
+    pub fn subirectory_close(&mut self) -> TiffResult<u64> {
+        let offset = self.write_directory()?;
+        K::write_offset(self.writer, 0)?;
+        self.sub_ifd = None;
+        Ok(offset)
     }
 
     /// Write a single ifd tag.
@@ -183,10 +201,15 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             value.write(&mut writer)?;
         }
 
-        self.ifd.insert(
+        let active_ifd = match &self.sub_ifd {
+            None => &mut self.ifd,
+            Some(_v) => self.sub_ifd.as_mut().unwrap(),
+        };
+
+        active_ifd.insert(
             tag.to_u16(),
             DirectoryEntry {
-                data_type: <T>::FIELD_TYPE.to_u16(),
+                data_type: value.is_type().to_u16(),
                 count: value.count().try_into()?,
                 data: bytes,
             },
@@ -196,11 +219,16 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
+        let active_ifd = match &self.sub_ifd {
+            None => &mut self.ifd,
+            Some(_v) => self.sub_ifd.as_mut().unwrap(),
+        };
+
         // Start by writing out all values
         for &mut DirectoryEntry {
             data: ref mut bytes,
             ..
-        } in self.ifd.values_mut()
+        } in active_ifd.values_mut()
         {
             let data_bytes = mem::size_of::<K::OffsetType>();
 
@@ -219,7 +247,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
         let offset = self.writer.offset();
 
-        K::write_entry_count(self.writer, self.ifd.len())?;
+        K::write_entry_count(self.writer, active_ifd.len())?;
         for (
             tag,
             DirectoryEntry {
@@ -227,7 +255,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
                 count,
                 data: offset,
             },
-        ) in self.ifd.iter()
+        ) in active_ifd.iter()
         {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(*field_type)?;
@@ -253,6 +281,9 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     fn finish_internal(&mut self) -> TiffResult<()> {
+        if self.sub_ifd.is_some() {
+           self.subirectory_close()?;
+        }
         let ifd_pointer = self.write_directory()?;
         let curr_pos = self.writer.offset();
 
@@ -506,6 +537,53 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
     /// Set image y-resolution
     pub fn y_resolution(&mut self, value: Rational) {
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
+    }
+
+    /// Write Exif data from TIFF encoded byte block
+    pub fn exif_tags(&mut self, source: Vec<u8>) -> TiffResult<()> {
+        let mut decoder = Decoder::new(Cursor::new(source))?;
+
+        // copy Exif tags to main IFD
+        let exif_tags = EXIF_TAGS;
+        exif_tags.into_iter().for_each(| tag | {
+            let entry = decoder.find_tag_entry(tag);
+            if entry.is_some() && !self.encoder.ifd.contains_key(&tag.to_u16()) {
+                let b_entry = entry.unwrap().as_buffered(false, decoder.inner()).unwrap();
+                self.encoder.write_tag(tag, b_entry).unwrap();
+            }
+        });
+
+        // copy sub-ifds
+        self.copy_ifd(Tag::ExifIfd, &mut decoder)?;
+        self.copy_ifd(Tag::GpsIfd, &mut decoder)?;
+        self.copy_ifd(Tag::InteropIfd, &mut decoder)?;
+
+        Ok(())
+    }
+
+    fn copy_ifd<R: Read+Seek>(&mut self, tag: Tag, decoder: &mut Decoder<R>) -> TiffResult<()> {
+        let exif_ifd_offset = decoder.find_tag(tag)?;
+        if exif_ifd_offset.is_some() {
+            let offset = exif_ifd_offset.unwrap().into_u32()?.into();
+
+            // create sub-ifd
+            self.encoder.subdirectory_start();
+
+            let (ifd, _trash1) =
+                Decoder::read_ifd(decoder.inner(), false, offset)?;
+
+            // loop through entries
+            ifd.into_iter().for_each(|(tag, value)| {
+                let b_entry = value.as_buffered(false, decoder.inner()).unwrap();
+                self.encoder.write_tag(tag, b_entry).unwrap();
+            });
+
+            // return to ifd0 and write offset
+            let ifd_offset = self.encoder.subirectory_close()?;
+            self.encoder.write_tag(tag, ifd_offset as u32)?;
+        }
+
+        Ok(())
     }
 
     /// Set image number of lines per strip
