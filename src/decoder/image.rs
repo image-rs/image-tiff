@@ -288,7 +288,7 @@ impl Image {
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
-                ));
+                ))
             }
         };
 
@@ -446,7 +446,7 @@ impl Image {
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),
-                ));
+                ))
             }
         })
     }
