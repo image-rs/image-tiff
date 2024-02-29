@@ -572,7 +572,7 @@ impl<R: Read + Seek> Decoder<R> {
                 ifd: None,
                 width: 0,
                 height: 0,
-                bits_per_sample: vec![1],
+                bits_per_sample: 1,
                 samples: 1,
                 sample_format: vec![SampleFormat::Uint],
                 photometric_interpretation: PhotometricInterpretation::BlackIsZero,
@@ -1064,13 +1064,7 @@ impl<R: Read + Seek> Decoder<R> {
             None => return Err(TiffError::LimitsExceeded),
         };
 
-        let max_sample_bits = self
-            .image()
-            .bits_per_sample
-            .iter()
-            .cloned()
-            .max()
-            .unwrap_or(8);
+        let max_sample_bits = self.image().bits_per_sample;
         match self
             .image()
             .sample_format

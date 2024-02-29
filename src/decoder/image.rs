@@ -7,7 +7,7 @@ use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
 };
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
@@ -64,9 +64,9 @@ pub(crate) struct Image {
     pub ifd: Option<Directory>,
     pub width: u32,
     pub height: u32,
-    pub bits_per_sample: Vec<u8>,
+    pub bits_per_sample: u8,
     #[allow(unused)]
-    pub samples: u8,
+    pub samples: u16,
     pub sample_format: Vec<SampleFormat>,
     pub photometric_interpretation: PhotometricInterpretation,
     pub compression_method: CompressionMethod,
@@ -134,12 +134,14 @@ impl Image {
             None
         };
 
-        let samples = tag_reader
+        let samples: u16 = tag_reader
             .find_tag(Tag::SamplesPerPixel)?
             .map(Value::into_u16)
             .transpose()?
-            .unwrap_or(1)
-            .try_into()?;
+            .unwrap_or(1);
+        if samples == 0 {
+            return Err(TiffFormatError::SamplesPerPixelIsZero.into());
+        }
 
         let sample_format = match tag_reader.find_tag_uint_vec(Tag::SampleFormat)? {
             Some(vals) => {
@@ -158,12 +160,22 @@ impl Image {
             None => vec![SampleFormat::Uint],
         };
 
-        let bits_per_sample = match samples {
-            1..=255 => tag_reader
-                .find_tag_uint_vec(Tag::BitsPerSample)?
-                .unwrap_or_else(|| vec![1]),
-            _ => return Err(TiffUnsupportedError::UnsupportedSampleDepth(samples).into()),
-        };
+        let bits_per_sample: Vec<u8> = tag_reader
+            .find_tag_uint_vec(Tag::BitsPerSample)?
+            .unwrap_or_else(|| vec![1]);
+
+        // Technically bits_per_sample.len() should be *equal* to samples, but libtiff also allows
+        // it to be a single value that applies to all samples.
+        if bits_per_sample.len() != samples.into() && bits_per_sample.len() != 1 {
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
+        }
+
+        // This library (and libtiff) do not support mixed sample formats.
+        if bits_per_sample.iter().any(|&b| b != bits_per_sample[0]) {
+            return Err(TiffUnsupportedError::InconsistentBitsPerSample(bits_per_sample).into());
+        }
 
         let predictor = tag_reader
             .find_tag(Tag::Predictor)?
@@ -284,7 +296,7 @@ impl Image {
             ifd: Some(ifd),
             width,
             height,
-            bits_per_sample,
+            bits_per_sample: bits_per_sample[0],
             samples,
             sample_format,
             photometric_interpretation,
@@ -302,9 +314,9 @@ impl Image {
 
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
         match self.photometric_interpretation {
-            PhotometricInterpretation::RGB => match self.bits_per_sample[..] {
-                [r, g, b] if [r, r] == [g, b] => Ok(ColorType::RGB(r)),
-                [r, g, b, a] if [r, r, r] == [g, b, a] => Ok(ColorType::RGBA(r)),
+            PhotometricInterpretation::RGB => match self.samples {
+                3 => Ok(ColorType::RGB(self.bits_per_sample)),
+                4 => Ok(ColorType::RGBA(self.bits_per_sample)),
                 // FIXME: We should _ignore_ other components. In particular:
                 // > Beware of extra components. Some TIFF files may have more components per pixel
                 // than you think. A Baseline TIFF reader must skip over them gracefully,using the
@@ -313,39 +325,39 @@ impl Image {
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
-                        self.bits_per_sample.clone(),
+                        vec![self.bits_per_sample; self.samples as usize],
                     ),
                 )),
             },
-            PhotometricInterpretation::CMYK => match self.bits_per_sample[..] {
-                [c, m, y, k] if [c, c, c] == [m, y, k] => Ok(ColorType::CMYK(c)),
+            PhotometricInterpretation::CMYK => match self.samples {
+                4 => Ok(ColorType::CMYK(self.bits_per_sample)),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
-                        self.bits_per_sample.clone(),
+                        vec![self.bits_per_sample; self.samples as usize],
                     ),
                 )),
             },
-            PhotometricInterpretation::YCbCr => match self.bits_per_sample[..] {
-                [y, cb, cr] if [y, y] == [cb, cr] => Ok(ColorType::YCbCr(y)),
+            PhotometricInterpretation::YCbCr => match self.samples {
+                3 => Ok(ColorType::YCbCr(self.bits_per_sample)),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
-                        self.bits_per_sample.clone(),
+                        vec![self.bits_per_sample; self.samples as usize],
                     ),
                 )),
             },
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                if self.bits_per_sample.len() <= 64 =>
+                if self.samples <= 64 =>
             {
-                Ok(ColorType::Gray(self.bits_per_sample[0]))
+                Ok(ColorType::Gray(self.bits_per_sample))
             }
 
             // TODO: this is bad we should not fail at this point
             _ => Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::InterpretationWithBits(
                     self.photometric_interpretation,
-                    self.bits_per_sample.clone(),
+                    vec![self.bits_per_sample; self.samples as usize],
                 ),
             )),
         }
@@ -448,7 +460,7 @@ impl Image {
     /// * `PlanarConfiguration::Planar` -> 1 (RRR...) (GGG...) (BBB...)
     pub(crate) fn samples_per_pixel(&self) -> usize {
         match self.planar_config {
-            PlanarConfiguration::Chunky => self.bits_per_sample.len(),
+            PlanarConfiguration::Chunky => self.samples.into(),
             PlanarConfiguration::Planar => 1,
         }
     }
@@ -457,7 +469,7 @@ impl Image {
     pub(crate) fn strips_per_pixel(&self) -> usize {
         match self.planar_config {
             PlanarConfiguration::Chunky => 1,
-            PlanarConfiguration::Planar => self.bits_per_sample.len(),
+            PlanarConfiguration::Planar => self.samples.into(),
         }
     }
 

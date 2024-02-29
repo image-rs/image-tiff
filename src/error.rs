@@ -75,6 +75,7 @@ pub enum TiffFormatError {
     StripTileTagConflict,
     CycleInOffsets,
     JpegDecoder(JpegDecoderError),
+    SamplesPerPixelIsZero,
 }
 
 impl fmt::Display for TiffFormatError {
@@ -129,6 +130,7 @@ impl fmt::Display for TiffFormatError {
             StripTileTagConflict => write!(fmt, "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found."),
             CycleInOffsets => write!(fmt, "File contained a cycle in the list of IFDs"),
             JpegDecoder(ref error) => write!(fmt, "{}",  error),
+            SamplesPerPixelIsZero => write!(fmt, "Samples per pixel is zero"),
         }
     }
 }
@@ -146,6 +148,7 @@ impl fmt::Display for TiffFormatError {
 pub enum TiffUnsupportedError {
     FloatingPointPredictor(ColorType),
     HorizontalPredictor(ColorType),
+    InconsistentBitsPerSample(Vec<u8>),
     InterpretationWithBits(PhotometricInterpretation, Vec<u8>),
     UnknownInterpretation,
     UnknownCompressionMethod,
@@ -174,6 +177,9 @@ impl fmt::Display for TiffUnsupportedError {
                 "Horizontal predictor for {:?} is unsupported.",
                 color_type
             ),
+            InconsistentBitsPerSample(ref bits_per_sample) => {
+                write!(fmt, "Inconsistent bits per sample: {:?}.", bits_per_sample)
+            }
             InterpretationWithBits(ref photometric_interpretation, ref bits_per_sample) => write!(
                 fmt,
                 "{:?} with {:?} bits per sample is unsupported",
