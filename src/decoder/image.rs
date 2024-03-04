@@ -347,14 +347,19 @@ impl Image {
                     ),
                 )),
             },
-            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                if self.samples <= 64 =>
-            {
-                Ok(ColorType::Gray(self.bits_per_sample))
+            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero => {
+                match self.samples {
+                    1 => Ok(ColorType::Gray(self.bits_per_sample)),
+                    _ => Ok(ColorType::Multiband {
+                        bit_depth: self.bits_per_sample,
+                        num_samples: self.samples,
+                    }), // Samples >= 1
+                }
             }
-
             // TODO: this is bad we should not fail at this point
-            _ => Err(TiffError::UnsupportedError(
+            PhotometricInterpretation::RGBPalette
+            | PhotometricInterpretation::TransparencyMask
+            | PhotometricInterpretation::CIELab => Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::InterpretationWithBits(
                     self.photometric_interpretation,
                     vec![self.bits_per_sample; self.samples as usize],
@@ -570,6 +575,13 @@ impl Image {
                     ));
                 }
             },
+            (
+                ColorType::Multiband {
+                    bit_depth: _n,
+                    num_samples: _samples,
+                },
+                _,
+            ) => {}
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),

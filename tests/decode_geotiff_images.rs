@@ -24,7 +24,10 @@ fn test_geo_tiff() {
         );
         assert_eq!(
             decoder.colortype().expect("Cannot get colortype"),
-            ColorType::Gray(16)
+            ColorType::Multiband {
+                bit_depth: 16,
+                num_samples: 5
+            }
         );
         assert_eq!(
             decoder
@@ -52,7 +55,9 @@ fn test_geo_tiff() {
                 .expect("Cannot get pixel scale"),
             vec![60.0, 60.0, 0.0]
         );
-        let DecodingResult::I16(data) = decoder.read_image().unwrap() else { panic!("Cannot read band data") };
+        let DecodingResult::I16(data) = decoder.read_image().unwrap() else {
+            panic!("Cannot read band data")
+        };
         assert_eq!(data.len(), 500);
     }
 }
