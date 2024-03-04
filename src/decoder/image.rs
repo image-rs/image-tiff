@@ -353,7 +353,7 @@ impl Image {
                     _ => Ok(ColorType::Multiband {
                         bit_depth: self.bits_per_sample,
                         num_samples: self.samples,
-                    }), // Samples >= 1
+                    }),
                 }
             }
             // TODO: this is bad we should not fail at this point

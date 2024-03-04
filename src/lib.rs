@@ -41,6 +41,6 @@ pub enum ColorType {
     /// Pixel is YCbCr
     YCbCr(u8),
 
-    /// Pixel is multiband
+    /// Pixel has multiple bands/channels
     Multiband { bit_depth: u8, num_samples: u16 },
 }
