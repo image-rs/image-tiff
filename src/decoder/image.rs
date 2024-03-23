@@ -9,6 +9,7 @@ use crate::tags::{
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
+use zune_jpeg::zune_core;
 
 #[derive(Debug)]
 pub(crate) struct StripDecodeState {
@@ -402,7 +403,7 @@ impl Image {
                 // bytes of the remaining JPEG data is removed because it follows `jpeg_tables`.
                 // Similary, `jpeg_tables` ends with a `EOI` (HEX: `0xFFD9`) or __end of image__ marker,
                 // this has to be removed as well (last two bytes of `jpeg_tables`).
-                let jpeg_reader = match jpeg_tables {
+                let mut jpeg_reader = match jpeg_tables {
                     Some(jpeg_tables) => {
                         let mut reader = reader.take(compressed_length);
                         reader.read_exact(&mut [0; 2])?;
@@ -415,28 +416,25 @@ impl Image {
                     None => Box::new(reader.take(compressed_length)),
                 };
 
-                let mut decoder = jpeg::Decoder::new(jpeg_reader);
+                let mut jpeg_data = Vec::new();
+                jpeg_reader.read_to_end(&mut jpeg_data)?;
 
+                let mut decoder = zune_jpeg::JpegDecoder::new(jpeg_data);
+                let mut options: zune_core::options::DecoderOptions = Default::default();
                 match photometric_interpretation {
                     PhotometricInterpretation::RGB => {
-                        decoder.set_color_transform(jpeg::ColorTransform::RGB)
-                    }
-                    PhotometricInterpretation::WhiteIsZero => {
-                        decoder.set_color_transform(jpeg::ColorTransform::None)
-                    }
-                    PhotometricInterpretation::BlackIsZero => {
-                        decoder.set_color_transform(jpeg::ColorTransform::None)
-                    }
-                    PhotometricInterpretation::TransparencyMask => {
-                        decoder.set_color_transform(jpeg::ColorTransform::None)
+                        options = options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB);
                     }
                     PhotometricInterpretation::CMYK => {
-                        decoder.set_color_transform(jpeg::ColorTransform::CMYK)
+                        options = options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::CMYK);
                     }
                     PhotometricInterpretation::YCbCr => {
-                        decoder.set_color_transform(jpeg::ColorTransform::YCbCr)
+                        options = options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::YCbCr);
                     }
-                    photometric_interpretation => {
+                    PhotometricInterpretation::WhiteIsZero
+                    | PhotometricInterpretation::BlackIsZero
+                    | PhotometricInterpretation::TransparencyMask => {}
+                    PhotometricInterpretation::RGBPalette | PhotometricInterpretation::CIELab => {
                         return Err(TiffError::UnsupportedError(
                             TiffUnsupportedError::UnsupportedInterpretation(
                                 photometric_interpretation,
@@ -444,9 +442,9 @@ impl Image {
                         ));
                     }
                 }
+                decoder.set_options(options);
 
                 let data = decoder.decode()?;
-
                 Box::new(Cursor::new(data))
             }
             method => {
