@@ -1,6 +1,5 @@
 //! All IO functionality needed for TIFF decoding
 
-use std::convert::TryFrom;
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
 /// Byte order of the TIFF file.

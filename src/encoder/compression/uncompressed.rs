@@ -1,5 +1,4 @@
-use crate::{encoder::compression::*, tags::CompressionMethod};
-use std::io::Write;
+use crate::encoder::compression::*;
 
 /// The default algorithm which does not compress at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

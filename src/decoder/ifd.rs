@@ -1,7 +1,6 @@
 //! Function for reading TIFF tags
 
 use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
 use std::io::{self, Read, Seek};
 use std::mem;
 use std::str;

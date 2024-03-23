@@ -7,7 +7,6 @@ use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
 };
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
-use std::convert::TryFrom;
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
