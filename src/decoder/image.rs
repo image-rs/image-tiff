@@ -67,7 +67,7 @@ pub(crate) struct Image {
     pub bits_per_sample: u8,
     #[allow(unused)]
     pub samples: u16,
-    pub sample_format: Vec<SampleFormat>,
+    pub sample_format: SampleFormat,
     pub photometric_interpretation: PhotometricInterpretation,
     pub compression_method: CompressionMethod,
     pub predictor: Predictor,
@@ -155,9 +155,9 @@ impl Image {
                     return Err(TiffUnsupportedError::UnsupportedSampleFormat(sample_format).into());
                 }
 
-                sample_format
+                sample_format[0]
             }
-            None => vec![SampleFormat::Uint],
+            None => SampleFormat::Uint,
         };
 
         let bits_per_sample: Vec<u8> = tag_reader
