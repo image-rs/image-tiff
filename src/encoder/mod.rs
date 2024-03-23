@@ -3,7 +3,6 @@ pub use tiff_value::*;
 use std::{
     cmp,
     collections::BTreeMap,
-    convert::{TryFrom, TryInto},
     io::{self, Seek, Write},
     marker::PhantomData,
     mem,
