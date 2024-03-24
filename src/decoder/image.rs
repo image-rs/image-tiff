@@ -560,8 +560,21 @@ impl Image {
             | (ColorType::CMYK(n), _)
             | (ColorType::YCbCr(n), _)
             | (ColorType::Gray(n), _)
-                if usize::from(n) == buffer.byte_len() * 8 => {}
-            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n < 8 => match self.predictor {
+            | (
+                ColorType::Multiband {
+                    bit_depth: n,
+                    num_samples: _,
+                },
+                _,
+            ) if usize::from(n) == buffer.byte_len() * 8 => {}
+            (
+                ColorType::Gray(n)
+                | ColorType::Multiband {
+                    bit_depth: n,
+                    num_samples: _,
+                },
+                DecodingBuffer::U8(_),
+            ) if n < 8 => match self.predictor {
                 Predictor::None => {}
                 Predictor::Horizontal => {
                     return Err(TiffError::UnsupportedError(
@@ -574,13 +587,7 @@ impl Image {
                     ));
                 }
             },
-            (
-                ColorType::Multiband {
-                    bit_depth: _n,
-                    num_samples: _samples,
-                },
-                _,
-            ) => {}
+
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
