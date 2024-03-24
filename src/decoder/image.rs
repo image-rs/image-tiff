@@ -346,14 +346,19 @@ impl Image {
                     ),
                 )),
             },
-            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
-                if self.samples == 1 =>
-            {
-                Ok(ColorType::Gray(self.bits_per_sample))
+            PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero => {
+                match self.samples {
+                    1 => Ok(ColorType::Gray(self.bits_per_sample)),
+                    _ => Ok(ColorType::Multiband {
+                        bit_depth: self.bits_per_sample,
+                        num_samples: self.samples,
+                    }),
+                }
             }
-
             // TODO: this is bad we should not fail at this point
-            _ => Err(TiffError::UnsupportedError(
+            PhotometricInterpretation::RGBPalette
+            | PhotometricInterpretation::TransparencyMask
+            | PhotometricInterpretation::CIELab => Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::InterpretationWithBits(
                     self.photometric_interpretation,
                     vec![self.bits_per_sample; self.samples as usize],
@@ -555,13 +560,26 @@ impl Image {
             | (ColorType::CMYK(n), _)
             | (ColorType::YCbCr(n), _)
             | (ColorType::Gray(n), _)
-                if usize::from(n) == buffer.byte_len() * 8 => {}
-            (ColorType::Gray(n), DecodingBuffer::U8(_)) if n < 8 => match self.predictor {
+            | (
+                ColorType::Multiband {
+                    bit_depth: n,
+                    num_samples: _,
+                },
+                _,
+            ) if usize::from(n) == buffer.byte_len() * 8 => {}
+            (
+                ColorType::Gray(n)
+                | ColorType::Multiband {
+                    bit_depth: n,
+                    num_samples: _,
+                },
+                DecodingBuffer::U8(_),
+            ) if n < 8 => match self.predictor {
                 Predictor::None => {}
                 Predictor::Horizontal => {
                     return Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::HorizontalPredictor(color_type),
-                    ))
+                    ));
                 }
                 Predictor::FloatingPoint => {
                     return Err(TiffError::UnsupportedError(
@@ -572,7 +590,7 @@ impl Image {
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
-                ))
+                ));
             }
         }
 
