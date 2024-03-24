@@ -1,5 +1,4 @@
-use crate::{encoder::compression::*, tags::CompressionMethod};
-use std::io::Write;
+use crate::encoder::compression::*;
 use weezl::encode::Encoder as LZWEncoder;
 
 /// The LZW algorithm used to compress image data in TIFF files.

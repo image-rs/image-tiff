@@ -1,5 +1,5 @@
-use crate::{encoder::compression::*, tags::CompressionMethod};
-use std::io::{BufWriter, Error, ErrorKind, Write};
+use crate::encoder::compression::*;
+use std::io::{BufWriter, Error, ErrorKind};
 
 /// Compressor that uses the Packbits[^note] algorithm to compress bytes.
 ///

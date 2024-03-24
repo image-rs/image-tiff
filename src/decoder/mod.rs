@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
 use std::ops::Range;
 
@@ -574,7 +573,7 @@ impl<R: Read + Seek> Decoder<R> {
                 height: 0,
                 bits_per_sample: 1,
                 samples: 1,
-                sample_format: vec![SampleFormat::Uint],
+                sample_format: SampleFormat::Uint,
                 photometric_interpretation: PhotometricInterpretation::BlackIsZero,
                 compression_method: CompressionMethod::None,
                 jpeg_tables: None,
@@ -1065,12 +1064,7 @@ impl<R: Read + Seek> Decoder<R> {
         };
 
         let max_sample_bits = self.image().bits_per_sample;
-        match self
-            .image()
-            .sample_format
-            .first()
-            .unwrap_or(&SampleFormat::Uint)
-        {
+        match self.image().sample_format {
             SampleFormat::Uint => match max_sample_bits {
                 n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
                 n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
@@ -1096,7 +1090,7 @@ impl<R: Read + Seek> Decoder<R> {
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
             },
-            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![*format]).into()),
+            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format]).into()),
         }
     }
 
