@@ -587,7 +587,6 @@ impl Image {
                     ));
                 }
             },
-
             (type_, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
