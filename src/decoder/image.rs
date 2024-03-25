@@ -10,12 +10,12 @@ use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedEr
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct StripDecodeState {
     pub rows_per_strip: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Computed values useful for tile decoding
 pub(crate) struct TileAttributes {
     pub image_width: usize,
@@ -58,7 +58,7 @@ impl TileAttributes {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Image {
     pub ifd: Option<Directory>,
     pub width: u32,

@@ -293,7 +293,7 @@ impl Default for Limits {
 /// The representation of a TIFF decoder
 ///
 /// Currently does not support decoding of interlaced images
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Decoder<R>
 where
     R: Read + Seek,

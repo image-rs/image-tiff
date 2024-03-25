@@ -257,7 +257,7 @@ impl<R: Read> Read for PackBitsReader<R> {
 ///
 
 /// Reader that is aware of the byte order.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SmartReader<R>
 where
     R: Read,
