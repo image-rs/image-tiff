@@ -381,6 +381,7 @@ impl Image {
     }
 
     fn create_reader<'r, R: 'r + Read>(
+        &self,
         reader: R,
         compression_method: CompressionMethod,
         compressed_length: u64,
@@ -451,6 +452,25 @@ impl Image {
                 let data = decoder.decode()?;
 
                 Box::new(Cursor::new(data))
+            }
+            CompressionMethod::Fax4 => {
+                let width = u16::try_from(self.width)?;
+                let height = u16::try_from(self.height)?;
+                let mut out: Vec<u8> = Vec::with_capacity(usize::from(width) * usize::from(height));
+
+                let mut buffer = Vec::with_capacity(usize::try_from(compressed_length)?);
+                reader.take(compressed_length).read_to_end(&mut buffer)?;
+
+                // all extant tiff/fax4 decoders I've found always assume that the photometric interpretation
+                // is `WhiteIsZero`, ignoring the tag. ImageMagick appears to generate fax4-encoded tiffs
+                // with the tag incorrectly set to `BlackIsZero`.
+                fax::decoder::decode_g4(buffer.into_iter(), width, Some(height), |transitions| {
+                    out.extend(fax::decoder::pels(transitions, width).map(|c| match c {
+                        fax::Color::Black => 255,
+                        fax::Color::White => 0,
+                    }))
+                });
+                Box::new(Cursor::new(out))
             }
             method => {
                 return Err(TiffError::UnsupportedError(
@@ -653,7 +673,7 @@ impl Image {
         assert!(output_row_stride >= data_row_bytes);
         assert!(buf.len() >= output_row_stride * (data_dims.1 as usize - 1) + data_row_bytes);
 
-        let mut reader = Self::create_reader(
+        let mut reader = self.create_reader(
             reader,
             compression_method,
             *compressed_bytes,
