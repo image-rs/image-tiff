@@ -546,35 +546,29 @@ impl Image {
     pub(crate) fn expand_chunk(
         &self,
         reader: impl Read,
-        mut buffer: DecodingBuffer,
+        buf: &mut [u8],
         output_width: usize,
         byte_order: ByteOrder,
         chunk_index: u32,
         limits: &Limits,
     ) -> TiffResult<()> {
-        // Validate that the provided buffer is of the expected type.
+        // Validate that the color type is supported.
         let color_type = self.colortype()?;
-        match (color_type, &buffer) {
-            (ColorType::RGB(n), _)
-            | (ColorType::RGBA(n), _)
-            | (ColorType::CMYK(n), _)
-            | (ColorType::YCbCr(n), _)
-            | (ColorType::Gray(n), _)
-            | (
-                ColorType::Multiband {
-                    bit_depth: n,
-                    num_samples: _,
-                },
-                _,
-            ) if usize::from(n) == buffer.byte_len() * 8 => {}
-            (
-                ColorType::Gray(n)
-                | ColorType::Multiband {
-                    bit_depth: n,
-                    num_samples: _,
-                },
-                DecodingBuffer::U8(_),
-            ) if n < 8 => match self.predictor {
+        match color_type {
+            ColorType::RGB(n)
+            | ColorType::RGBA(n)
+            | ColorType::CMYK(n)
+            | ColorType::YCbCr(n)
+            | ColorType::Gray(n)
+            | ColorType::Multiband {
+                bit_depth: n,
+                num_samples: _,
+            } if n == 8 || n == 16 || n == 32 || n == 64 => {}
+            ColorType::Gray(n)
+            | ColorType::Multiband {
+                bit_depth: n,
+                num_samples: _,
+            } if n < 8 => match self.predictor {
                 Predictor::None => {}
                 Predictor::Horizontal => {
                     return Err(TiffError::UnsupportedError(
@@ -587,7 +581,7 @@ impl Image {
                     ));
                 }
             },
-            (type_, _) => {
+            type_ => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
                 ));
@@ -595,15 +589,14 @@ impl Image {
         }
 
         // Validate that the predictor is supported for the sample type.
-        match (self.predictor, &buffer) {
-            (Predictor::Horizontal, DecodingBuffer::F32(_))
-            | (Predictor::Horizontal, DecodingBuffer::F64(_)) => {
+        match (self.predictor, self.sample_format) {
+            (Predictor::Horizontal, SampleFormat::Int | SampleFormat::Uint) => {}
+            (Predictor::Horizontal, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::HorizontalPredictor(color_type),
                 ));
             }
-            (Predictor::FloatingPoint, DecodingBuffer::F32(_))
-            | (Predictor::FloatingPoint, DecodingBuffer::F64(_)) => {}
+            (Predictor::FloatingPoint, SampleFormat::IEEEFP) => {}
             (Predictor::FloatingPoint, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::FloatingPointPredictor(color_type),
@@ -643,17 +636,20 @@ impl Image {
 
         if output_width == data_dims.0 as usize && padding_right == 0 {
             let total_samples = data_dims.0 as usize * data_dims.1 as usize * samples;
-            let tile = &mut buffer.as_bytes_mut()[..total_samples * byte_len];
+            let tile = &mut buf[..total_samples * byte_len];
             reader.read_exact(tile)?;
 
-            for row in 0..data_dims.1 as usize {
-                let row_start = row * output_width * samples;
-                let row_end = (row + 1) * output_width * samples;
-                let row = buffer.subrange(row_start..row_end);
-                super::fix_endianness_and_predict(row, samples, byte_order, predictor);
+            for row in tile.chunks_mut(data_dims.0 as usize * samples) {
+                super::fix_endianness_and_predict(
+                    row,
+                    color_type.bit_depth(),
+                    samples,
+                    byte_order,
+                    predictor,
+                );
             }
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                super::invert_colors(&mut buffer.subrange(0..total_samples), color_type);
+                super::invert_colors(tile, color_type, self.sample_format);
             }
         } else if padding_right > 0 && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
@@ -671,7 +667,7 @@ impl Image {
                     _ => unreachable!(),
                 }
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(&mut buffer.subrange(row_start..row_end), color_type);
+                    super::invert_colors(buf, color_type, self.sample_format);
                 }
             }
         } else {
@@ -679,7 +675,7 @@ impl Image {
                 let row_start = row * output_width * samples;
                 let row_end = row_start + data_dims.0 as usize * samples;
 
-                let row = &mut buffer.as_bytes_mut()[(row_start * byte_len)..(row_end * byte_len)];
+                let row = &mut buf[(row_start * byte_len)..(row_end * byte_len)];
                 reader.read_exact(row)?;
 
                 // Skip horizontal padding
@@ -688,10 +684,15 @@ impl Image {
                     io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
                 }
 
-                let mut row = buffer.subrange(row_start..row_end);
-                super::fix_endianness_and_predict(row.copy(), samples, byte_order, predictor);
+                super::fix_endianness_and_predict(
+                    row,
+                    color_type.bit_depth(),
+                    samples,
+                    byte_order,
+                    predictor,
+                );
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(&mut row, color_type);
+                    super::invert_colors(row, color_type, self.sample_format);
                 }
             }
         }
