@@ -12,7 +12,6 @@ use crate::{
 
 #[cfg(feature = "fax")]
 use std::collections::VecDeque;
-
 use std::io::{self, Cursor, Read, Seek};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -465,7 +464,8 @@ impl Image {
 
                 struct Group4Reader<R2> {
                     decoder: fax::decoder::Group4Decoder<std::io::Bytes<R2>>,
-                    line_buf: VecDeque<u8>,
+                    bits: bitvec::vec::BitVec<u8, bitvec::prelude::Msb0>,
+                    byte_buf: VecDeque<u8>,
                     y: u16,
                     height: u16,
                     width: u16,
@@ -473,30 +473,38 @@ impl Image {
 
                 impl<R2: Read> Read for Group4Reader<R2> {
                     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                        if self.line_buf.is_empty() && self.y < self.height {
+                        if self.byte_buf.is_empty() && self.y < self.height {
                             let next = self
                                 .decoder
                                 .advance()
                                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
                             match next {
-                                fax::decoder::DecodeStatus::End => (),
+                                fax::decoder::DecodeStatus::End => {
+                                    // eprintln!("DONE!");
+                                    self.byte_buf.extend(self.bits.as_raw_slice())
+                                }
                                 fax::decoder::DecodeStatus::Incomplete => {
                                     self.y += 1;
-                                    self.line_buf.extend(
-                                        // all extant tiff/fax4 decoders I've found always assume that the photometric interpretation
-                                        // is `WhiteIsZero`, ignoring the tag. ImageMagick appears to generate fax4-encoded tiffs
-                                        // with the tag incorrectly set to `BlackIsZero`.
+                                    // eprintln!("{:?}", self.y);
+                                    for c in
                                         fax::decoder::pels(self.decoder.transition(), self.width)
-                                            .map(|c| match c {
-                                                fax::Color::Black => 255,
-                                                fax::Color::White => 0,
-                                            }),
-                                    );
+                                    {
+                                        self.bits.push(match c {
+                                            fax::Color::Black => true,
+                                            fax::Color::White => false,
+                                        });
+                                        if self.bits.len() == 8 {
+                                            self.byte_buf.extend(self.bits.as_raw_slice());
+                                            self.bits.clear()
+                                        }
+                                    }
                                 }
                             }
                         }
-                        self.line_buf.read(buf)
+                        // eprintln!("{:?}: {:?} / {:?}", self.y, self.byte_buf.len(), self.bits.len());
+
+                        self.byte_buf.read(buf)
                     }
                 }
 
@@ -505,7 +513,8 @@ impl Image {
                         reader.take(compressed_length).bytes(),
                         width,
                     )?,
-                    line_buf: VecDeque::with_capacity(usize::from(width)),
+                    bits: bitvec::vec::BitVec::new(),
+                    byte_buf: VecDeque::new(),
                     y: 0,
                     width: width,
                     height: height,
