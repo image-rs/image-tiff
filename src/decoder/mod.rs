@@ -1066,7 +1066,10 @@ impl<R: Read + Seek> Decoder<R> {
         let max_sample_bits = self.image().bits_per_sample;
         match self.image().sample_format {
             SampleFormat::Uint => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
+                n if n < 8 => {
+                    DecodingResult::new_u8(buffer_size / 8 * usize::from(n), &self.limits)
+                }
+                n if n == 8 => DecodingResult::new_u8(buffer_size, &self.limits),
                 n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
                 n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
                 n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
