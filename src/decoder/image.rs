@@ -1,7 +1,7 @@
 use super::ifd::{Directory, Value};
 use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
-use super::{fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
+use super::{predict_f32, predict_f64, Limits};
 use super::{stream::SmartReader, ChunkType};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
@@ -547,7 +547,7 @@ impl Image {
         &self,
         reader: impl Read,
         buf: &mut [u8],
-        output_width: usize,
+        output_row_stride: usize,
         byte_order: ByteOrder,
         chunk_index: u32,
         limits: &Limits,
@@ -615,7 +615,6 @@ impl Image {
             return Err(TiffError::LimitsExceeded);
         }
 
-        let byte_len = buffer.byte_len();
         let compression_method = self.compression_method;
         let photometric_interpretation = self.photometric_interpretation;
         let predictor = self.predictor;
@@ -624,7 +623,16 @@ impl Image {
         let chunk_dims = self.chunk_dimensions()?;
         let data_dims = self.chunk_data_dimensions(chunk_index)?;
 
-        let padding_right = chunk_dims.0 - data_dims.0;
+        // TODO: Check for overflow
+        let chunk_row_bits =
+            u64::from(chunk_dims.0) * u64::from(self.bits_per_sample) * samples as u64;
+        let chunk_row_bytes = ((chunk_row_bits + 7) / 8) as usize;
+        let data_row_bits =
+            u64::from(data_dims.0) * u64::from(self.bits_per_sample) * samples as u64;
+        let data_row_bytes = ((data_row_bits + 7) / 8) as usize;
+
+        // TODO: Return an error here?
+        assert!(output_row_stride >= data_row_bytes);
 
         let mut reader = Self::create_reader(
             reader,
@@ -634,12 +642,11 @@ impl Image {
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
-        if output_width == data_dims.0 as usize && padding_right == 0 {
-            let total_samples = data_dims.0 as usize * data_dims.1 as usize * samples;
-            let tile = &mut buf[..total_samples * byte_len];
+        if output_row_stride == chunk_row_bytes as usize {
+            let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
-            for row in tile.chunks_mut(data_dims.0 as usize * samples) {
+            for row in tile.chunks_mut(chunk_row_bytes as usize) {
                 super::fix_endianness_and_predict(
                     row,
                     color_type.bit_depth(),
@@ -651,36 +658,40 @@ impl Image {
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(tile, color_type, self.sample_format);
             }
-        } else if padding_right > 0 && self.predictor == Predictor::FloatingPoint {
+        } else if chunk_row_bytes > data_row_bytes && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
-            let mut encoded = vec![0u8; chunk_dims.0 as usize * samples * byte_len];
-
-            for row in 0..data_dims.1 as usize {
-                let row_start = row * output_width * samples;
-                let row_end = row_start + data_dims.0 as usize * samples;
-
+            let mut encoded = vec![0u8; chunk_row_bytes];
+            for row in buf
+                .chunks_mut(output_row_stride)
+                .take(data_dims.1 as usize)
+            {
                 reader.read_exact(&mut encoded)?;
-                match buffer.subrange(row_start..row_end) {
-                    DecodingBuffer::F32(buf) => fp_predict_f32(&mut encoded, buf, samples),
-                    DecodingBuffer::F64(buf) => fp_predict_f64(&mut encoded, buf, samples),
+
+                let row = &mut row[..data_row_bytes];
+                match color_type.bit_depth() {
+                    32 => predict_f32(&mut encoded, row, samples),
+                    64 => predict_f64(&mut encoded, row, samples),
                     _ => unreachable!(),
                 }
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(buf, color_type, self.sample_format);
+                    super::invert_colors(row, color_type, self.sample_format);
                 }
             }
         } else {
-            for row in 0..data_dims.1 as usize {
-                let row_start = row * output_width * samples;
-                let row_end = row_start + data_dims.0 as usize * samples;
-
-                let row = &mut buf[(row_start * byte_len)..(row_end * byte_len)];
+            for (i, row) in buf
+                .chunks_mut(output_row_stride)
+                .take(data_dims.1 as usize)
+                .enumerate()
+            {
+                let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 
+                println!("chunk={chunk_index}, index={i}");
+
                 // Skip horizontal padding
-                if padding_right > 0 {
-                    let len = u64::try_from(padding_right as usize * samples * byte_len)?;
+                if chunk_row_bytes > data_row_bytes {
+                    let len = u64::try_from(chunk_row_bytes - data_row_bytes)?;
                     io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
                 }
 

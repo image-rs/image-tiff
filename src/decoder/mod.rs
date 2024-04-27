@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek};
-use std::ops::Range;
 
 use crate::{
     bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -167,57 +166,6 @@ pub enum DecodingBuffer<'a> {
 }
 
 impl<'a> DecodingBuffer<'a> {
-    fn byte_len(&self) -> usize {
-        match *self {
-            DecodingBuffer::U8(_) => 1,
-            DecodingBuffer::U16(_) => 2,
-            DecodingBuffer::U32(_) => 4,
-            DecodingBuffer::U64(_) => 8,
-            DecodingBuffer::F32(_) => 4,
-            DecodingBuffer::F64(_) => 8,
-            DecodingBuffer::I8(_) => 1,
-            DecodingBuffer::I16(_) => 2,
-            DecodingBuffer::I32(_) => 4,
-            DecodingBuffer::I64(_) => 8,
-        }
-    }
-
-    fn copy<'b>(&'b mut self) -> DecodingBuffer<'b>
-    where
-        'a: 'b,
-    {
-        match *self {
-            DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(buf),
-            DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
-            DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(buf),
-            DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(buf),
-            DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(buf),
-            DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(buf),
-            DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(buf),
-            DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(buf),
-            DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(buf),
-            DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(buf),
-        }
-    }
-
-    fn subrange<'b>(&'b mut self, range: Range<usize>) -> DecodingBuffer<'b>
-    where
-        'a: 'b,
-    {
-        match *self {
-            DecodingBuffer::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[range]),
-            DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[range]),
-            DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[range]),
-            DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[range]),
-            DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[range]),
-            DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[range]),
-            DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[range]),
-            DecodingBuffer::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[range]),
-            DecodingBuffer::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[range]),
-            DecodingBuffer::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[range]),
-        }
-    }
-
     fn as_bytes_mut(&mut self) -> &mut [u8] {
         match self {
             DecodingBuffer::U8(ref mut buf) => buf,
@@ -315,21 +263,21 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
             }
         }
         9..=16 => {
-            for i in (samples..buf.len()).step_by(2) {
+            for i in (samples * 2..buf.len()).step_by(2) {
                 let v = u16::from_ne_bytes(buf[i..][..2].try_into().unwrap());
                 let p = u16::from_ne_bytes(buf[i - samples..][..2].try_into().unwrap());
                 buf[i..][..2].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
             }
         }
         17..=32 => {
-            for i in (samples..buf.len()).step_by(4) {
+            for i in (samples * 4..buf.len()).step_by(4) {
                 let v = u32::from_ne_bytes(buf[i..][..4].try_into().unwrap());
                 let p = u32::from_ne_bytes(buf[i - samples..][..4].try_into().unwrap());
                 buf[i..][..4].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
             }
         }
         33..=64 => {
-            for i in (samples..buf.len()).step_by(8) {
+            for i in (samples * 8..buf.len()).step_by(8) {
                 let v = u64::from_ne_bytes(buf[i..][..8].try_into().unwrap());
                 let p = u64::from_ne_bytes(buf[i - samples..][..8].try_into().unwrap());
                 buf[i..][..8].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
@@ -341,8 +289,10 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
     }
 }
 
-pub fn fp_predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
-    rev_hpredict_nsamp(input, 32, samples);
+fn predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
+    for i in samples..input.len() {
+        input[i] = input[i].wrapping_add(input[i - samples]);
+    }
 
     for (i, chunk) in output.chunks_mut(4).enumerate() {
         chunk.copy_from_slice(&u32::to_ne_bytes(u32::from_be_bytes([
@@ -354,8 +304,10 @@ pub fn fp_predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
     }
 }
 
-pub fn fp_predict_f64(input: &mut [u8], output: &mut [u8], samples: usize) {
-    rev_hpredict_nsamp(input, 64, samples);
+fn predict_f64(input: &mut [u8], output: &mut [u8], samples: usize) {
+    for i in samples..input.len() {
+        input[i] = input[i].wrapping_add(input[i - samples]);
+    }
 
     for (i, chunk) in output.chunks_mut(8).enumerate() {
         chunk.copy_from_slice(&u64::to_ne_bytes(u64::from_be_bytes([
@@ -389,8 +341,8 @@ fn fix_endianness_and_predict(
         Predictor::FloatingPoint => {
             let mut buffer_copy = buf.to_vec();
             match bit_depth {
-                32 => fp_predict_f32(&mut buffer_copy, buf, samples),
-                64 => fp_predict_f64(&mut buffer_copy, buf, samples),
+                32 => predict_f32(&mut buffer_copy, buf, samples),
+                64 => predict_f64(&mut buffer_copy, buf, samples),
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
@@ -443,25 +395,25 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     match byte_order {
         ByteOrder::LittleEndian => match bit_depth {
             0..=8 => {}
-            9..=16 => buf.chunks_mut(2).for_each(|v| {
+            9..=16 => buf.chunks_exact_mut(2).for_each(|v| {
                 v.copy_from_slice(&u16::from_le_bytes((*v).try_into().unwrap()).to_ne_bytes())
             }),
-            17..=32 => buf.chunks_mut(4).for_each(|v| {
+            17..=32 => buf.chunks_exact_mut(4).for_each(|v| {
                 v.copy_from_slice(&u32::from_le_bytes((*v).try_into().unwrap()).to_ne_bytes())
             }),
-            _ => buf.chunks_mut(8).for_each(|v| {
+            _ => buf.chunks_exact_mut(8).for_each(|v| {
                 v.copy_from_slice(&u64::from_le_bytes((*v).try_into().unwrap()).to_ne_bytes())
             }),
         },
         ByteOrder::BigEndian => match bit_depth {
-            0..=7 => {}
-            8..=15 => buf.chunks_mut(2).for_each(|v| {
+            0..=8 => {}
+            9..=16 => buf.chunks_exact_mut(2).for_each(|v| {
                 v.copy_from_slice(&u16::from_be_bytes((*v).try_into().unwrap()).to_ne_bytes())
             }),
-            16..=31 => buf.chunks_mut(4).for_each(|v| {
+            17..=32 => buf.chunks_exact_mut(4).for_each(|v| {
                 v.copy_from_slice(&u32::from_be_bytes((*v).try_into().unwrap()).to_ne_bytes())
             }),
-            _ => buf.chunks_mut(8).for_each(|v| {
+            _ => buf.chunks_exact_mut(8).for_each(|v| {
                 v.copy_from_slice(&u64::from_be_bytes((*v).try_into().unwrap()).to_ne_bytes())
             }),
         },
@@ -999,10 +951,14 @@ impl<R: Read + Seek> Decoder<R> {
 
         let byte_order = self.reader.byte_order;
 
+        // TODO: Overflow check
+        let output_row_stride =
+            output_width * self.image.samples_per_pixel() * self.image.bits_per_sample as usize / 8;
+
         self.image.expand_chunk(
             &mut self.reader,
-            buffer.copy(),
-            output_width,
+            buffer.as_bytes_mut(),
+            output_row_stride,
             byte_order,
             chunk_index,
             &self.limits,
@@ -1103,8 +1059,15 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
+        // TODO: Overflow check
+        let output_row_stride =
+            (((width as u64 * samples as u64 * self.image.bits_per_sample as u64) + 7) / 8)
+                as usize;
+        let chunk_row_bytes =
+            (((chunk_dimensions.0 as u64 * samples as u64 * self.image.bits_per_sample as u64) + 7)
+                / 8) as usize;
+
         let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
-        let strip_samples = width as usize * chunk_dimensions.1 as usize * samples;
 
         let image_chunks = self.image().chunk_offsets.len() / self.image().strips_per_pixel();
         // For multi-band images, only the first band is read.
@@ -1116,12 +1079,13 @@ impl<R: Read + Seek> Decoder<R> {
 
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
-            let buffer_offset = y * strip_samples + x * chunk_dimensions.0 as usize * samples;
+            let buffer_offset =
+                y * output_row_stride * chunk_dimensions.1 as usize + x * chunk_row_bytes;
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
                 &mut self.reader,
-                result.as_buffer(buffer_offset).copy(),
-                width as usize,
+                &mut result.as_buffer(0).as_bytes_mut()[buffer_offset..],
+                output_row_stride,
                 byte_order,
                 chunk as u32,
                 &self.limits,
