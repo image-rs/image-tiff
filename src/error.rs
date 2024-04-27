@@ -161,6 +161,7 @@ pub enum TiffUnsupportedError {
     UnsupportedDataType,
     UnsupportedInterpretation(PhotometricInterpretation),
     UnsupportedJpegFeature(UnsupportedFeature),
+    MisalignedTileBoundaries,
 }
 
 impl fmt::Display for TiffUnsupportedError {
@@ -219,6 +220,7 @@ impl fmt::Display for TiffUnsupportedError {
             UnsupportedJpegFeature(ref unsupported_feature) => {
                 write!(fmt, "Unsupported JPEG feature {:?}", unsupported_feature)
             }
+            MisalignedTileBoundaries => write!(fmt, "Tile rows are not aligned to byte boundaries"),
         }
     }
 }

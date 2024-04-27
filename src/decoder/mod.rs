@@ -1072,6 +1072,12 @@ impl<R: Read + Seek> Decoder<R> {
 
         let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
 
+        if chunks_across > 1 && chunk_row_bits % 8 != 0 {
+            return Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::MisalignedTileBoundaries,
+            ));
+        }
+
         let image_chunks = self.image().chunk_offsets.len() / self.image().strips_per_pixel();
         // For multi-band images, only the first band is read.
         // Possible improvements:
