@@ -44,3 +44,17 @@ pub enum ColorType {
     /// Pixel has multiple bands/channels
     Multiband { bit_depth: u8, num_samples: u16 },
 }
+impl ColorType {
+    fn bit_depth(&self) -> u8 {
+        match *self {
+            ColorType::Gray(b)
+            | ColorType::RGB(b)
+            | ColorType::Palette(b)
+            | ColorType::GrayA(b)
+            | ColorType::RGBA(b)
+            | ColorType::CMYK(b)
+            | ColorType::YCbCr(b)
+            | ColorType::Multiband { bit_depth: b, .. } => b,
+        }
+    }
+}
