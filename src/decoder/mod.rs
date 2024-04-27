@@ -951,14 +951,15 @@ impl<R: Read + Seek> Decoder<R> {
 
         let byte_order = self.reader.byte_order;
 
-        // TODO: Overflow check
-        let output_row_stride =
-            output_width * self.image.samples_per_pixel() * self.image.bits_per_sample as usize / 8;
+        let output_row_stride = (output_width as u64)
+            .saturating_mul(self.image.samples_per_pixel() as u64)
+            .saturating_mul(self.image.bits_per_sample as u64)
+            / 8;
 
         self.image.expand_chunk(
             &mut self.reader,
             buffer.as_bytes_mut(),
-            output_row_stride,
+            output_row_stride.try_into()?,
             byte_order,
             chunk_index,
             &self.limits,
@@ -1059,13 +1060,15 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        // TODO: Overflow check
-        let output_row_stride =
-            (((width as u64 * samples as u64 * self.image.bits_per_sample as u64) + 7) / 8)
-                as usize;
-        let chunk_row_bytes =
-            (((chunk_dimensions.0 as u64 * samples as u64 * self.image.bits_per_sample as u64) + 7)
-                / 8) as usize;
+        let output_row_bits = (width as u64 * self.image.bits_per_sample as u64)
+            .checked_mul(samples as u64)
+            .ok_or(TiffError::LimitsExceeded)?;
+        let output_row_stride: usize = ((output_row_bits + 7) / 8).try_into()?;
+
+        let chunk_row_bits = (chunk_dimensions.0 as u64 * self.image.bits_per_sample as u64)
+            .checked_mul(samples as u64)
+            .ok_or(TiffError::LimitsExceeded)?;
+        let chunk_row_bytes: usize = ((chunk_row_bits + 7) / 8).try_into()?;
 
         let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
 

@@ -64,7 +64,6 @@ pub(crate) struct Image {
     pub width: u32,
     pub height: u32,
     pub bits_per_sample: u8,
-    #[allow(unused)]
     pub samples: u16,
     pub sample_format: SampleFormat,
     pub photometric_interpretation: PhotometricInterpretation,
@@ -171,8 +170,9 @@ impl Image {
             ));
         }
 
-        // This library (and libtiff) do not support mixed sample formats.
-        if bits_per_sample.iter().any(|&b| b != bits_per_sample[0]) {
+        // This library (and libtiff) do not support mixed sample formats and zero bits per sample
+        // doesn't make sense.
+        if bits_per_sample.iter().any(|&b| b != bits_per_sample[0]) || bits_per_sample[0] == 0 {
             return Err(TiffUnsupportedError::InconsistentBitsPerSample(bits_per_sample).into());
         }
 
@@ -623,16 +623,19 @@ impl Image {
         let chunk_dims = self.chunk_dimensions()?;
         let data_dims = self.chunk_data_dimensions(chunk_index)?;
 
-        // TODO: Check for overflow
-        let chunk_row_bits =
-            u64::from(chunk_dims.0) * u64::from(self.bits_per_sample) * samples as u64;
-        let chunk_row_bytes = ((chunk_row_bits + 7) / 8) as usize;
-        let data_row_bits =
-            u64::from(data_dims.0) * u64::from(self.bits_per_sample) * samples as u64;
-        let data_row_bytes = ((data_row_bits + 7) / 8) as usize;
+        let chunk_row_bits = (u64::from(chunk_dims.0) * u64::from(self.bits_per_sample))
+            .checked_mul(samples as u64)
+            .ok_or(TiffError::LimitsExceeded)?;
+        let chunk_row_bytes: usize = ((chunk_row_bits + 7) / 8).try_into()?;
 
-        // TODO: Return an error here?
+        let data_row_bits = (u64::from(data_dims.0) * u64::from(self.bits_per_sample))
+            .checked_mul(samples as u64)
+            .ok_or(TiffError::LimitsExceeded)?;
+        let data_row_bytes: usize = ((data_row_bits + 7) / 8).try_into()?;
+
+        // TODO: Should these return errors instead?
         assert!(output_row_stride >= data_row_bytes);
+        assert!(buf.len() >= output_row_stride * (data_dims.1 as usize - 1) + data_row_bytes);
 
         let mut reader = Self::create_reader(
             reader,
@@ -662,10 +665,7 @@ impl Image {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
             let mut encoded = vec![0u8; chunk_row_bytes];
-            for row in buf
-                .chunks_mut(output_row_stride)
-                .take(data_dims.1 as usize)
-            {
+            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
                 reader.read_exact(&mut encoded)?;
 
                 let row = &mut row[..data_row_bytes];
