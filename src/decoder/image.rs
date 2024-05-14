@@ -2,7 +2,7 @@ use super::ifd::{Directory, Value};
 use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
 use super::{predict_f16, predict_f32, predict_f64, Limits};
-use super::{stream::SmartReader, ChunkType};
+use super::{stream::EndianReader, ChunkType};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
 };
@@ -80,7 +80,7 @@ pub(crate) struct Image {
 
 impl Image {
     pub fn from_reader<R: Read + Seek>(
-        reader: &mut SmartReader<R>,
+        reader: &mut EndianReader<R>,
         ifd: Directory,
         limits: &Limits,
         bigtiff: bool,
