@@ -5,7 +5,7 @@ use std::io::{self, Read, Seek};
 use std::mem;
 use std::str;
 
-use super::stream::{ByteOrder, EndianReader, SmartReader};
+use super::stream::{ByteOrder, EndianReader};
 use crate::tags::{Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
@@ -332,22 +332,22 @@ impl Entry {
     }
 
     /// Returns a mem_reader for the offset/value field
-    fn r(&self, byte_order: ByteOrder) -> SmartReader<io::Cursor<Vec<u8>>> {
-        SmartReader::wrap(io::Cursor::new(self.offset.to_vec()), byte_order)
+    fn r(&self, byte_order: ByteOrder) -> EndianReader<io::Cursor<Vec<u8>>> {
+        EndianReader::new(io::Cursor::new(self.offset.to_vec()), byte_order)
     }
 
-    pub fn val<R: Read + Seek>(
+    pub(crate) fn val<R: Read + Seek>(
         &self,
         limits: &super::Limits,
         bigtiff: bool,
-        reader: &mut SmartReader<R>,
+        reader: &mut EndianReader<R>,
     ) -> TiffResult<Value> {
         // Case 1: there are no values so we can return immediately.
         if self.count == 0 {
             return Ok(List(Vec::new()));
         }
 
-        let bo = reader.byte_order();
+        let bo = reader.byte_order;
 
         let tag_size = match self.type_ {
             Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
@@ -450,7 +450,7 @@ impl Entry {
                 Type::SBYTE => return offset_to_sbytes(self.count as usize, self),
                 Type::ASCII => {
                     let mut buf = vec![0; self.count as usize];
-                    self.r(bo).read_exact(&mut buf)?;
+                    buf.copy_from_slice(&self.offset[..self.count as usize]);
                     if buf.is_ascii() && buf.ends_with(&[0]) {
                         let v = str::from_utf8(&buf)?;
                         let v = v.trim_matches(char::from(0));
@@ -532,7 +532,7 @@ impl Entry {
             // at a different endianess of file/computer.
             Type::BYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 let mut buf = [0; 1];
-                reader.read_exact(&mut buf)?;
+                reader.inner().read_exact(&mut buf)?;
                 Ok(UnsignedBig(u64::from(buf[0])))
             }),
             Type::SBYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
@@ -581,7 +581,7 @@ impl Entry {
             Type::UNDEFINED => {
                 self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                     let mut buf = [0; 1];
-                    reader.read_exact(&mut buf)?;
+                    reader.inner().read_exact(&mut buf)?;
                     Ok(Byte(buf[0]))
                 })
             }
@@ -598,7 +598,7 @@ impl Entry {
                 }
 
                 let mut out = vec![0; n];
-                reader.read_exact(&mut out)?;
+                reader.inner().read_exact(&mut out)?;
                 // Strings may be null-terminated, so we trim anything downstream of the null byte
                 if let Some(first) = out.iter().position(|&b| b == 0) {
                     out.truncate(first);
@@ -615,12 +615,12 @@ impl Entry {
         bo: ByteOrder,
         bigtiff: bool,
         limits: &super::Limits,
-        reader: &mut SmartReader<R>,
+        reader: &mut EndianReader<R>,
         decode_fn: F,
     ) -> TiffResult<Value>
     where
         R: Read + Seek,
-        F: Fn(&mut SmartReader<R>) -> TiffResult<Value>,
+        F: Fn(&mut EndianReader<R>) -> TiffResult<Value>,
     {
         let value_count = usize::try_from(value_count)?;
         if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
