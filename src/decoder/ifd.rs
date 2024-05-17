@@ -20,6 +20,8 @@ use self::Value::{
 pub enum Value {
     Byte(u8),
     Short(u16),
+    SignedByte(i8),
+    SignedShort(i16),
     Signed(i32),
     SignedBig(i64),
     Unsigned(u32),
