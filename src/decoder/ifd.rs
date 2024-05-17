@@ -11,7 +11,7 @@ use crate::{TiffError, TiffFormatError, TiffResult};
 
 use self::Value::{
     Ascii, Byte, Double, Float, Ifd, IfdBig, List, Rational, RationalBig, SRational, SRationalBig,
-    Short, Signed, SignedBig, Unsigned, UnsignedBig,
+    Short, Signed, SignedBig, SignedByte, SignedShort, Unsigned, UnsignedBig,
 };
 
 #[allow(unused_qualifications)]
@@ -72,6 +72,8 @@ impl Value {
 
     pub fn into_i32(self) -> TiffResult<i32> {
         match self {
+            SignedByte(val) => Ok(val.into()),
+            SignedShort(val) => Ok(val.into()),
             Signed(val) => Ok(val),
             SignedBig(val) => Ok(i32::try_from(val)?),
             val => Err(TiffError::FormatError(
@@ -95,6 +97,8 @@ impl Value {
 
     pub fn into_i64(self) -> TiffResult<i64> {
         match self {
+            SignedByte(val) => Ok(val.into()),
+            SignedShort(val) => Ok(val.into()),
             Signed(val) => Ok(val.into()),
             SignedBig(val) => Ok(val),
             val => Err(TiffError::FormatError(
@@ -206,6 +210,8 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            SignedByte(val) => Ok(vec![val.into()]),
+            SignedShort(val) => Ok(vec![val.into()]),
             Signed(val) => Ok(vec![val]),
             SignedBig(val) => Ok(vec![i32::try_from(val)?]),
             SRational(numerator, denominator) => Ok(vec![numerator, denominator]),
@@ -291,6 +297,8 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            SignedByte(val) => Ok(vec![val.into()]),
+            SignedShort(val) => Ok(vec![val.into()]),
             Signed(val) => Ok(vec![val.into()]),
             SignedBig(val) => Ok(vec![val]),
             SRational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
