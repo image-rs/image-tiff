@@ -188,6 +188,7 @@ macro_rules! test_roundtrip {
 }
 
 test_roundtrip!(test_u8_roundtrip, U8, u8);
+test_roundtrip!(test_i8_roundtrip, I8, i8);
 test_roundtrip!(test_u16_roundtrip, U16, u16);
 test_roundtrip!(test_i16_roundtrip, I16, i16);
 test_roundtrip!(test_u32_roundtrip, U32, u32);
@@ -198,6 +199,11 @@ test_roundtrip!(test_f64_roundtrip, F64, f64);
 #[test]
 fn test_gray_u8_roundtrip() {
     test_u8_roundtrip::<colortype::Gray8>("minisblack-1c-8b.tiff", ColorType::Gray(8));
+}
+
+#[test]
+fn test_gray_i8_roundtrip() {
+    test_i8_roundtrip::<colortype::GrayI8>("minisblack-1c-i8b.tiff", ColorType::Gray(8));
 }
 
 #[test]
