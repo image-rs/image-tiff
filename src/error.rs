@@ -68,6 +68,8 @@ pub enum TiffFormatError {
     UnknownPredictor(u16),
     UnknownPlanarConfiguration(u16),
     ByteExpected(Value),
+    SignedByteExpected(Value),
+    SignedShortExpected(Value),
     UnsignedIntegerExpected(Value),
     SignedIntegerExpected(Value),
     Format(String),
@@ -119,6 +121,8 @@ impl fmt::Display for TiffFormatError {
                 write!(fmt, "Unknown planar configuration “{}” encountered", planar_config)
             }
             ByteExpected(ref val) => write!(fmt, "Expected byte, {:?} found.", val),
+            SignedByteExpected(ref val) => write!(fmt, "Expected signed byte, {:?} found.", val),
+            SignedShortExpected(ref val) => write!(fmt, "Expected signed short, {:?} found.", val),
             UnsignedIntegerExpected(ref val) => {
                 write!(fmt, "Expected unsigned integer, {:?} found.", val)
             }
