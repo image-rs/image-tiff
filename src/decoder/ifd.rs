@@ -65,6 +65,18 @@ impl Value {
         }
     }
 
+    pub fn into_i16(self) -> TiffResult<i16> {
+        match self {
+            SignedByte(val) => Ok(val.into()),
+            SignedShort(val) => Ok(val),
+            Signed(val) => Ok(i16::try_from(val)?),
+            SignedBig(val) => Ok(i16::try_from(val)?),
+            val => Err(TiffError::FormatError(
+                TiffFormatError::SignedShortExpected(val),
+            )),
+        }
+    }
+
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
             Short(val) => Ok(val.into()),
