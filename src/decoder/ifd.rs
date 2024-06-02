@@ -45,6 +45,14 @@ impl Value {
             val => Err(TiffError::FormatError(TiffFormatError::ByteExpected(val))),
         }
     }
+    pub fn into_i8(self) -> TiffResult<i8> {
+        match self {
+            SignedByte(val) => Ok(val),
+            val => Err(TiffError::FormatError(TiffFormatError::SignedByteExpected(
+                val,
+            ))),
+        }
+    }
 
     pub fn into_u16(self) -> TiffResult<u16> {
         match self {
