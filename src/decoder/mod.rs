@@ -13,7 +13,7 @@ use crate::tags::{
     Tag, Type,
 };
 
-use self::stream::{ByteOrder, EndianReader, SmartReader};
+use self::stream::{ByteOrder, EndianReader};
 
 pub mod ifd;
 mod image;
@@ -298,7 +298,7 @@ pub struct Decoder<R>
 where
     R: Read + Seek,
 {
-    reader: SmartReader<R>,
+    reader: EndianReader<R>,
     bigtiff: bool,
     limits: Limits,
     next_ifd: Option<u64>,
@@ -525,7 +525,7 @@ impl<R: Read + Seek> Decoder<R> {
                 ))
             }
         };
-        let mut reader = SmartReader::wrap(r, byte_order);
+        let mut reader = EndianReader::new(r, byte_order);
 
         let bigtiff = match reader.read_u16()? {
             42 => false,
@@ -703,7 +703,7 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_byte(&mut self) -> Result<u8, io::Error> {
         let mut buf = [0; 1];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.inner().read_exact(&mut buf)?;
         Ok(buf[0])
     }
 
@@ -757,7 +757,7 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
         let mut out = vec![0; length];
-        self.reader.read_exact(&mut out)?;
+        self.reader.inner().read_exact(&mut out)?;
         // Strings may be null-terminated, so we trim anything downstream of the null byte
         if let Some(first) = out.iter().position(|&b| b == 0) {
             out.truncate(first);
@@ -774,7 +774,7 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
         let mut val = [0; 4];
-        self.reader.read_exact(&mut val)?;
+        self.reader.inner().read_exact(&mut val)?;
         Ok(val)
     }
 
@@ -782,7 +782,7 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_offset_u64(&mut self) -> Result<[u8; 8], io::Error> {
         let mut val = [0; 8];
-        self.reader.read_exact(&mut val)?;
+        self.reader.inner().read_exact(&mut val)?;
         Ok(val)
     }
 
@@ -794,7 +794,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     #[inline]
     pub fn goto_offset_u64(&mut self, offset: u64) -> io::Result<()> {
-        self.reader.seek(io::SeekFrom::Start(offset)).map(|_| ())
+        self.reader.goto_offset(offset)
     }
 
     /// Reads a IFD entry.
@@ -805,7 +805,7 @@ impl<R: Read + Seek> Decoder<R> {
     // Count 4 bytes
     // Value 4 bytes either a pointer the value itself
     fn read_entry(
-        reader: &mut SmartReader<R>,
+        reader: &mut EndianReader<R>,
         bigtiff: bool,
     ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
         let tag = Tag::from_u16_exhaustive(reader.read_u16()?);
@@ -822,13 +822,13 @@ impl<R: Read + Seek> Decoder<R> {
             let mut offset = [0; 8];
 
             let count = reader.read_u64()?;
-            reader.read_exact(&mut offset)?;
+            reader.inner().read_exact(&mut offset)?;
             ifd::Entry::new_u64(type_, count, offset)
         } else {
             let mut offset = [0; 4];
 
             let count = reader.read_u32()?;
-            reader.read_exact(&mut offset)?;
+            reader.inner().read_exact(&mut offset)?;
             ifd::Entry::new(type_, count, offset)
         };
         Ok(Some((tag, entry)))
@@ -836,7 +836,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Reads the IFD starting at the indicated location.
     fn read_ifd(
-        reader: &mut SmartReader<R>,
+        reader: &mut EndianReader<R>,
         bigtiff: bool,
         ifd_location: u64,
     ) -> TiffResult<(Directory, Option<u64>)> {
@@ -1038,12 +1038,12 @@ impl<R: Read + Seek> Decoder<R> {
         output_width: usize,
     ) -> TiffResult<()> {
         let offset = self.image.chunk_file_range(chunk_index)?.0;
-        self.goto_offset_u64(offset)?;
+        self.reader.goto_offset(offset)?;
 
         let byte_order = self.reader.byte_order;
 
         self.image.expand_chunk(
-            &mut self.reader,
+            self.reader.inner(),
             buffer.copy(),
             output_width,
             byte_order,
@@ -1155,14 +1155,14 @@ impl<R: Read + Seek> Decoder<R> {
         // * pass requested band as parameter
         // * collect bands to a RGB encoding result in case of RGB bands
         for chunk in 0..image_chunks {
-            self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
+            self.reader.goto_offset(self.image().chunk_offsets[chunk])?;
 
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
             let buffer_offset = y * strip_samples + x * chunk_dimensions.0 as usize * samples;
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
-                &mut self.reader,
+                self.reader.inner(),
                 result.as_buffer(buffer_offset).copy(),
                 width as usize,
                 byte_order,

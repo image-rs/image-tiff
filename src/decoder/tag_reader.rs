@@ -4,11 +4,11 @@ use crate::tags::Tag;
 use crate::{TiffError, TiffFormatError, TiffResult};
 
 use super::ifd::{Directory, Value};
-use super::stream::SmartReader;
+use super::stream::EndianReader;
 use super::Limits;
 
 pub(crate) struct TagReader<'a, R: Read + Seek> {
-    pub reader: &'a mut SmartReader<R>,
+    pub reader: &'a mut EndianReader<R>,
     pub ifd: &'a Directory,
     pub limits: &'a Limits,
     pub bigtiff: bool,
