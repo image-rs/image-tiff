@@ -434,7 +434,7 @@ impl Entry {
                 Type::SBYTE => Signed(i32::from(self.offset[0] as i8)),
                 Type::UNDEFINED => Byte(self.offset[0]),
                 Type::SHORT => Short(self.r(bo).read_u16()?),
-                Type::SSHORT => Signed(i32::from(self.r(bo).read_i16()?)),
+                Type::SSHORT => SignedShort(self.r(bo).read_i16()?),
                 Type::LONG => Unsigned(self.r(bo).read_u32()?),
                 Type::SLONG => Signed(self.r(bo).read_i32()?),
                 Type::FLOAT => Float(self.r(bo).read_f32()?),
@@ -509,7 +509,7 @@ impl Entry {
                     let mut r = self.r(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
-                        v.push(Signed(i32::from(r.read_i16()?)));
+                        v.push(SignedShort(r.read_i16()?));
                     }
                     return Ok(List(v));
                 }
