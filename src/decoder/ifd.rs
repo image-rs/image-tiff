@@ -59,9 +59,7 @@ impl Value {
             Short(val) => Ok(val),
             Unsigned(val) => Ok(u16::try_from(val)?),
             UnsignedBig(val) => Ok(u16::try_from(val)?),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            val => Err(TiffError::FormatError(TiffFormatError::ShortExpected(val))),
         }
     }
 
