@@ -59,9 +59,7 @@ impl Value {
             Short(val) => Ok(val),
             Unsigned(val) => Ok(u16::try_from(val)?),
             UnsignedBig(val) => Ok(u16::try_from(val)?),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            val => Err(TiffError::FormatError(TiffFormatError::ShortExpected(val))),
         }
     }
 
@@ -163,6 +161,7 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Short(val) => Ok(vec![val.into()]),
             Unsigned(val) => Ok(vec![val]),
             UnsignedBig(val) => Ok(vec![u32::try_from(val)?]),
             Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
@@ -285,6 +284,7 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Short(val) => Ok(vec![val.into()]),
             Unsigned(val) => Ok(vec![val.into()]),
             UnsignedBig(val) => Ok(vec![val]),
             Rational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
@@ -433,8 +433,8 @@ impl Entry {
                 Type::BYTE => Unsigned(u32::from(self.offset[0])),
                 Type::SBYTE => Signed(i32::from(self.offset[0] as i8)),
                 Type::UNDEFINED => Byte(self.offset[0]),
-                Type::SHORT => Unsigned(u32::from(self.r(bo).read_u16()?)),
-                Type::SSHORT => Signed(i32::from(self.r(bo).read_i16()?)),
+                Type::SHORT => Short(self.r(bo).read_u16()?),
+                Type::SSHORT => SignedShort(self.r(bo).read_i16()?),
                 Type::LONG => Unsigned(self.r(bo).read_u32()?),
                 Type::SLONG => Signed(self.r(bo).read_i32()?),
                 Type::FLOAT => Float(self.r(bo).read_f32()?),
@@ -509,7 +509,7 @@ impl Entry {
                     let mut r = self.r(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
-                        v.push(Signed(i32::from(r.read_i16()?)));
+                        v.push(SignedShort(r.read_i16()?));
                     }
                     return Ok(List(v));
                 }
