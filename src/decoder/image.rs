@@ -645,7 +645,12 @@ impl Image {
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
+        eprintln!(
+            "{:?}, {:?}, {:?}",
+            self.predictor, self.bits_per_sample, self.sample_format
+        );
         if output_row_stride == chunk_row_bytes as usize {
+            eprintln!("A");
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
@@ -662,6 +667,7 @@ impl Image {
                 super::invert_colors(tile, color_type, self.sample_format);
             }
         } else if chunk_row_bytes > data_row_bytes && self.predictor == Predictor::FloatingPoint {
+            eprintln!("B");
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
             let mut encoded = vec![0u8; chunk_row_bytes];
@@ -679,6 +685,7 @@ impl Image {
                 }
             }
         } else {
+            eprintln!("C");
             for (i, row) in buf
                 .chunks_mut(output_row_stride)
                 .take(data_dims.1 as usize)
