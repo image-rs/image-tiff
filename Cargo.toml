@@ -17,6 +17,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 exclude = ["tests/images/*", "tests/fuzz_images/*"]
 
 [dependencies]
+half = { version = "2.4.1" }
 weezl = "0.1.0"
 jpeg = { package = "jpeg-decoder", version = "0.3.0", default-features = false }
 flate2 = "1.0.20"
