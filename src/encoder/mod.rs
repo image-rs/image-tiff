@@ -24,6 +24,16 @@ use self::colortype::*;
 use self::compression::*;
 use self::writer::*;
 
+/// Type of prediction to prepare the image with.
+///
+/// Image data can be very unpredictable, and thus very hard to compress. Predictors are simple
+/// passes ran over the image data to prepare it for compression. This is mostly used for LZW
+/// compression, where using [Predictor::Horizontal] we see a 35% improvement in compression
+/// ratio over the unpredicted compression !
+///
+/// [Predictor::FloatingPoint] is currently not supported.
+pub type Predictor = crate::tags::Predictor;
+
 /// Encoder for Tiff and BigTiff files.
 ///
 /// With this type you can get a `DirectoryEncoder` or a `ImageEncoder`
@@ -52,6 +62,7 @@ use self::writer::*;
 pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
     writer: TiffWriter<W>,
     kind: PhantomData<K>,
+    predictor: Predictor,
 }
 
 /// Constructor functions to create standard Tiff files.
@@ -83,11 +94,20 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         let mut encoder = TiffEncoder {
             writer: TiffWriter::new(writer),
             kind: PhantomData,
+            predictor: Predictor::None,
         };
 
         K::write_header(&mut encoder.writer)?;
 
         Ok(encoder)
+    }
+
+    /// Set the predictor used to simplify the file before writing it. This is very useful when
+    /// writing a file compressed using LZW
+    pub fn set_predictor(mut self, predictor: Predictor) -> TiffResult<Self> {
+        self.predictor = predictor;
+
+        Ok(self)
     }
 
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.
@@ -113,7 +133,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         compression: D,
     ) -> TiffResult<ImageEncoder<W, C, K, D>> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        ImageEncoder::with_compression(encoder, width, height, compression)
+        ImageEncoder::with_compression(encoder, width, height, compression, self.predictor)
     }
 
     /// Convenience function to write an entire image from memory.
@@ -144,7 +164,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
         let image: ImageEncoder<W, C, K, D> =
-            ImageEncoder::with_compression(encoder, width, height, compression)?;
+            ImageEncoder::with_compression(encoder, width, height, compression, self.predictor)?;
         image.write_data(data)
     }
 }
@@ -330,6 +350,7 @@ pub struct ImageEncoder<
     strip_byte_count: Vec<K::OffsetType>,
     dropped: bool,
     compression: D,
+    predictor: Predictor,
     _phantom: ::std::marker::PhantomData<C>,
 }
 
@@ -340,7 +361,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
     where
         D: Default,
     {
-        Self::with_compression(encoder, width, height, D::default())
+        Self::with_compression(encoder, width, height, D::default(), Predictor::None)
     }
 
     fn with_compression(
@@ -348,6 +369,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         width: u32,
         height: u32,
         compression: D,
+        predictor: Predictor,
     ) -> TiffResult<Self> {
         if width == 0 || height == 0 {
             return Err(TiffError::FormatError(TiffFormatError::InvalidDimensions(
@@ -372,6 +394,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         encoder.write_tag(Tag::ImageWidth, width)?;
         encoder.write_tag(Tag::ImageLength, height)?;
         encoder.write_tag(Tag::Compression, D::COMPRESSION_METHOD.to_u16())?;
+        encoder.write_tag(Tag::Predictor, predictor.to_u16())?;
 
         encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
         let sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
@@ -400,6 +423,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
             strip_byte_count: Vec::new(),
             dropped: false,
             compression,
+            predictor,
             _phantom: ::std::marker::PhantomData,
         })
     }
@@ -432,7 +456,18 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         }
 
         // Write the (possible compressed) data to the encoder.
-        let offset = self.encoder.write_data(value)?;
+        let offset = match self.predictor {
+            Predictor::None => self.encoder.write_data(value)?,
+            Predictor::Horizontal => {
+                let predicted: Vec<T::Inner> = value
+                    .chunks(self.row_samples as usize)
+                    .flat_map(|row| T::horizontal_predict(row).into_iter())
+                    .collect();
+                self.encoder.write_data(predicted.as_slice())?
+            }
+            _ => unreachable!(),
+        };
+
         let byte_count = self.encoder.last_written() as usize;
 
         self.strip_offsets.push(K::convert_offset(offset)?);
