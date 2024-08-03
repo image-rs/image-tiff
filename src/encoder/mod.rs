@@ -21,6 +21,7 @@ mod tiff_value;
 mod writer;
 
 use self::colortype::*;
+use self::compression::Compression as Comp;
 use self::compression::*;
 use self::writer::*;
 
@@ -33,6 +34,36 @@ use self::writer::*;
 ///
 /// [Predictor::FloatingPoint] is currently not supported.
 pub type Predictor = crate::tags::Predictor;
+pub type DeflateLevel = compression::DeflateLevel;
+
+#[derive(Default, Clone, Copy)]
+pub enum Compression {
+    #[default]
+    Uncompressed,
+    Lzw,
+    Deflate(DeflateLevel),
+    Packbits,
+}
+
+impl Compression {
+    fn tag(&self) -> CompressionMethod {
+        match self {
+            Compression::Uncompressed => CompressionMethod::None,
+            Compression::Lzw => CompressionMethod::LZW,
+            Compression::Deflate(_) => CompressionMethod::Deflate,
+            Compression::Packbits => CompressionMethod::PackBits,
+        }
+    }
+
+    fn get_algorithm(&self) -> Compressor {
+        match self {
+            Compression::Uncompressed => compression::Uncompressed {}.get_algorithm(),
+            Compression::Lzw => compression::Lzw {}.get_algorithm(),
+            Compression::Deflate(level) => compression::Deflate::with_level(*level).get_algorithm(),
+            Compression::Packbits => compression::Packbits {}.get_algorithm(),
+        }
+    }
+}
 
 /// Encoder for Tiff and BigTiff files.
 ///
@@ -63,6 +94,7 @@ pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
     writer: TiffWriter<W>,
     kind: PhantomData<K>,
     predictor: Predictor,
+    compression: Compression,
 }
 
 /// Constructor functions to create standard Tiff files.
@@ -95,6 +127,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
             writer: TiffWriter::new(writer),
             kind: PhantomData,
             predictor: Predictor::None,
+            compression: Compression::Uncompressed,
         };
 
         K::write_header(&mut encoder.writer)?;
@@ -104,10 +137,16 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
 
     /// Set the predictor used to simplify the file before writing it. This is very useful when
     /// writing a file compressed using LZW
-    pub fn set_predictor(mut self, predictor: Predictor) -> TiffResult<Self> {
+    pub fn with_predictor(mut self, predictor: Predictor) -> Self {
         self.predictor = predictor;
 
-        Ok(self)
+        self
+    }
+
+    pub fn with_compression(mut self, compression: Compression) -> Self {
+        self.compression = compression;
+
+        self
     }
 
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.
@@ -120,20 +159,9 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         &mut self,
         width: u32,
         height: u32,
-    ) -> TiffResult<ImageEncoder<W, C, K, Uncompressed>> {
+    ) -> TiffResult<ImageEncoder<W, C, K>> {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        ImageEncoder::new(encoder, width, height)
-    }
-
-    /// Create an [`ImageEncoder`] to encode an image one slice at a time.
-    pub fn new_image_with_compression<C: ColorType, D: Compression>(
-        &mut self,
-        width: u32,
-        height: u32,
-        compression: D,
-    ) -> TiffResult<ImageEncoder<W, C, K, D>> {
-        let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        ImageEncoder::with_compression(encoder, width, height, compression, self.predictor)
+        ImageEncoder::new(encoder, width, height, self.compression, self.predictor)
     }
 
     /// Convenience function to write an entire image from memory.
@@ -147,24 +175,8 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         [C::Inner]: TiffValue,
     {
         let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let image: ImageEncoder<W, C, K> = ImageEncoder::new(encoder, width, height)?;
-        image.write_data(data)
-    }
-
-    /// Convenience function to write an entire image from memory with a given compression.
-    pub fn write_image_with_compression<C: ColorType, D: Compression>(
-        &mut self,
-        width: u32,
-        height: u32,
-        compression: D,
-        data: &[C::Inner],
-    ) -> TiffResult<()>
-    where
-        [C::Inner]: TiffValue,
-    {
-        let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let image: ImageEncoder<W, C, K, D> =
-            ImageEncoder::with_compression(encoder, width, height, compression, self.predictor)?;
+        let image: ImageEncoder<W, C, K> =
+            ImageEncoder::new(encoder, width, height, self.compression, self.predictor)?;
         image.write_data(data)
     }
 }
@@ -332,13 +344,7 @@ impl<'a, W: Write + Seek, K: TiffKind> Drop for DirectoryEncoder<'a, W, K> {
 /// # }
 /// ```
 /// You can also call write_data function wich will encode by strip and finish
-pub struct ImageEncoder<
-    'a,
-    W: 'a + Write + Seek,
-    C: ColorType,
-    K: TiffKind,
-    D: Compression = Uncompressed,
-> {
+pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
     encoder: DirectoryEncoder<'a, W, K>,
     strip_idx: u64,
     strip_count: u64,
@@ -349,26 +355,17 @@ pub struct ImageEncoder<
     strip_offsets: Vec<K::OffsetType>,
     strip_byte_count: Vec<K::OffsetType>,
     dropped: bool,
-    compression: D,
+    compression: Compression,
     predictor: Predictor,
     _phantom: ::std::marker::PhantomData<C>,
 }
 
-impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
-    ImageEncoder<'a, W, T, K, D>
-{
-    fn new(encoder: DirectoryEncoder<'a, W, K>, width: u32, height: u32) -> TiffResult<Self>
-    where
-        D: Default,
-    {
-        Self::with_compression(encoder, width, height, D::default(), Predictor::None)
-    }
-
-    fn with_compression(
+impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T, K> {
+    fn new(
         mut encoder: DirectoryEncoder<'a, W, K>,
         width: u32,
         height: u32,
-        compression: D,
+        compression: Compression,
         predictor: Predictor,
     ) -> TiffResult<Self> {
         if width == 0 || height == 0 {
@@ -383,7 +380,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
         // Limit the strip size to prevent potential memory and security issues.
         // Also keep the multiple strip handling 'oiled'
         let rows_per_strip = {
-            match D::COMPRESSION_METHOD {
+            match compression.tag() {
                 CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
                 _ => (1_000_000 + row_bytes - 1) / row_bytes,
             }
@@ -393,7 +390,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
 
         encoder.write_tag(Tag::ImageWidth, width)?;
         encoder.write_tag(Tag::ImageLength, height)?;
-        encoder.write_tag(Tag::Compression, D::COMPRESSION_METHOD.to_u16())?;
+        encoder.write_tag(Tag::Compression, compression.tag().to_u16())?;
         encoder.write_tag(Tag::Predictor, predictor.to_u16())?;
 
         encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
@@ -587,9 +584,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind, D: Compression>
     }
 }
 
-impl<'a, W: Write + Seek, C: ColorType, K: TiffKind, D: Compression> Drop
-    for ImageEncoder<'a, W, C, K, D>
-{
+impl<'a, W: Write + Seek, C: ColorType, K: TiffKind> Drop for ImageEncoder<'a, W, C, K> {
     fn drop(&mut self) {
         if !self.dropped {
             let _ = self.finish_internal();
