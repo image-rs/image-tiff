@@ -236,6 +236,9 @@ impl fmt::Display for TiffUnsupportedError {
 pub enum UsageError {
     InvalidChunkType(ChunkType, ChunkType),
     InvalidChunkIndex(u32),
+    PredictorCompressionMismatch,
+    PredictorIncompatible,
+    PredictorUnavailable,
 }
 
 impl fmt::Display for UsageError {
@@ -250,6 +253,15 @@ impl fmt::Display for UsageError {
                 )
             }
             InvalidChunkIndex(index) => write!(fmt, "Image chunk index ({}) requested.", index),
+            PredictorCompressionMismatch => write!(
+                fmt,
+                "The requested predictor is not compatible with the requested compression"
+            ),
+            PredictorIncompatible => write!(
+                fmt,
+                "The requested predictor is not compatible with the image's format"
+            ),
+            PredictorUnavailable => write!(fmt, "The requested predictor is not available"),
         }
     }
 }
