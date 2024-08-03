@@ -10,8 +10,8 @@ use std::{
 };
 
 use crate::{
-    error::TiffResult,
-    tags::{CompressionMethod, ResolutionUnit, Tag},
+    error::{TiffResult, UsageError},
+    tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag},
     TiffError, TiffFormatError,
 };
 
@@ -36,7 +36,7 @@ use self::writer::*;
 pub type Predictor = crate::tags::Predictor;
 pub type DeflateLevel = compression::DeflateLevel;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq)]
 pub enum Compression {
     #[default]
     Uncompressed,
@@ -135,14 +135,17 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         Ok(encoder)
     }
 
-    /// Set the predictor used to simplify the file before writing it. This is very useful when
-    /// writing a file compressed using LZW
+    /// Set the predictor to use
+    ///
+    /// A predictor is used to simplify the file before writing it. This is very
+    /// useful when writing a file compressed using LZW as it can improve efficiency
     pub fn with_predictor(mut self, predictor: Predictor) -> Self {
         self.predictor = predictor;
 
         self
     }
 
+    /// Set the compression method to use
     pub fn with_compression(mut self, compression: Compression) -> Self {
         self.compression = compression;
 
@@ -361,6 +364,21 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
 }
 
 impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T, K> {
+    fn sanity_check(compression: Compression, predictor: Predictor) -> TiffResult<()> {
+        match (predictor, compression, T::SAMPLE_FORMAT[0]) {
+            (Predictor::Horizontal, Compression::Uncompressed, _) => Err(TiffError::UsageError(
+                UsageError::PredictorCompressionMismatch,
+            )),
+            (Predictor::Horizontal, _, SampleFormat::IEEEFP | SampleFormat::Void) => {
+                Err(TiffError::UsageError(UsageError::PredictorIncompatible))
+            }
+            (Predictor::FloatingPoint, _, _) => {
+                Err(TiffError::UsageError(UsageError::PredictorUnavailable))
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn new(
         mut encoder: DirectoryEncoder<'a, W, K>,
         width: u32,
@@ -373,6 +391,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
                 width, height,
             )));
         }
+
+        Self::sanity_check(compression, predictor)?;
 
         let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
         let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
