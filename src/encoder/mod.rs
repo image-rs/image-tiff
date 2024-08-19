@@ -36,13 +36,18 @@ use self::writer::*;
 pub type Predictor = crate::tags::Predictor;
 pub type DeflateLevel = compression::DeflateLevel;
 
-#[derive(Default, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Compression {
-    #[default]
     Uncompressed,
     Lzw,
     Deflate(DeflateLevel),
     Packbits,
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self::Uncompressed
+    }
 }
 
 impl Compression {
