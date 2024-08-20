@@ -20,7 +20,7 @@ macro_rules! tags {
 
         impl $name {
             #[inline(always)]
-            fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
+            const fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
                 match n {
                     $( $val => Ok($name::$tag), )*
                     n => Err(n),
@@ -28,7 +28,7 @@ macro_rules! tags {
             }
 
             #[inline(always)]
-            fn __to_inner_type(&self) -> $ty {
+            const fn __to_inner_type(&self) -> $ty {
                 match *self {
                     $( $name::$tag => $val, )*
                     $( $name::Unknown(n) => { $unknown_doc; n }, )*
@@ -42,20 +42,26 @@ macro_rules! tags {
     ($name:tt, u16, $($unknown_doc:literal)*) => {
         impl $name {
             #[inline(always)]
-            pub fn from_u16(val: u16) -> Option<Self> {
-                Self::__from_inner_type(val).ok()
+            pub const fn from_u16(val: u16) -> Option<Self> {
+                match Self::__from_inner_type(val) {
+                    Ok(v) => Some(v),
+                    Err(_) => None,
+                }
             }
 
             $(
             #[inline(always)]
-            pub fn from_u16_exhaustive(val: u16) -> Self {
+            pub const fn from_u16_exhaustive(val: u16) -> Self {
                 $unknown_doc;
-                Self::__from_inner_type(val).unwrap_or_else(|_| $name::Unknown(val))
+                match Self::__from_inner_type(val) {
+					Ok(v) => v,
+					Err(_) => $name::Unknown(val),
+				}
             }
             )*
 
             #[inline(always)]
-            pub fn to_u16(&self) -> u16 {
+            pub const fn to_u16(&self) -> u16 {
                 Self::__to_inner_type(self)
             }
         }
