@@ -1,4 +1,5 @@
 use self::{
+    decoded_entry::DecodedEntry,
     ifd::Directory,
     image::Image,
     stream::{ByteOrder, EndianReader, SmartReader},
@@ -7,11 +8,12 @@ use crate::{
     bytecast,
     decoder::ifd::Entry,
     encoder::{DirectoryEncoder, TiffEncoder, TiffKind},
+    ifd::{BufferedEntry, Directory, Value},
     tags::{
         CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
         Tag, Type, EXIF_TAGS,
     },
-    ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
+    ColorType, TiffError, TiffFormatError, TiffKind, TiffResult, TiffUnsupportedError, UsageError,
 };
 use half::f16;
 use std::{
@@ -20,6 +22,9 @@ use std::{
     io::{self, Cursor, Read, Seek, Write},
 };
 
+use self::stream::{ByteOrder, EndianReader, SmartReader};
+
+mod decoded_entry;
 pub mod ifd;
 mod image;
 mod stream;
@@ -263,17 +268,17 @@ impl Default for Limits {
 ///
 /// Currently does not support decoding of interlaced images
 #[derive(Debug)]
-pub struct Decoder<R>
+pub struct Decoder<R, K>
 where
     R: Read + Seek,
+    K: TiffKind,
 {
     reader: SmartReader<R>,
-    bigtiff: bool,
     limits: Limits,
     next_ifd: Option<u64>,
     ifd_offsets: Vec<u64>,
     seen_ifds: HashSet<u64>,
-    image: Image,
+    image: Image<K>,
 }
 
 fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
@@ -455,9 +460,9 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     };
 }
 
-impl<R: Read + Seek> Decoder<R> {
+impl<R: Read + Seek, K: TiffKind> Decoder<R, K> {
     /// Create a new decoder that decodes from the stream ```r```
-    pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
+    pub fn new(mut r: R) -> TiffResult<Decoder<R, K>> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
@@ -494,6 +499,9 @@ impl<R: Read + Seek> Decoder<R> {
                 ));
             }
         };
+
+        assert!(K::is_big() == bigtiff, "Tiff format is invalid !");
+
         let next_ifd = if bigtiff {
             Some(reader.read_u64()?)
         } else {
@@ -506,7 +514,6 @@ impl<R: Read + Seek> Decoder<R> {
 
         let mut decoder = Decoder {
             reader,
-            bigtiff,
             limits: Default::default(),
             next_ifd,
             ifd_offsets,
@@ -534,7 +541,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(decoder)
     }
 
-    pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
+    pub fn with_limits(mut self, limits: Limits) -> Decoder<R, K> {
         self.limits = limits;
         self
     }
@@ -547,7 +554,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.image().colortype()
     }
 
-    fn image(&self) -> &Image {
+    fn image(&self) -> &Image<K> {
         &self.image
     }
 
@@ -582,9 +589,9 @@ impl<R: Read + Seek> Decoder<R> {
 
         // If the index is within the list of ifds then we can load the selected image/IFD
         if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset)?;
+            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, *ifd_offset)?;
 
-            self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+            self.image = Image::from_reader(&mut self.reader, ifd, &self.limits)?;
 
             Ok(())
         } else {
@@ -594,18 +601,14 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
-    fn next_ifd(&mut self) -> TiffResult<(Directory, Option<u64>)> {
+    fn next_ifd(&mut self) -> TiffResult<(Directory<DecodedEntry<K>>, Option<u64>)> {
         if self.next_ifd.is_none() {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
         }
 
-        let (ifd, next_ifd) = Self::read_ifd(
-            &mut self.reader,
-            self.bigtiff,
-            self.next_ifd.take().unwrap(),
-        )?;
+        let (ifd, next_ifd) = Self::read_ifd(&mut self.reader, self.next_ifd.take().unwrap())?;
 
         if let Some(next) = next_ifd {
             if !self.seen_ifds.insert(next) {
@@ -624,7 +627,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn next_image(&mut self) -> TiffResult<()> {
         let (ifd, _next_ifd) = self.next_ifd()?;
 
-        self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+        self.image = Image::from_reader(&mut self.reader, ifd, &self.limits)?;
         Ok(())
     }
 
@@ -640,7 +643,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     #[inline]
     pub fn read_ifd_offset(&mut self) -> Result<u64, io::Error> {
-        if self.bigtiff {
+        if K::is_big() {
             self.read_long8()
         } else {
             self.read_long().map(u64::from)
@@ -716,7 +719,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Reads a TIFF IFA offset/value field
     #[inline]
     pub fn read_offset(&mut self) -> TiffResult<[u8; 4]> {
-        if self.bigtiff {
+        if K::is_big() {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
@@ -751,11 +754,8 @@ impl<R: Read + Seek> Decoder<R> {
     // Tag   2 bytes
     // Type  2 bytes
     // Count 4 bytes
-    // Value 4 bytes either a pointer the value itself
-    fn read_entry(
-        reader: &mut SmartReader<R>,
-        bigtiff: bool,
-    ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
+    // Value 4 bytes either a pointer or the value itself
+    fn read_entry(reader: &mut SmartReader<R>) -> TiffResult<Option<(Tag, DecodedEntry<K>)>> {
         let tag = Tag::from_u16_exhaustive(reader.read_u16()?);
         let type_ = match Type::from_u16(reader.read_u16()?) {
             Some(t) => t,
@@ -766,39 +766,38 @@ impl<R: Read + Seek> Decoder<R> {
                 return Ok(None);
             }
         };
-        let entry = if bigtiff {
-            let mut offset = [0; 8];
 
+        let entry = if K::is_big() {
+            let mut offset = [0; 8];
             let count = reader.read_u64()?;
             reader.read_exact(&mut offset)?;
-            ifd::Entry::new_u64(type_, count, offset)
+            DecodedEntry::new(type_, K::convert_offset(count)?, &offset)
         } else {
             let mut offset = [0; 4];
-
             let count = reader.read_u32()?;
             reader.read_exact(&mut offset)?;
-            ifd::Entry::new(type_, count, offset)
+            DecodedEntry::new(type_, count.into(), &offset)
         };
+
         Ok(Some((tag, entry)))
     }
 
     /// Reads the IFD starting at the indicated location.
     pub fn read_ifd(
         reader: &mut SmartReader<R>,
-        bigtiff: bool,
         ifd_location: u64,
-    ) -> TiffResult<(Directory, Option<u64>)> {
+    ) -> TiffResult<(Directory<DecodedEntry<K>>, Option<u64>)> {
         reader.goto_offset(ifd_location)?;
+        let mut dir = Directory::new();
 
-        let mut dir: Directory = HashMap::new();
-
-        let num_tags = if bigtiff {
+        let num_tags = if K::is_big() {
             reader.read_u64()?
         } else {
             reader.read_u16()?.into()
         };
+
         for _ in 0..num_tags {
-            let (tag, entry) = match Self::read_entry(reader, bigtiff)? {
+            let (tag, entry) = match Self::read_entry(reader)? {
                 Some(val) => val,
                 None => {
                     continue;
@@ -807,7 +806,7 @@ impl<R: Read + Seek> Decoder<R> {
             dir.insert(tag, entry);
         }
 
-        let next_ifd = if bigtiff {
+        let next_ifd = if K::is_big() {
             reader.read_u64()?
         } else {
             reader.read_u32()?.into()
@@ -821,23 +820,19 @@ impl<R: Read + Seek> Decoder<R> {
         Ok((dir, next_ifd))
     }
 
-    pub fn find_tag_entry(&self, tag: Tag) -> Option<Entry> {
+    pub fn find_tag_entry(&self, tag: Tag) -> Option<DecodedEntry<K>> {
         self.image().ifd.as_ref().unwrap().get(&tag).cloned()
     }
 
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
-    pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
+    pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
         let entry = match self.find_tag_entry(tag) {
             None => return Ok(None),
             Some(entry) => entry.clone(),
         };
 
-        Ok(Some(entry.val(
-            &self.limits,
-            self.bigtiff,
-            &mut self.reader,
-        )?))
+        Ok(Some(entry.val(&self.limits, &mut self.reader)?))
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
@@ -879,7 +874,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a tag.
     /// Returns an error if the tag is not present
-    pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
+    pub fn get_tag(&mut self, tag: Tag) -> TiffResult<Value> {
         match self.find_tag(tag)? {
             Some(val) => Ok(val),
             None => Err(TiffError::FormatError(
@@ -1164,11 +1159,49 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(result)
     }
 
+    pub fn get_exif_data(&mut self) -> TiffResult<Directory<BufferedEntry>> {
+        // create new IFD
+        let mut ifd = Directory::new();
+
+        // copy Exif tags from main IFD
+        let exif_tags = EXIF_TAGS;
+        for tag in exif_tags.into_iter() {
+            if let Some(entry) = self.find_tag_entry(tag) {
+                ifd.insert(tag, entry.as_buffered(&mut self.reader)?);
+            }
+        }
+
+        Ok(ifd)
+    }
+
+    pub fn get_exif_ifd(&mut self, tag: Tag) -> TiffResult<Directory<BufferedEntry>> {
+        // create new IFD
+        let mut ifd = Directory::new();
+
+        if let Some(offset) = self.find_tag(tag)? {
+            let offset = if K::is_big() {
+                offset.into_u64()?
+            } else {
+                offset.into_u32()?.into()
+            };
+
+            let (fetched, _) = Self::read_ifd(&mut self.reader, offset)?;
+
+            // loop through entries
+            for (tag, value) in fetched.into_iter() {
+                let b_entry = value.as_buffered(&mut self.reader)?;
+                ifd.insert(tag, b_entry);
+            }
+        }
+
+        Ok(ifd)
+    }
+
     /// Extracts the EXIF metadata (if present) and returns it in a light TIFF format
-    pub fn read_exif(&mut self) -> TiffResult<Vec<u8>> {
+    pub fn read_exif<T: TiffKind>(&mut self) -> TiffResult<Vec<u8>> {
         // create tiff encoder for result
         let mut exifdata = Cursor::new(Vec::new());
-        let mut encoder = TiffEncoder::new(Write::by_ref(&mut exifdata))?;
+        let mut encoder = TiffEncoder::<_, T>::new(Write::by_ref(&mut exifdata))?;
 
         // create new IFD
         let mut ifd0 = encoder.new_directory()?;
@@ -1178,10 +1211,7 @@ impl<R: Read + Seek> Decoder<R> {
         exif_tags.into_iter().for_each(|tag| {
             let entry = self.find_tag_entry(tag);
             if entry.is_some() {
-                let b_entry = entry
-                    .unwrap()
-                    .as_buffered(self.bigtiff.clone(), &mut self.reader)
-                    .unwrap();
+                let b_entry = entry.unwrap().as_buffered(&mut self.reader).unwrap();
                 ifd0.write_tag(tag, b_entry).unwrap();
             }
         });
@@ -1196,14 +1226,14 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(exifdata.into_inner())
     }
 
-    fn copy_ifd<W: Seek + Write, K: TiffKind>(
+    fn copy_ifd<W: Seek + Write, T: TiffKind>(
         &mut self,
         tag: Tag,
-        new_ifd: &mut DirectoryEncoder<W, K>,
+        new_ifd: &mut DirectoryEncoder<W, T>,
     ) -> TiffResult<()> {
         let exif_ifd_offset = self.find_tag(tag)?;
         if exif_ifd_offset.is_some() {
-            let offset = if self.bigtiff {
+            let offset = if K::is_big() {
                 exif_ifd_offset.unwrap().into_u64()?
             } else {
                 exif_ifd_offset.unwrap().into_u32()?.into()
@@ -1212,13 +1242,11 @@ impl<R: Read + Seek> Decoder<R> {
             // create sub-ifd
             new_ifd.subdirectory_start();
 
-            let (ifd, _trash1) = Self::read_ifd(&mut self.reader, self.bigtiff.clone(), offset)?;
+            let (ifd, _trash1) = Self::read_ifd(&mut self.reader, offset)?;
 
             // loop through entries
             ifd.into_iter().for_each(|(tag, value)| {
-                let b_entry = value
-                    .as_buffered(self.bigtiff.clone(), &mut self.reader)
-                    .unwrap();
+                let b_entry = value.as_buffered(&mut self.reader).unwrap();
                 new_ifd.write_tag(tag, b_entry).unwrap();
             });
 

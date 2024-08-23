@@ -8,6 +8,7 @@ use tiff::{
         compression::*,
         Compression, TiffEncoder, TiffValue,
     },
+    TiffKindStandard,
 };
 
 trait TestImage<const NUM_CHANNELS: usize>: From<Vec<<Self::Color as ColorType>::Inner>> {
@@ -110,7 +111,7 @@ fn encode_decode_with_compression(compression: Compression) {
     // Decode tiff
     data.set_position(0);
     {
-        let mut decoder = Decoder::new(data).unwrap();
+        let mut decoder = Decoder::<_, TiffKindStandard>::new(data).unwrap();
 
         // Check the RGB image
         assert_eq!(

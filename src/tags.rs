@@ -68,6 +68,7 @@ macro_rules! tags {
 // Note: These tags appear in the order they are mentioned in the TIFF reference
 tags! {
 /// TIFF tags
+#[derive(Ord, PartialOrd)]
 pub enum Tag(u16) unknown("A private or extension tag") {
     // Baseline tags:
     Artist = 315,

@@ -1,22 +1,20 @@
 pub use tiff_value::*;
 
+use std::io::{Cursor, Read};
 use std::{
     cmp,
-    collections::BTreeMap,
     io::{self, Seek, Write},
     marker::PhantomData,
     mem,
-    num::TryFromIntError,
 };
-use std::io::{Cursor, Read};
 
 use crate::{
+    decoder::Decoder,
     error::{TiffResult, UsageError},
-    tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag},
-    TiffError, TiffFormatError,
+    ifd::{BufferedEntry, Directory},
+    tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag, EXIF_TAGS},
+    TiffError, TiffFormatError, TiffKind, TiffKindStandard,
 };
-use crate::decoder::Decoder;
-use crate::tags::EXIF_TAGS;
 
 pub mod colortype;
 pub mod compression;
@@ -26,7 +24,7 @@ mod writer;
 use self::colortype::*;
 use self::compression::Compression as Comp;
 use self::compression::*;
-use self::writer::*;
+pub use self::writer::*;
 
 /// Type of prediction to prepare the image with.
 ///
@@ -106,18 +104,18 @@ pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
 }
 
 /// Constructor functions to create standard Tiff files.
-impl<W: Write + Seek> TiffEncoder<W> {
+impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     /// Creates a new encoder for standard Tiff files.
     ///
     /// To create BigTiff files, use [`new_big`][TiffEncoder::new_big] or
     /// [`new_generic`][TiffEncoder::new_generic].
-    pub fn new(writer: W) -> TiffResult<TiffEncoder<W, TiffKindStandard>> {
+    pub fn new(writer: W) -> TiffResult<TiffEncoder<W, K>> {
         TiffEncoder::new_generic(writer)
     }
 }
 
 /// Constructor functions to create BigTiff files.
-impl<W: Write + Seek> TiffEncoder<W, TiffKindBig> {
+impl<W: Write + Seek, T: TiffKind> TiffEncoder<W, T> {
     /// Creates a new encoder for BigTiff files.
     ///
     /// To create standard Tiff files, use [`new`][TiffEncoder::new] or
@@ -162,7 +160,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
 
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.
     pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W, K>> {
-        DirectoryEncoder::new(&mut self.writer)
+        DirectoryEncoder::<W, K>::new(&mut self.writer)
     }
 
     /// Create an [`ImageEncoder`] to encode an image one slice at a time.
@@ -199,10 +197,10 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
 pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     writer: &'a mut TiffWriter<W>,
     dropped: bool,
-    // We use BTreeMap to make sure tags are written in correct order
     ifd_pointer_pos: u64,
-    ifd: BTreeMap<u16, DirectoryEntry<K::OffsetType>>,
-    sub_ifd: Option<BTreeMap<u16, DirectoryEntry<K::OffsetType>>>,
+    ifd: Directory<BufferedEntry>,
+    sub_ifd: Option<Directory<BufferedEntry>>,
+    _phantom: ::std::marker::PhantomData<K>,
 }
 
 impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
@@ -210,18 +208,19 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         // the previous word is the IFD offset position
         let ifd_pointer_pos = writer.offset() - mem::size_of::<K::OffsetType>() as u64;
         writer.pad_word_boundary()?; // TODO: Do we need to adjust this for BigTiff?
-        Ok(DirectoryEncoder {
+        Ok(DirectoryEncoder::<W, K> {
             writer,
             dropped: false,
             ifd_pointer_pos,
-            ifd: BTreeMap::new(),
+            ifd: Directory::new(),
             sub_ifd: None,
+            _phantom: ::std::marker::PhantomData,
         })
     }
 
     /// Start writing to sub-IFD
     pub fn subdirectory_start(&mut self) {
-        self.sub_ifd = Some(BTreeMap::new());
+        self.sub_ifd = Some(Directory::new());
     }
 
     /// Stop writing to sub-IFD and resume master IFD, returns offset of sub-IFD
@@ -246,9 +245,9 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         };
 
         active_ifd.insert(
-            tag.to_u16(),
-            DirectoryEntry {
-                data_type: value.is_type().to_u16(),
+            tag,
+            BufferedEntry {
+                type_: value.is_type(),
                 count: value.count().try_into()?,
                 data: bytes,
             },
@@ -264,12 +263,12 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         };
 
         // Start by writing out all values
-        for &mut DirectoryEntry {
+        for &mut BufferedEntry {
             data: ref mut bytes,
             ..
         } in active_ifd.values_mut()
         {
-            let data_bytes = mem::size_of::<K::OffsetType>();
+            let data_bytes = K::OffsetType::BYTE_LEN as usize;
 
             if bytes.len() > data_bytes {
                 let offset = self.writer.offset();
@@ -289,17 +288,17 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         K::write_entry_count(self.writer, active_ifd.len())?;
         for (
             tag,
-            DirectoryEntry {
-                data_type: field_type,
+            BufferedEntry {
+                type_: field_type,
                 count,
                 data: offset,
             },
         ) in active_ifd.iter()
         {
-            self.writer.write_u16(*tag)?;
-            self.writer.write_u16(*field_type)?;
-            (*count).write(self.writer)?;
-            self.writer.write_bytes(offset)?;
+            self.writer.write_u16(tag.to_u16())?;
+            self.writer.write_u16(field_type.to_u16())?;
+            K::convert_offset(*count)?.write(self.writer)?;
+            self.writer.write_bytes(&offset)?;
         }
 
         Ok(offset)
@@ -321,7 +320,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
     fn finish_internal(&mut self) -> TiffResult<()> {
         if self.sub_ifd.is_some() {
-           self.subirectory_close()?;
+            self.subirectory_close()?;
         }
         let ifd_pointer = self.write_directory()?;
         let curr_pos = self.writer.offset();
@@ -593,15 +592,15 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     }
 
     /// Write Exif data from TIFF encoded byte block
-    pub fn exif_tags(&mut self, source: Vec<u8>) -> TiffResult<()> {
-        let mut decoder = Decoder::new(Cursor::new(source))?;
+    pub fn exif_tags<F: TiffKind>(&mut self, source: Vec<u8>) -> TiffResult<()> {
+        let mut decoder = Decoder::<_, F>::new(Cursor::new(source))?;
 
         // copy Exif tags to main IFD
         let exif_tags = EXIF_TAGS;
-        exif_tags.into_iter().for_each(| tag | {
+        exif_tags.into_iter().for_each(|tag| {
             let entry = decoder.find_tag_entry(tag);
-            if entry.is_some() && !self.encoder.ifd.contains_key(&tag.to_u16()) {
-                let b_entry = entry.unwrap().as_buffered(false, decoder.inner()).unwrap();
+            if entry.is_some() && !self.encoder.ifd.contains_key(&tag) {
+                let b_entry = entry.unwrap().as_buffered(decoder.inner()).unwrap();
                 self.encoder.write_tag(tag, b_entry).unwrap();
             }
         });
@@ -614,7 +613,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         Ok(())
     }
 
-    fn copy_ifd<R: Read+Seek>(&mut self, tag: Tag, decoder: &mut Decoder<R>) -> TiffResult<()> {
+    fn copy_ifd<R: Read + Seek, F: TiffKind>(
+        &mut self,
+        tag: Tag,
+        decoder: &mut Decoder<R, F>,
+    ) -> TiffResult<()> {
         let exif_ifd_offset = decoder.find_tag(tag)?;
         if exif_ifd_offset.is_some() {
             let offset = exif_ifd_offset.unwrap().into_u32()?.into();
@@ -622,12 +625,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             // create sub-ifd
             self.encoder.subdirectory_start();
 
-            let (ifd, _trash1) =
-                Decoder::read_ifd(decoder.inner(), false, offset)?;
+            let (ifd, _trash1) = Decoder::<_, F>::read_ifd(decoder.inner(), offset)?;
 
             // loop through entries
             ifd.into_iter().for_each(|(tag, value)| {
-                let b_entry = value.as_buffered(false, decoder.inner()).unwrap();
+                let b_entry = value.as_buffered(decoder.inner()).unwrap();
                 self.encoder.write_tag(tag, b_entry).unwrap();
             });
 
@@ -689,122 +691,5 @@ impl<'a, W: Write + Seek, C: ColorType, K: TiffKind> Drop for ImageEncoder<'a, W
         if !self.dropped {
             let _ = self.finish_internal();
         }
-    }
-}
-
-struct DirectoryEntry<S> {
-    data_type: u16,
-    count: S,
-    data: Vec<u8>,
-}
-
-/// Trait to abstract over Tiff/BigTiff differences.
-///
-/// Implemented for [`TiffKindStandard`] and [`TiffKindBig`].
-pub trait TiffKind {
-    /// The type of offset fields, `u32` for normal Tiff, `u64` for BigTiff.
-    type OffsetType: TryFrom<usize, Error = TryFromIntError> + Into<u64> + TiffValue;
-
-    /// Needed for the `convert_slice` method.
-    type OffsetArrayType: ?Sized + TiffValue;
-
-    /// Write the (Big)Tiff header.
-    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()>;
-
-    /// Convert a file offset to `Self::OffsetType`.
-    ///
-    /// This returns an error for normal Tiff if the offset is larger than `u32::MAX`.
-    fn convert_offset(offset: u64) -> TiffResult<Self::OffsetType>;
-
-    /// Write an offset value to the given writer.
-    ///
-    /// Like `convert_offset`, this errors if `offset > u32::MAX` for normal Tiff.
-    fn write_offset<W: Write>(writer: &mut TiffWriter<W>, offset: u64) -> TiffResult<()>;
-
-    /// Write the IFD entry count field with the given `count` value.
-    ///
-    /// The entry count field is an `u16` for normal Tiff and `u64` for BigTiff. Errors
-    /// if the given `usize` is larger than the representable values.
-    fn write_entry_count<W: Write>(writer: &mut TiffWriter<W>, count: usize) -> TiffResult<()>;
-
-    /// Internal helper method for satisfying Rust's type checker.
-    ///
-    /// The `TiffValue` trait is implemented for both primitive values (e.g. `u8`, `u32`) and
-    /// slices of primitive values (e.g. `[u8]`, `[u32]`). However, this is not represented in
-    /// the type system, so there is no guarantee that that for all `T: TiffValue` there is also
-    /// an implementation of `TiffValue` for `[T]`. This method works around that problem by
-    /// providing a conversion from `[T]` to some value that implements `TiffValue`, thereby
-    /// making all slices of `OffsetType` usable with `write_tag` and similar methods.
-    ///
-    /// Implementations of this trait should always set `OffsetArrayType` to `[OffsetType]`.
-    fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType;
-}
-
-/// Create a standard Tiff file.
-pub struct TiffKindStandard;
-
-impl TiffKind for TiffKindStandard {
-    type OffsetType = u32;
-    type OffsetArrayType = [u32];
-
-    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        write_tiff_header(writer)?;
-        // blank the IFD offset location
-        writer.write_u32(0)?;
-
-        Ok(())
-    }
-
-    fn convert_offset(offset: u64) -> TiffResult<Self::OffsetType> {
-        Ok(Self::OffsetType::try_from(offset)?)
-    }
-
-    fn write_offset<W: Write>(writer: &mut TiffWriter<W>, offset: u64) -> TiffResult<()> {
-        writer.write_u32(u32::try_from(offset)?)?;
-        Ok(())
-    }
-
-    fn write_entry_count<W: Write>(writer: &mut TiffWriter<W>, count: usize) -> TiffResult<()> {
-        writer.write_u16(u16::try_from(count)?)?;
-
-        Ok(())
-    }
-
-    fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType {
-        slice
-    }
-}
-
-/// Create a BigTiff file.
-pub struct TiffKindBig;
-
-impl TiffKind for TiffKindBig {
-    type OffsetType = u64;
-    type OffsetArrayType = [u64];
-
-    fn write_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<()> {
-        write_bigtiff_header(writer)?;
-        // blank the IFD offset location
-        writer.write_u64(0)?;
-
-        Ok(())
-    }
-
-    fn convert_offset(offset: u64) -> TiffResult<Self::OffsetType> {
-        Ok(offset)
-    }
-
-    fn write_offset<W: Write>(writer: &mut TiffWriter<W>, offset: u64) -> TiffResult<()> {
-        writer.write_u64(offset)?;
-        Ok(())
-    }
-
-    fn write_entry_count<W: Write>(writer: &mut TiffWriter<W>, count: usize) -> TiffResult<()> {
-        writer.write_u64(u64::try_from(count)?)?;
-        Ok(())
-    }
-
-    fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType {
-        slice
     }
 }

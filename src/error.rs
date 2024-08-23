@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use jpeg::UnsupportedFeature;
 
-use crate::decoder::{ifd::Value, ChunkType};
+use crate::decoder::ChunkType;
+use crate::ifd::Value;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };

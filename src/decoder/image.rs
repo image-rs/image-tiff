@@ -1,14 +1,21 @@
-use super::ifd::{Directory, Value};
-use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
-use super::tag_reader::TagReader;
-use super::{predict_f16, predict_f32, predict_f64, Limits};
-use super::{stream::SmartReader, ChunkType};
-use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
+use super::{
+    predict_f16, predict_f32, predict_f64,
+    stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader, SmartReader},
+    tag_reader::TagReader,
+    ChunkType, DecodedEntry, Limits,
 };
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
-use std::io::{self, Cursor, Read, Seek};
-use std::sync::Arc;
+use crate::{
+    ifd::{Directory, Value},
+    tags::{
+        CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
+        Tag,
+    },
+    ColorType, TiffError, TiffFormatError, TiffKind, TiffResult, TiffUnsupportedError, UsageError,
+};
+use std::{
+    io::{self, Cursor, Read, Seek},
+    sync::Arc,
+};
 
 #[derive(Debug)]
 pub(crate) struct StripDecodeState {
@@ -59,8 +66,8 @@ impl TileAttributes {
 }
 
 #[derive(Debug)]
-pub(crate) struct Image {
-    pub ifd: Option<Directory>,
+pub(crate) struct Image<K: TiffKind> {
+    pub ifd: Option<Directory<DecodedEntry<K>>>,
     pub width: u32,
     pub height: u32,
     pub bits_per_sample: u8,
@@ -78,18 +85,16 @@ pub(crate) struct Image {
     pub chunk_bytes: Vec<u64>,
 }
 
-impl Image {
+impl<K: TiffKind> Image<K> {
     pub fn from_reader<R: Read + Seek>(
         reader: &mut SmartReader<R>,
-        ifd: Directory,
+        ifd: Directory<DecodedEntry<K>>,
         limits: &Limits,
-        bigtiff: bool,
-    ) -> TiffResult<Image> {
-        let mut tag_reader = TagReader {
+    ) -> TiffResult<Image<K>> {
+        let mut tag_reader = TagReader::<_, K> {
             reader,
             limits,
             ifd: &ifd,
-            bigtiff,
         };
 
         let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
@@ -284,17 +289,18 @@ impl Image {
                     ));
                 }
             }
-            (false,false,false,false) => { // allow reading Tiff without image data
+            (false, false, false, false) => {
+                // allow reading Tiff without image data
                 chunk_type = ChunkType::None; // the ChunkType will make sure an error is thrown later if trying to read image data
                 strip_decoder = None;
                 tile_attributes = None;
                 chunk_offsets = Vec::new();
                 chunk_bytes = Vec::new();
-            },
+            }
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
-                ))
+                ));
             }
         };
 
@@ -459,7 +465,7 @@ impl Image {
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),
-                ))
+                ));
             }
         })
     }
@@ -520,7 +526,7 @@ impl Image {
             ChunkType::None => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
-                ))
+                ));
             }
         }
     }
@@ -557,7 +563,7 @@ impl Image {
             ChunkType::None => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
-                ))
+                ));
             }
         }
     }
