@@ -1,7 +1,7 @@
 extern crate exif;
 extern crate tiff;
 
-use tiff::{decoder::Decoder, tags::Tag, TiffKindBig, TiffKindStandard};
+use tiff::{decoder::TiffDecoder, tags::Tag};
 
 use clap::Parser;
 use std::fs::File;
@@ -19,7 +19,7 @@ fn main() {
     let args = Cli::parse();
 
     let img_file = File::open(args.path).expect("Cannot find test image!");
-    let mut decoder = Decoder::<_, TiffKindStandard>::new(img_file).expect("Cannot create decoder");
+    let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
     let exif = decoder.get_exif_data().expect("Unable to read Exif data");
 
     println!("Base: {exif:#?}");

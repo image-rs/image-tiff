@@ -43,6 +43,7 @@ impl Value {
             val => Err(TiffError::FormatError(TiffFormatError::ByteExpected(val))),
         }
     }
+
     pub fn into_i8(self) -> TiffResult<i8> {
         match self {
             SignedByte(val) => Ok(val),
@@ -395,6 +396,10 @@ impl<E> Directory<E> {
 
     pub fn get(&self, tag: &Tag) -> Option<&E> {
         self.0.get(&tag)
+    }
+
+    pub fn get_mut(&mut self, tag: &Tag) -> Option<&mut E> {
+        self.0.get_mut(&tag)
     }
 
     pub fn len(&self) -> usize {

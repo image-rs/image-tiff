@@ -9,11 +9,11 @@ use std::{
 };
 
 use crate::{
-    decoder::Decoder,
+    decoder::GenericTiffDecoder,
     error::{TiffResult, UsageError},
     ifd::{BufferedEntry, Directory},
     tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag, EXIF_TAGS},
-    TiffError, TiffFormatError, TiffKind, TiffKindStandard,
+    TiffError, TiffFormatError, TiffKind, TiffKindBig, TiffKindStandard,
 };
 
 pub mod colortype;
@@ -36,6 +36,9 @@ pub use self::writer::*;
 /// [Predictor::FloatingPoint] is currently not supported.
 pub type Predictor = crate::tags::Predictor;
 pub type DeflateLevel = compression::DeflateLevel;
+
+pub type TiffEncoder<W> = GenericTiffEncoder<W, TiffKindStandard>;
+pub type BigTiffEncoder<W> = GenericTiffEncoder<W, TiffKindBig>;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Compression {
@@ -87,49 +90,27 @@ impl Compression {
 /// use tiff::encoder::*;
 ///
 /// // create a standard Tiff file
-/// let mut tiff = TiffEncoder::new(&mut file).unwrap();
+/// let mut tiff = GenericTiffEncoder::<_, tiff::TiffKindStandard>::new(&mut file).unwrap();
 /// tiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
 ///
 /// // create a BigTiff file
-/// let mut bigtiff = TiffEncoder::new_big(&mut file).unwrap();
+/// let mut bigtiff = GenericTiffEncoder::<_, tiff::TiffKindBig>::new(&mut file).unwrap();
 /// bigtiff.write_image::<colortype::RGB8>(100, 100, &image_data).unwrap();
 ///
 /// # }
 /// ```
-pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
+pub struct GenericTiffEncoder<W, K: TiffKind> {
     writer: TiffWriter<W>,
     kind: PhantomData<K>,
     predictor: Predictor,
     compression: Compression,
 }
 
-/// Constructor functions to create standard Tiff files.
-impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
-    /// Creates a new encoder for standard Tiff files.
-    ///
-    /// To create BigTiff files, use [`new_big`][TiffEncoder::new_big] or
-    /// [`new_generic`][TiffEncoder::new_generic].
-    pub fn new(writer: W) -> TiffResult<TiffEncoder<W, K>> {
-        TiffEncoder::new_generic(writer)
-    }
-}
-
-/// Constructor functions to create BigTiff files.
-impl<W: Write + Seek, T: TiffKind> TiffEncoder<W, T> {
-    /// Creates a new encoder for BigTiff files.
-    ///
-    /// To create standard Tiff files, use [`new`][TiffEncoder::new] or
-    /// [`new_generic`][TiffEncoder::new_generic].
-    pub fn new_big(writer: W) -> TiffResult<Self> {
-        TiffEncoder::new_generic(writer)
-    }
-}
-
 /// Generic functions that are available for both Tiff and BigTiff encoders.
-impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
+impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
     /// Creates a new Tiff or BigTiff encoder, inferred from the return type.
-    pub fn new_generic(writer: W) -> TiffResult<Self> {
-        let mut encoder = TiffEncoder {
+    pub fn new(writer: W) -> TiffResult<Self> {
+        let mut encoder = GenericTiffEncoder {
             writer: TiffWriter::new(writer),
             kind: PhantomData,
             predictor: Predictor::None,
@@ -363,7 +344,7 @@ impl<'a, W: Write + Seek, K: TiffKind> Drop for DirectoryEncoder<'a, W, K> {
 /// use tiff::encoder::*;
 /// use tiff::tags::Tag;
 ///
-/// let mut tiff = TiffEncoder::new(&mut file).unwrap();
+/// let mut tiff = GenericTiffEncoder::<_, tiff::TiffKindStandard>::new(&mut file).unwrap();
 /// let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
 ///
 /// // You can encode tags here
@@ -593,7 +574,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
 
     /// Write Exif data from TIFF encoded byte block
     pub fn exif_tags<F: TiffKind>(&mut self, source: Vec<u8>) -> TiffResult<()> {
-        let mut decoder = Decoder::<_, F>::new(Cursor::new(source))?;
+        let mut decoder = GenericTiffDecoder::<_, F>::new(Cursor::new(source))?;
 
         // copy Exif tags to main IFD
         let exif_tags = EXIF_TAGS;
@@ -616,7 +597,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     fn copy_ifd<R: Read + Seek, F: TiffKind>(
         &mut self,
         tag: Tag,
-        decoder: &mut Decoder<R, F>,
+        decoder: &mut GenericTiffDecoder<R, F>,
     ) -> TiffResult<()> {
         let exif_ifd_offset = decoder.find_tag(tag)?;
         if exif_ifd_offset.is_some() {
@@ -625,7 +606,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             // create sub-ifd
             self.encoder.subdirectory_start();
 
-            let (ifd, _trash1) = Decoder::<_, F>::read_ifd(decoder.inner(), offset)?;
+            let (ifd, _trash1) = GenericTiffDecoder::<_, F>::read_ifd(decoder.inner(), offset)?;
 
             // loop through entries
             ifd.into_iter().for_each(|(tag, value)| {

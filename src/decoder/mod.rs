@@ -7,13 +7,14 @@ use self::{
 use crate::{
     bytecast,
     decoder::ifd::Entry,
-    encoder::{DirectoryEncoder, TiffEncoder, TiffKind},
+    encoder::{DirectoryEncoder, GenericTiffEncoder, TiffEncoder, TiffKind},
     ifd::{BufferedEntry, Directory, Value},
     tags::{
         CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
         Tag, Type, EXIF_TAGS,
     },
-    ColorType, TiffError, TiffFormatError, TiffKind, TiffResult, TiffUnsupportedError, UsageError,
+    ColorType, TiffError, TiffFormatError, TiffKind, TiffKindBig, TiffKindStandard, TiffResult,
+    TiffUnsupportedError, UsageError,
 };
 use half::f16;
 use std::{
@@ -22,7 +23,8 @@ use std::{
     io::{self, Cursor, Read, Seek, Write},
 };
 
-use self::stream::{ByteOrder, EndianReader, SmartReader};
+pub type TiffDecoder<W> = GenericTiffDecoder<W, TiffKindStandard>;
+pub type BigTiffDecoder<W> = GenericTiffDecoder<W, TiffKindBig>;
 
 mod decoded_entry;
 pub mod ifd;
@@ -268,7 +270,7 @@ impl Default for Limits {
 ///
 /// Currently does not support decoding of interlaced images
 #[derive(Debug)]
-pub struct Decoder<R, K>
+pub struct GenericTiffDecoder<R, K>
 where
     R: Read + Seek,
     K: TiffKind,
@@ -460,9 +462,9 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     };
 }
 
-impl<R: Read + Seek, K: TiffKind> Decoder<R, K> {
+impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
     /// Create a new decoder that decodes from the stream ```r```
-    pub fn new(mut r: R) -> TiffResult<Decoder<R, K>> {
+    pub fn new(mut r: R) -> TiffResult<GenericTiffDecoder<R, K>> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
@@ -512,7 +514,7 @@ impl<R: Read + Seek, K: TiffKind> Decoder<R, K> {
         seen_ifds.insert(*next_ifd.as_ref().unwrap());
         let ifd_offsets = vec![*next_ifd.as_ref().unwrap()];
 
-        let mut decoder = Decoder {
+        let mut decoder = GenericTiffDecoder {
             reader,
             limits: Default::default(),
             next_ifd,
@@ -541,7 +543,7 @@ impl<R: Read + Seek, K: TiffKind> Decoder<R, K> {
         Ok(decoder)
     }
 
-    pub fn with_limits(mut self, limits: Limits) -> Decoder<R, K> {
+    pub fn with_limits(mut self, limits: Limits) -> GenericTiffDecoder<R, K> {
         self.limits = limits;
         self
     }
@@ -1201,7 +1203,7 @@ impl<R: Read + Seek, K: TiffKind> Decoder<R, K> {
     pub fn read_exif<T: TiffKind>(&mut self) -> TiffResult<Vec<u8>> {
         // create tiff encoder for result
         let mut exifdata = Cursor::new(Vec::new());
-        let mut encoder = TiffEncoder::<_, T>::new(Write::by_ref(&mut exifdata))?;
+        let mut encoder = GenericTiffEncoder::<_, T>::new(Write::by_ref(&mut exifdata))?;
 
         // create new IFD
         let mut ifd0 = encoder.new_directory()?;

@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::{decoder::Decoder, tags::Tag, ColorType, TiffKindBig};
+use tiff::{decoder::BigTiffDecoder, tags::Tag, ColorType};
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ fn test_big_tiff() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::<_, TiffKindBig>::new(img_file).expect("Cannot create decoder");
+        let mut decoder = BigTiffDecoder::new(img_file).expect("Cannot create decoder");
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
             (64, 64)
