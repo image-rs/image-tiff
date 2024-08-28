@@ -79,7 +79,6 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     // palette-color images (PhotometricInterpretation 3)
     ColorMap = 320, // TODO add support
     Compression = 259, // TODO add support for 2 and 32773
-    Copyright = 33_432,
     DateTime = 306,
     ExtraSamples = 338, // TODO add support
     FillOrder = 266, // TODO add support
@@ -128,18 +127,78 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     GeoKeyDirectoryTag = 34735, // (SPOT)
     GeoDoubleParamsTag = 34736, // (SPOT)
     GeoAsciiParamsTag = 34737, // (SPOT)
+    Copyright = 0x8298,
+    ExifIfd = 0x8769,
+    GpsIfd = 0x8825,
+    ISO = 0x8827,
+    ExifVersion = 0x9000,
+    DateTimeOriginal = 0x9003,
+    CreateDate = 0x9004,
+    ComponentsConfiguration = 0x9101,
+    UserComment = 0x9286,
     GdalNodata = 42113, // Contains areas with missing data
-    GpsIfd = 34853,
-    ExifIfd = 34665,
-    InteropIfd = 40965,
+    FlaspixVersion = 0xa000,
+    InteropIfd = 0xa005,
+}
+}
+
+tags! {
+/// Tag space of GPS ifds
+#[derive(Ord, PartialOrd)]
+pub enum GpsTag(u16) unknown("A private or extension tag") {
+    GPSVersionID = 0x0000,
+    GPSLatitudeRef = 0x0001,
+    GPSLatitude = 0x0002,
+    GPSLongitudeRef = 0x0003,
+    GPSLongitude = 0x0004,
+    GPSAltitudeRef = 0x0005,
+    GPSAltitude = 0x0006,
+    GPSTimeStamp = 0x0007,
+    GPSSatellites = 0x0008,
+    GPSStatus = 0x0009,
+    GPSMeasureMode = 0x000a,
+    GPSDOP = 0x000b,
+    GPSSpeedRef = 0x000c,
+    GPSSpeed = 0x000d,
+    GPSTrackRef = 0x000e,
+    GPSTrack = 0x000f,
+    GPSImgDirectionRef = 0x0010,
+    GPSImgDirection = 0x0011,
+    GPSMapDatum = 0x0012,
+    GPSDestLatitudeRef = 0x0013,
+    GPSDestLatitude = 0x0014,
+    GPSDestLongitudeRef = 0x0015,
+    GPSDestLongitude = 0x0016,
+    GPSDestBearingRef = 0x0017,
+    GPSDestBearing = 0x0018,
+    GPSDestDistanceRef = 0x0019,
+    GPSDestDistance = 0x001a,
+    GPSProcessingMethod = 0x001b,
+    GPSAreaInformation = 0x001c,
+    GPSDateStamp = 0x001d,
+    GPSDifferential = 0x001e,
+    GPSHPositioningError = 0x001f,
 }
 }
 
 /// List of Tiff tags in the image IFD read as part of the Exif metadata
-pub const EXIF_TAGS: [Tag; 15] = [Tag::ImageWidth,Tag::ImageLength,Tag::PhotometricInterpretation,
-Tag::ImageDescription,Tag::Make,Tag::Model,Tag::Orientation,Tag::XResolution,
-Tag::YResolution,Tag::ResolutionUnit,Tag::Software,Tag::DateTime,Tag::Artist,
-Tag::HostComputer,Tag::Unknown(33432)];
+pub const EXIF_TAGS: [Tag; 15] = [
+    Tag::ImageWidth,
+    Tag::ImageLength,
+    Tag::PhotometricInterpretation,
+    Tag::ImageDescription,
+    Tag::Make,
+    Tag::Model,
+    Tag::Orientation,
+    Tag::XResolution,
+    Tag::YResolution,
+    Tag::ResolutionUnit,
+    Tag::Software,
+    Tag::DateTime,
+    Tag::Artist,
+    Tag::HostComputer,
+    Tag::Copyright,
+];
 
 tags! {
 /// The type of an IFD entry (a 2 byte field).

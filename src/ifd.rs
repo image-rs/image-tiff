@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::mem::size_of;
 
 use crate::encoder::TiffValue;
 use crate::tags::{Tag, Type};
@@ -11,6 +12,8 @@ use self::Value::{
     Ascii, Byte, Double, Float, Ifd, IfdBig, List, Rational, RationalBig, SRational, SRationalBig,
     Short, Signed, SignedBig, SignedByte, SignedShort, Unsigned, UnsignedBig,
 };
+
+use itertools::Itertools;
 
 #[allow(unused_qualifications)]
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +37,46 @@ pub enum Value {
     Ascii(String),
     Ifd(u32),
     IfdBig(u64),
+    Undefined(u8),
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Value::Byte(e) => write!(f, "{e}"),
+            Value::Short(e) => write!(f, "{e}"),
+            Value::SignedByte(e) => write!(f, "{e}"),
+            Value::SignedShort(e) => write!(f, "{e}"),
+            Value::Signed(e) => write!(f, "{e}"),
+            Value::SignedBig(e) => write!(f, "{e}"),
+            Value::Unsigned(e) => write!(f, "{e}"),
+            Value::UnsignedBig(e) => write!(f, "{e}"),
+            Value::Float(e) => write!(f, "{e}"),
+            Value::Double(e) => write!(f, "{e}"),
+            Value::Rational(e1, e2) => {
+                let a_mul = (*e1 as u128) * 1000;
+                let b = *e2 as u128;
+                let div = a_mul / b;
+
+                let frac = div % 1000;
+                let rest = div / 1000;
+
+                if frac != 0 {
+                    write!(f, "{rest}.{frac:#03}")
+                } else {
+                    write!(f, "{rest}")
+                }
+            }
+            Value::RationalBig(e1, e2) => write!(f, "{e1}/{e2}"),
+            Value::SRational(e1, e2) => write!(f, "{e1}/{e2}"),
+            Value::SRationalBig(e1, e2) => write!(f, "{e1}/{e2}"),
+            Value::Ascii(e) => write!(f, "{e}"),
+            Value::Ifd(e) => write!(f, "IFD offset: {e}"),
+            Value::IfdBig(e) => write!(f, "IFD offset: {e}"),
+            Value::Undefined(e) => write!(f, "{e}"),
+            Value::List(_) => todo!(),
+        }
+    }
 }
 
 impl Value {
@@ -373,32 +416,112 @@ impl TiffValue for BufferedEntry {
     }
 }
 
+macro_rules! step_through {
+    ($vec:expr, $type:ty, $big_endian:expr) => {
+        (0..$vec.len()).step_by(size_of::<$type>()).map(|i| {
+            Ok(if $big_endian {
+                <$type>::from_be_bytes($vec[i..i + size_of::<$type>()].try_into()?)
+            } else {
+                <$type>::from_le_bytes($vec[i..i + size_of::<$type>()].try_into()?)
+            })
+        })
+    };
+}
+
+macro_rules! cast {
+    ($be:expr, $big_endian:expr, $type:ty, $value:expr) => {{
+        assert!($be.data.len() as u64 == size_of::<$type>() as u64 * $be.count);
+        step_through!($be.data, $type, $big_endian)
+            .collect::<Result<Vec<$type>, Box<dyn std::error::Error>>>()?
+            .into_iter()
+            .map($value)
+            .collect()
+    }};
+
+    ($be:expr, $big_endian:expr, $type:ty, $second:ty, $value:expr) => {{
+        assert!($be.data.len() as u64 == size_of::<$type>() as u64 * $be.count * 2);
+        step_through!($be.data, $type, $big_endian)
+            .collect::<Result<Vec<$type>, Box<dyn std::error::Error>>>()?
+            .into_iter()
+            .tuples::<($type, $type)>()
+            .map(|(n, d)| $value(n, d))
+            .collect()
+    }};
+}
+
+pub fn process(
+    be: BufferedEntry,
+    is_big_endian: bool,
+) -> Result<ProcessedEntry, Box<dyn std::error::Error>> {
+    let contents: Vec<Value> = match be.type_ {
+        Type::BYTE => be.data.into_iter().map(Value::Byte).collect(),
+        Type::SBYTE => be
+            .data
+            .into_iter()
+            .map(|b| i8::from_be_bytes([b; 1]))
+            .map(Value::SignedByte)
+            .collect(),
+        Type::SHORT => cast!(be, is_big_endian, u16, Value::Short),
+        Type::LONG => cast!(be, is_big_endian, u32, Value::Unsigned),
+        Type::SLONG8 => cast!(be, is_big_endian, u64, Value::UnsignedBig),
+        Type::SSHORT => cast!(be, is_big_endian, i16, Value::SignedShort),
+        Type::SLONG => cast!(be, is_big_endian, i32, Value::Signed),
+        Type::LONG8 => cast!(be, is_big_endian, i64, Value::SignedBig),
+        Type::FLOAT => cast!(be, is_big_endian, f32, Value::Float),
+        Type::DOUBLE => cast!(be, is_big_endian, f64, Value::Double),
+        Type::RATIONAL => cast!(be, is_big_endian, u32, u32, Value::Rational),
+        Type::SRATIONAL => cast!(be, is_big_endian, i32, i32, Value::SRational),
+        Type::IFD => cast!(be, is_big_endian, u32, Value::Ifd),
+        Type::IFD8 => cast!(be, is_big_endian, u64, Value::IfdBig),
+        Type::UNDEFINED => be.data.into_iter().map(Value::Undefined).collect(),
+        Type::ASCII => {
+            vec![Value::Ascii(String::from_utf8(be.data)?)]
+        }
+    };
+
+    Ok(ProcessedEntry(contents))
+}
+
+/// Entry with buffered instead of read data
+#[derive(Clone, Debug)]
+pub struct ProcessedEntry(Vec<Value>);
+
+impl std::fmt::Display for ProcessedEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.0.iter().map(|v| format!("{v}")).join(", "))
+    }
+}
+
 /// Type representing an Image File Directory
 #[derive(Debug)]
-pub struct Directory<E>(BTreeMap<Tag, E>);
+pub struct ImageFileDirectory<T: Ord, E>(BTreeMap<T, E>);
+pub type Directory<E> = ImageFileDirectory<Tag, E>;
 
-impl<E> Directory<E> {
+impl<T, E> ImageFileDirectory<T, E>
+where
+    T: Ord,
+{
     pub fn new() -> Self {
-        Directory(BTreeMap::new())
+        ImageFileDirectory(BTreeMap::new())
     }
 
-    pub fn insert(&mut self, tag: Tag, entry: E) -> Option<E> {
+    pub fn insert(&mut self, tag: T, entry: E) -> Option<E> {
         self.0.insert(tag, entry)
     }
 
-    pub fn into_iter(self) -> std::collections::btree_map::IntoIter<Tag, E> {
+    pub fn into_iter(self) -> std::collections::btree_map::IntoIter<T, E> {
         self.0.into_iter()
     }
 
-    pub fn contains_key(&self, tag: &Tag) -> bool {
+    pub fn contains_key(&self, tag: &T) -> bool {
         self.0.contains_key(&tag)
     }
 
-    pub fn get(&self, tag: &Tag) -> Option<&E> {
+    pub fn get(&self, tag: &T) -> Option<&E> {
         self.0.get(&tag)
     }
 
-    pub fn get_mut(&mut self, tag: &Tag) -> Option<&mut E> {
+    pub fn get_mut(&mut self, tag: &T) -> Option<&mut E> {
         self.0.get_mut(&tag)
     }
 
@@ -406,11 +529,11 @@ impl<E> Directory<E> {
         self.0.len()
     }
 
-    pub fn iter(&self) -> std::collections::btree_map::Iter<Tag, E> {
+    pub fn iter(&self) -> std::collections::btree_map::Iter<T, E> {
         self.0.iter()
     }
 
-    pub fn values_mut(&mut self) -> std::collections::btree_map::ValuesMut<Tag, E> {
+    pub fn values_mut(&mut self) -> std::collections::btree_map::ValuesMut<T, E> {
         self.0.values_mut()
     }
 }
