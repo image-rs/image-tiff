@@ -208,6 +208,10 @@ pub enum PlanarConfiguration(u16) {
 }
 
 tags! {
+/// Additional compression methods:
+/// - *None*: No predictor is used. This is the default mode, meaning the pixel values are stored without modification.
+/// - *Horizontal Differencing*: For each pixel, the predictor calculates the difference between the current pixel and the previous pixel in the same row.
+/// - *Floating Point Predictor*: Based on a similar concept as Predictor 2, but it is specific to floating-point pixel values.
 pub enum Predictor(u16) {
     /// No changes were made to the data
     None = 1,

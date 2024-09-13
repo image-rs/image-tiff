@@ -15,8 +15,8 @@ use crate::tags::{
 use self::stream::{ByteOrder, EndianReader, SmartReader};
 
 pub mod ifd;
-mod image;
-mod stream;
+pub mod image;
+pub mod stream;
 mod tag_reader;
 
 /// Result of a decoding process
@@ -45,7 +45,7 @@ pub enum DecodingResult {
 }
 
 impl DecodingResult {
-    fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -53,7 +53,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / 2 {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -61,7 +61,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_u32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_u32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / 4 {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -69,7 +69,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_u64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_u64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / 8 {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -77,7 +77,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_f32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_f32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / std::mem::size_of::<f32>() {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -85,7 +85,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_f64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_f64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / std::mem::size_of::<f64>() {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -93,7 +93,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_i8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_i8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / std::mem::size_of::<i8>() {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -101,7 +101,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_i16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_i16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / 2 {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -109,7 +109,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_i32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_i32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / 4 {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -117,7 +117,7 @@ impl DecodingResult {
         }
     }
 
-    fn new_i64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub fn new_i64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
         if size > limits.decoding_buffer_size / 8 {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -166,7 +166,7 @@ pub enum DecodingBuffer<'a> {
 }
 
 impl<'a> DecodingBuffer<'a> {
-    fn as_bytes_mut(&mut self) -> &mut [u8] {
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         match self {
             DecodingBuffer::U8(ref mut buf) => buf,
             DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
@@ -289,7 +289,7 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
     }
 }
 
-fn predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
+pub fn predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
     for i in samples..input.len() {
         input[i] = input[i].wrapping_add(input[i - samples]);
     }
@@ -304,7 +304,7 @@ fn predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
     }
 }
 
-fn predict_f64(input: &mut [u8], output: &mut [u8], samples: usize) {
+pub fn predict_f64(input: &mut [u8], output: &mut [u8], samples: usize) {
     for i in samples..input.len() {
         input[i] = input[i].wrapping_add(input[i - samples]);
     }
@@ -323,7 +323,7 @@ fn predict_f64(input: &mut [u8], output: &mut [u8], samples: usize) {
     }
 }
 
-fn fix_endianness_and_predict(
+pub fn fix_endianness_and_predict(
     buf: &mut [u8],
     bit_depth: u8,
     samples: usize,
@@ -349,7 +349,7 @@ fn fix_endianness_and_predict(
     }
 }
 
-fn invert_colors(buf: &mut [u8], color_type: ColorType, sample_format: SampleFormat) {
+pub fn invert_colors(buf: &mut [u8], color_type: ColorType, sample_format: SampleFormat) {
     match (color_type, sample_format) {
         (ColorType::Gray(8), SampleFormat::Uint) => {
             for x in buf {

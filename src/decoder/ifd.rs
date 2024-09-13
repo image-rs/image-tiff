@@ -675,7 +675,7 @@ impl Entry {
 
 /// Extracts a list of BYTE tags stored in an offset
 #[inline]
-fn offset_to_bytes(n: usize, entry: &Entry) -> TiffResult<Value> {
+pub fn offset_to_bytes(n: usize, entry: &Entry) -> TiffResult<Value> {
     Ok(List(
         entry.offset[0..n]
             .iter()
@@ -686,7 +686,7 @@ fn offset_to_bytes(n: usize, entry: &Entry) -> TiffResult<Value> {
 
 /// Extracts a list of SBYTE tags stored in an offset
 #[inline]
-fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
+pub fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
     Ok(List(
         entry.offset[0..n]
             .iter()
