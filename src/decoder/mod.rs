@@ -280,7 +280,7 @@ where
     next_ifd: Option<u64>,
     ifd_offsets: Vec<u64>,
     seen_ifds: HashSet<u64>,
-    image: Image<K>,
+    pub(crate) image: Image<K>,
 }
 
 fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
@@ -1166,10 +1166,9 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
         let mut ifd = Directory::new();
 
         // copy Exif tags from main IFD
-        let exif_tags = EXIF_TAGS;
-        for tag in exif_tags.into_iter() {
-            if let Some(entry) = self.find_tag_entry(tag) {
-                ifd.insert(tag, entry.as_buffered(&mut self.reader)?);
+        if let Some(ref main_ifd) = self.image.ifd {
+            for (tag, entry) in main_ifd.iter() {
+                ifd.insert(tag.clone(), entry.as_buffered(&mut self.reader)?);
             }
         }
 
@@ -1220,14 +1219,12 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
         let mut ifd0 = encoder.new_directory()?;
 
         // copy Exif tags from main IFD
-        let exif_tags = EXIF_TAGS;
-        exif_tags.into_iter().for_each(|tag| {
-            let entry = self.find_tag_entry(tag);
-            if entry.is_some() {
-                let b_entry = entry.unwrap().as_buffered(&mut self.reader).unwrap();
-                ifd0.write_tag(tag, b_entry).unwrap();
+        if let Some(ref main_ifd) = self.image.ifd {
+            for (tag, entry) in main_ifd.iter() {
+                let b_entry = entry.as_buffered(&mut self.reader)?;
+                ifd0.write_tag(*tag, b_entry)?;
             }
-        });
+        }
 
         // copy sub-ifds
         self.copy_ifd(Tag::ExifIfd, &mut ifd0)?;

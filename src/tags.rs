@@ -181,25 +181,6 @@ pub enum GpsTag(u16) unknown("A private or extension tag") {
 }
 }
 
-/// List of Tiff tags in the image IFD read as part of the Exif metadata
-pub const EXIF_TAGS: [Tag; 15] = [
-    Tag::ImageWidth,
-    Tag::ImageLength,
-    Tag::PhotometricInterpretation,
-    Tag::ImageDescription,
-    Tag::Make,
-    Tag::Model,
-    Tag::Orientation,
-    Tag::XResolution,
-    Tag::YResolution,
-    Tag::ResolutionUnit,
-    Tag::Software,
-    Tag::DateTime,
-    Tag::Artist,
-    Tag::HostComputer,
-    Tag::Copyright,
-];
-
 tags! {
 /// The type of an IFD entry (a 2 byte field).
 pub enum Type(u16) {

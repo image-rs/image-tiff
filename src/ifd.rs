@@ -493,9 +493,18 @@ impl std::fmt::Display for ProcessedEntry {
 }
 
 /// Type representing an Image File Directory
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImageFileDirectory<T: Ord, E>(BTreeMap<T, E>);
 pub type Directory<E> = ImageFileDirectory<Tag, E>;
+
+impl<T, E> Default for ImageFileDirectory<T, E>
+where
+    T: Ord,
+{
+    fn default() -> Self {
+        ImageFileDirectory(BTreeMap::new())
+    }
+}
 
 impl<T, E> ImageFileDirectory<T, E>
 where
@@ -535,5 +544,14 @@ where
 
     pub fn values_mut(&mut self) -> std::collections::btree_map::ValuesMut<T, E> {
         self.0.values_mut()
+    }
+}
+
+impl<T, E> FromIterator<(T, E)> for ImageFileDirectory<T, E>
+where
+    T: Ord,
+{
+    fn from_iter<I: IntoIterator<Item = (T, E)>>(iter: I) -> Self {
+        ImageFileDirectory(iter.into_iter().collect())
     }
 }
