@@ -823,7 +823,7 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
     }
 
     pub fn find_tag_entry(&self, tag: Tag) -> Option<DecodedEntry<K>> {
-        self.image().ifd.as_ref().unwrap().get(&tag).cloned()
+        self.image().ifd.as_ref().and_then(|i| i.get(&tag).cloned())
     }
 
     /// Tries to retrieve a tag.
