@@ -416,65 +416,27 @@ impl TiffValue for BufferedEntry {
     }
 }
 
-macro_rules! step_through {
-    ($vec:expr, $type:ty) => {
-        (0..$vec.len()).step_by(size_of::<$type>()).map(|i| {
-            Ok(<$type>::from_ne_bytes(
-                $vec[i..i + size_of::<$type>()].try_into()?,
-            ))
-        })
-    };
-}
-
 macro_rules! cast {
     ($be:expr, $type:ty, $value:expr) => {{
         assert!($be.data.len() as u64 == size_of::<$type>() as u64 * $be.count);
-        step_through!($be.data, $type)
-            .collect::<Result<Vec<$type>, Box<dyn std::error::Error>>>()?
+        $be.data
+            .chunks_exact(size_of::<$type>())
             .into_iter()
+            .map(|i| <$type>::from_ne_bytes(i.try_into().expect("Unreachable")))
             .map($value)
             .collect()
     }};
 
     ($be:expr, $type:ty, $second:ty, $value:expr) => {{
         assert!($be.data.len() as u64 == size_of::<$type>() as u64 * $be.count * 2);
-        step_through!($be.data, $type)
-            .collect::<Result<Vec<$type>, Box<dyn std::error::Error>>>()?
+        $be.data
+            .chunks_exact(size_of::<$type>())
             .into_iter()
+            .map(|i| <$type>::from_ne_bytes(i.try_into().expect("Unreachable")))
             .tuples::<($type, $type)>()
             .map(|(n, d)| $value(n, d))
             .collect()
     }};
-}
-
-pub fn process(be: BufferedEntry) -> Result<ProcessedEntry, Box<dyn std::error::Error>> {
-    let contents: Vec<Value> = match be.type_ {
-        Type::BYTE => be.data.into_iter().map(Value::Byte).collect(),
-        Type::SBYTE => be
-            .data
-            .into_iter()
-            .map(|b| i8::from_be_bytes([b; 1]))
-            .map(Value::SignedByte)
-            .collect(),
-        Type::SHORT => cast!(be, u16, Value::Short),
-        Type::LONG => cast!(be, u32, Value::Unsigned),
-        Type::SLONG8 => cast!(be, u64, Value::UnsignedBig),
-        Type::SSHORT => cast!(be, i16, Value::SignedShort),
-        Type::SLONG => cast!(be, i32, Value::Signed),
-        Type::LONG8 => cast!(be, i64, Value::SignedBig),
-        Type::FLOAT => cast!(be, f32, Value::Float),
-        Type::DOUBLE => cast!(be, f64, Value::Double),
-        Type::RATIONAL => cast!(be, u32, u32, Value::Rational),
-        Type::SRATIONAL => cast!(be, i32, i32, Value::SRational),
-        Type::IFD => cast!(be, u32, Value::Ifd),
-        Type::IFD8 => cast!(be, u64, Value::IfdBig),
-        Type::UNDEFINED => be.data.into_iter().map(Value::Undefined).collect(),
-        Type::ASCII => {
-            vec![Value::Ascii(String::from_utf8(be.data)?)]
-        }
-    };
-
-    Ok(ProcessedEntry(contents))
 }
 
 /// Entry with buffered instead of read data
@@ -484,6 +446,38 @@ pub struct ProcessedEntry(Vec<Value>);
 impl std::fmt::Display for ProcessedEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(f, "{}", self.0.iter().map(|v| format!("{v}")).join(", "))
+    }
+}
+
+impl From<BufferedEntry> for ProcessedEntry {
+    fn from(be: BufferedEntry) -> Self {
+        let contents: Vec<Value> = match be.type_ {
+            Type::BYTE => be.data.into_iter().map(Value::Byte).collect(),
+            Type::SBYTE => be
+                .data
+                .into_iter()
+                .map(|b| i8::from_be_bytes([b; 1]))
+                .map(Value::SignedByte)
+                .collect(),
+            Type::SHORT => cast!(be, u16, Value::Short),
+            Type::LONG => cast!(be, u32, Value::Unsigned),
+            Type::SLONG8 => cast!(be, u64, Value::UnsignedBig),
+            Type::SSHORT => cast!(be, i16, Value::SignedShort),
+            Type::SLONG => cast!(be, i32, Value::Signed),
+            Type::LONG8 => cast!(be, i64, Value::SignedBig),
+            Type::FLOAT => cast!(be, f32, Value::Float),
+            Type::DOUBLE => cast!(be, f64, Value::Double),
+            Type::RATIONAL => cast!(be, u32, u32, Value::Rational),
+            Type::SRATIONAL => cast!(be, i32, i32, Value::SRational),
+            Type::IFD => cast!(be, u32, Value::Ifd),
+            Type::IFD8 => cast!(be, u64, Value::IfdBig),
+            Type::UNDEFINED => be.data.into_iter().map(Value::Undefined).collect(),
+            Type::ASCII => {
+                vec![Value::Ascii(String::from_utf8(be.data).unwrap_or_default())]
+            }
+        };
+
+        ProcessedEntry(contents)
     }
 }
 
