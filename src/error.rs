@@ -157,6 +157,7 @@ pub enum TiffUnsupportedError {
     InterpretationWithBits(PhotometricInterpretation, Vec<u8>),
     UnknownInterpretation,
     UnknownCompressionMethod,
+    UnsupportedPhotometricInterpretation(PhotometricInterpretation),
     UnsupportedCompressionMethod(CompressionMethod),
     UnsupportedSampleDepth(u8),
     UnsupportedSampleFormat(Vec<SampleFormat>),
@@ -210,6 +211,9 @@ impl fmt::Display for TiffUnsupportedError {
             }
             UnsupportedBitsPerChannel(bits) => {
                 write!(fmt, "{} bits per channel not supported", bits)
+            }
+            UnsupportedPhotometricInterpretation(pi) => {
+                write!(fmt, "Unsupported photometric interpretation: {}", pi)
             }
             UnsupportedPlanarConfig(config) => {
                 write!(fmt, "Unsupported planar configuration “{:?}”.", config)

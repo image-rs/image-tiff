@@ -370,7 +370,7 @@ fn fix_endianness_and_predict(
     samples: usize,
     byte_order: ByteOrder,
     predictor: Predictor,
-) {
+) -> TiffResult<()> {
     match predictor {
         Predictor::None => {
             fix_endianness(buf, byte_order, bit_depth);
@@ -388,7 +388,14 @@ fn fix_endianness_and_predict(
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
+        Predictor::Unknown(code) => {
+            return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
+                code,
+            )))
+        }
     }
+
+    Ok(())
 }
 
 fn invert_colors(buf: &mut [u8], color_type: ColorType, sample_format: SampleFormat) {
@@ -980,6 +987,11 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
         let strips = match self.image().planar_config {
             PlanarConfiguration::Chunky => height / rows_per_strip,
             PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
+            PlanarConfiguration::Unknown(code) => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::UnknownPlanarConfiguration(code),
+                ))
+            }
         };
 
         Ok(strips)

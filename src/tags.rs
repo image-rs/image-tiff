@@ -1,3 +1,5 @@
+use crate::ifd::Value;
+
 macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
@@ -36,6 +38,15 @@ macro_rules! tags {
             }
         }
 
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match *self {
+                    $( $name::$tag => write!(f,  stringify!($tag)), )*
+                    $( $name::Unknown(n) => { $unknown_doc; write!(f, "{n:x}")}, )*
+                }
+            }
+        }
+
         tags!($name, $ty, $($unknown_doc)*);
     };
     // For u16 tags, provide direct inherent primitive conversion methods.
@@ -59,6 +70,7 @@ macro_rules! tags {
                 Self::__to_inner_type(self)
             }
         }
+
     };
     // For other tag types, do nothing for now. With concat_idents one could
     // provide inherent conversion methods for all types.
@@ -241,7 +253,7 @@ pub enum CompressionMethod(u16) unknown("A custom compression method") {
 }
 
 tags! {
-pub enum PhotometricInterpretation(u16) {
+pub enum PhotometricInterpretation(u16) unknown("Unknown photometric interpolation") {
     WhiteIsZero = 0,
     BlackIsZero = 1,
     RGB = 2,
@@ -254,14 +266,14 @@ pub enum PhotometricInterpretation(u16) {
 }
 
 tags! {
-pub enum PlanarConfiguration(u16) {
+pub enum PlanarConfiguration(u16) unknown("Unknown planar configuration") {
     Chunky = 1,
     Planar = 2,
 }
 }
 
 tags! {
-pub enum Predictor(u16) {
+pub enum Predictor(u16) unknown("Unknown predictor") {
     /// No changes were made to the data
     None = 1,
     /// The images' rows were processed to contain the difference of each pixel from the previous one.
@@ -276,7 +288,7 @@ pub enum Predictor(u16) {
 
 tags! {
 /// Type to represent resolution units
-pub enum ResolutionUnit(u16) {
+pub enum ResolutionUnit(u16) unknown("Unknown resolution unit") {
     None = 1,
     Inch = 2,
     Centimeter = 3,
@@ -290,4 +302,42 @@ pub enum SampleFormat(u16) unknown("An unknown extension sample format") {
     IEEEFP = 3,
     Void = 4,
 }
+}
+
+pub trait DispatchFormat {
+    fn format(&self, e: &Value) -> String;
+}
+
+impl DispatchFormat for Tag {
+    fn format(&self, e: &Value) -> String {
+        match (self, e) {
+            (Tag::Compression, Value::Short(c)) => {
+                format!("{}", CompressionMethod::from_u16_exhaustive(*c))
+            }
+            (Tag::PhotometricInterpretation, Value::Short(c)) => {
+                format!("{}", PhotometricInterpretation::from_u16_exhaustive(*c))
+            }
+            (Tag::PlanarConfiguration, Value::Short(c)) => {
+                format!("{}", PlanarConfiguration::from_u16_exhaustive(*c))
+            }
+            (Tag::Predictor, Value::Short(c)) => {
+                format!("{}", Predictor::from_u16_exhaustive(*c))
+            }
+            (Tag::ResolutionUnit, Value::Short(c)) => {
+                format!("{}", ResolutionUnit::from_u16_exhaustive(*c))
+            }
+            (Tag::SampleFormat, Value::Short(c)) => {
+                format!("{}", SampleFormat::from_u16_exhaustive(*c))
+            }
+            (_, value) => format!("{value}"),
+        }
+    }
+}
+
+impl DispatchFormat for GpsTag {
+    fn format(&self, e: &Value) -> String {
+        match (self, e) {
+            (_, value) => format!("{value}"),
+        }
+    }
 }

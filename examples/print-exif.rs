@@ -3,7 +3,7 @@ extern crate tiff;
 
 use tiff::{
     decoder::TiffDecoder,
-    ifd::ProcessedEntry,
+    ifd::{Directory, ImageFileDirectory, ProcessedEntry},
     tags::{GpsTag, Tag},
 };
 
@@ -24,47 +24,31 @@ fn main() {
 
     let img_file = File::open(args.path).expect("Cannot find test image!");
     let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
-    let mut exif = decoder
+    let mut exif: Directory<ProcessedEntry> = decoder
         .get_exif_data()
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| (id, be.into()))
-        .collect::<Vec<(Tag, ProcessedEntry)>>();
+        .collect();
+    print!("{exif}");
 
-    exif.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-    exif.into_iter()
-        .for_each(|(id, entry)| println!("{id:?}:\t{entry}"));
-
-    let mut exif = decoder
+    exif = decoder
         .get_exif_ifd(Tag::ExifIfd)
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| (id, be.into()))
-        .collect::<Vec<(Tag, ProcessedEntry)>>();
+        .collect();
+    print!("{exif}");
 
-    exif.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-    exif.into_iter()
-        .for_each(|(id, entry)| println!("{id:?}:\t{entry}"));
-
-    let mut exif = decoder
+    let gps_exif = decoder
         .get_gps_ifd()
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| (id, be.into()))
-        .collect::<Vec<(GpsTag, ProcessedEntry)>>();
+        .collect::<ImageFileDirectory<GpsTag, ProcessedEntry>>();
+    print!("{gps_exif}");
 
-    exif.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-    exif.into_iter()
-        .for_each(|(id, entry)| println!("{id:?}:\t{entry}"));
-
-    let mut exif = decoder
+    exif = decoder
         .get_exif_ifd(Tag::InteropIfd)
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| (id, be.into()))
-        .collect::<Vec<(Tag, ProcessedEntry)>>();
-
-    exif.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-    exif.into_iter()
-        .for_each(|(id, entry)| println!("{id:?}:\t{entry}"));
+        .collect();
+    print!("{exif}");
 }

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::mem::size_of;
 
 use crate::encoder::TiffValue;
-use crate::tags::{Tag, Type};
+use crate::tags::{DispatchFormat, Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
 use self::Value::{
@@ -440,12 +440,15 @@ macro_rules! cast {
 }
 
 /// Entry with buffered instead of read data
+///
+/// The type of tag is determined by the contents of the list, its count being the size of
+/// the list.
 #[derive(Clone, Debug)]
 pub struct ProcessedEntry(Vec<Value>);
 
 impl std::fmt::Display for ProcessedEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "{}", self.0.iter().map(|v| format!("{v}")).join(", "))
+        write!(f, "{}", self.0.iter().map(|v| format!("{v}")).join(", "),)
     }
 }
 
@@ -536,11 +539,30 @@ where
     }
 }
 
-impl<T, E> FromIterator<(T, E)> for ImageFileDirectory<T, E>
+impl<T, E, K> FromIterator<(T, K)> for ImageFileDirectory<T, E>
 where
     T: Ord,
+    K: Into<E>,
 {
-    fn from_iter<I: IntoIterator<Item = (T, E)>>(iter: I) -> Self {
-        ImageFileDirectory(iter.into_iter().collect())
+    fn from_iter<I: IntoIterator<Item = (T, K)>>(iter: I) -> Self {
+        ImageFileDirectory(iter.into_iter().map(|(t, k)| (t, k.into())).collect())
+    }
+}
+
+impl<T> std::fmt::Display for ImageFileDirectory<T, ProcessedEntry>
+where
+    T: DispatchFormat + Ord + std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut refs = self.iter().collect::<Vec<(&T, &ProcessedEntry)>>();
+        refs.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+
+        for (tag, entry) in refs {
+            let entry: String = entry.0.iter().map(|v| tag.format(v)).join(", ");
+
+            writeln!(f, "{tag}: {entry}")?;
+        }
+
+        Ok(())
     }
 }
