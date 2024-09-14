@@ -1,4 +1,5 @@
-use crate::ifd::Value;
+use crate::ifd::ProcessedEntry;
+use itertools::Itertools;
 
 macro_rules! tags {
     {
@@ -49,6 +50,7 @@ macro_rules! tags {
 
         tags!($name, $ty, $($unknown_doc)*);
     };
+
     // For u16 tags, provide direct inherent primitive conversion methods.
     ($name:tt, u16, $($unknown_doc:literal)*) => {
         impl $name {
@@ -110,7 +112,12 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     Orientation = 274, // TODO add support
     PhotometricInterpretation = 262,
     PlanarConfiguration = 284,
+    PageName = 0x11d,
     ResolutionUnit = 296, // TODO add support
+    PageNumber = 0x129,
+    Predictor = 0x13d,
+    WhitePoint = 0x13e,
+    PrimaryChromacities = 0x13f,
     RowsPerStrip = 278,
     SamplesPerPixel = 277,
     Software = 305,
@@ -121,7 +128,6 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     XResolution = 282,
     YResolution = 283,
     // Advanced tags
-    Predictor = 317,
     TileWidth = 322,
     TileLength = 323,
     TileOffsets = 324,
@@ -132,6 +138,7 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     SMaxSampleValue = 341, // TODO add support
     // JPEG
     JPEGTables = 347,
+    ApplicationNotes = 0x2bc,
     // GeoTIFF
     ModelPixelScaleTag = 33550, // (SoftDesk)
     ModelTransformationTag = 34264, // (JPL Carto Group)
@@ -139,17 +146,25 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     GeoKeyDirectoryTag = 34735, // (SPOT)
     GeoDoubleParamsTag = 34736, // (SPOT)
     GeoAsciiParamsTag = 34737, // (SPOT)
+    ShutterSpeedValue = 0x9201,
     Copyright = 0x8298,
+    ExposureTime = 0x829a,
+    FNumber = 0x829b,
     ExifIfd = 0x8769,
     GpsIfd = 0x8825,
     ISO = 0x8827,
+    ICCProfile = 0x8773,
     ExifVersion = 0x9000,
     DateTimeOriginal = 0x9003,
     CreateDate = 0x9004,
     ComponentsConfiguration = 0x9101,
+    ExposureCompensation = 0x9204,
+    MeteringMode = 0x9207,
+    FocalLength = 0x920a,
     UserComment = 0x9286,
     GdalNodata = 42113, // Contains areas with missing data
-    FlaspixVersion = 0xa000,
+    FlashpixVersion = 0xa000,
+    ColorSpace = 0xa001,
     InteropIfd = 0xa005,
 }
 }
@@ -231,6 +246,19 @@ pub enum Type(u16) {
 }
 }
 
+impl Type {
+    /// Returns the size of the type in bytes.
+    pub fn size(&self) -> usize {
+        match self {
+            Type::BYTE | Type::ASCII | Type::SBYTE | Type::UNDEFINED => 1,
+            Type::SHORT | Type::SSHORT => 2,
+            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+            Type::RATIONAL | Type::SRATIONAL | Type::DOUBLE => 8,
+            Type::LONG8 | Type::SLONG8 | Type::IFD8 => 8,
+        }
+    }
+}
+
 tags! {
 /// See [TIFF compression tags](https://www.awaresystems.be/imaging/tiff/tifftags/compression.html)
 /// for reference.
@@ -304,40 +332,90 @@ pub enum SampleFormat(u16) unknown("An unknown extension sample format") {
 }
 }
 
+tags! {
+pub enum ColorSpace(u16) unknown("An unknown colorspace") {
+    SRGB = 1,
+    AdobeRGB = 2,
+    WideGamutRGB = 0xfffd,
+    ICCProfile = 0xfffe,
+    Uncalibrated = 0xffff,
+}
+}
+
+tags! {
+pub enum MeteringMode(u16) unknown("An unknown metering mode") {
+    Average = 1,
+    CenterWeightedAverage = 2,
+    Spot = 3,
+    MultiSpot = 4,
+    MultiSegment = 5,
+    Partial = 6,
+    Other = 255,
+}
+}
+
+tags! {
+pub enum Orientation(u16) unknown("An unknown orientation") {
+    Horizontal = 1,
+    MirrorHorizontal = 2,
+    Rotated180 = 3,
+    MirrorVertical = 4,
+    MirrorHorizontalRotated270CW = 5,
+    Rotated90CW = 6,
+    MirrorHorizontalRotated90CW = 7,
+    Rotated270CW = 8,
+}
+}
+
 pub trait DispatchFormat {
-    fn format(&self, e: &Value) -> String;
+    fn format(&self, e: &ProcessedEntry) -> String;
+}
+
+macro_rules! intercept_u16 {
+    ($slice:expr, $target:ty) => {
+        $slice
+            .iter()
+            .filter_map(|v| v.clone().into_u16().ok())
+            .map(|c| <$target>::from_u16_exhaustive(c).to_string())
+            .join(", ")
+    };
 }
 
 impl DispatchFormat for Tag {
-    fn format(&self, e: &Value) -> String {
-        match (self, e) {
-            (Tag::Compression, Value::Short(c)) => {
-                format!("{}", CompressionMethod::from_u16_exhaustive(*c))
+    fn format(&self, e: &ProcessedEntry) -> String {
+        match (self, e.kind()) {
+            (Tag::Orientation, Type::SHORT) => intercept_u16!(e, Orientation),
+            (Tag::Compression, Type::SHORT) => intercept_u16!(e, CompressionMethod),
+            (Tag::PhotometricInterpretation, Type::SHORT) => {
+                intercept_u16!(e, PhotometricInterpretation)
             }
-            (Tag::PhotometricInterpretation, Value::Short(c)) => {
-                format!("{}", PhotometricInterpretation::from_u16_exhaustive(*c))
-            }
-            (Tag::PlanarConfiguration, Value::Short(c)) => {
-                format!("{}", PlanarConfiguration::from_u16_exhaustive(*c))
-            }
-            (Tag::Predictor, Value::Short(c)) => {
-                format!("{}", Predictor::from_u16_exhaustive(*c))
-            }
-            (Tag::ResolutionUnit, Value::Short(c)) => {
-                format!("{}", ResolutionUnit::from_u16_exhaustive(*c))
-            }
-            (Tag::SampleFormat, Value::Short(c)) => {
-                format!("{}", SampleFormat::from_u16_exhaustive(*c))
-            }
-            (_, value) => format!("{value}"),
+            (Tag::PlanarConfiguration, Type::SHORT) => intercept_u16!(e, PlanarConfiguration),
+            (Tag::Predictor, Type::SHORT) => intercept_u16!(e, Predictor),
+            (Tag::ResolutionUnit, Type::SHORT) => intercept_u16!(e, ResolutionUnit),
+            (Tag::SampleFormat, Type::SHORT) => intercept_u16!(e, SampleFormat),
+            (Tag::ColorSpace, Type::SHORT) => intercept_u16!(e, ColorSpace),
+            (Tag::MeteringMode, Type::SHORT) => intercept_u16!(e, MeteringMode),
+            (_, _) => e.iter().map(|v| format!("{v}")).join(", "),
         }
     }
 }
 
+fn format_coords(e: &ProcessedEntry) -> String {
+    let mut iter = e.iter();
+    format!(
+        "{} deg {}' {:.2}\"",
+        iter.next().unwrap().clone().into_f32().unwrap_or_default(),
+        iter.next().unwrap().clone().into_f32().unwrap_or_default(),
+        iter.next().unwrap().clone().into_f32().unwrap_or_default(),
+    )
+}
+
 impl DispatchFormat for GpsTag {
-    fn format(&self, e: &Value) -> String {
-        match (self, e) {
-            (_, value) => format!("{value}"),
+    fn format(&self, e: &ProcessedEntry) -> String {
+        match (self, e.kind()) {
+            (GpsTag::GPSLatitude, Type::RATIONAL) if e.count() == 3 => format_coords(e),
+            (GpsTag::GPSLongitude, Type::RATIONAL) if e.count() == 3 => format_coords(e),
+            (_, _) => e.iter().map(|v| format!("{v}")).join(", "),
         }
     }
 }

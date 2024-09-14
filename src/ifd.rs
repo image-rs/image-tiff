@@ -172,6 +172,8 @@ impl Value {
     pub fn into_f32(self) -> TiffResult<f32> {
         match self {
             Float(val) => Ok(val),
+            Rational(num, den) => Ok(num as f32 / den as f32),
+            SRational(num, den) => Ok(num as f32 / den as f32),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
             )),
@@ -180,6 +182,9 @@ impl Value {
 
     pub fn into_f64(self) -> TiffResult<f64> {
         match self {
+            Float(val) => Ok(val as f64),
+            Rational(num, den) => Ok(num as f64 / den as f64),
+            SRational(num, den) => Ok(num as f64 / den as f64),
             Double(val) => Ok(val),
             val => Err(TiffError::FormatError(
                 TiffFormatError::SignedIntegerExpected(val),
@@ -393,17 +398,7 @@ impl TiffValue for BufferedEntry {
     }
 
     fn bytes(&self) -> usize {
-        let tag_size: u32 = match self.type_ {
-            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
-            Type::SHORT | Type::SSHORT => 2,
-            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
-            Type::LONG8
-            | Type::SLONG8
-            | Type::DOUBLE
-            | Type::RATIONAL
-            | Type::SRATIONAL
-            | Type::IFD8 => 8,
-        };
+        let tag_size = self.type_.size() as u32;
 
         match self.count.checked_mul(tag_size.into()) {
             Some(n) => n.try_into().unwrap(),
@@ -484,6 +479,101 @@ impl From<BufferedEntry> for ProcessedEntry {
     }
 }
 
+impl From<ProcessedEntry> for BufferedEntry {
+    fn from(pe: ProcessedEntry) -> Self {
+        Self {
+            type_: pe.kind(),
+            count: pe.count() as u64,
+            data: pe.data(),
+        }
+    }
+}
+
+impl ProcessedEntry {
+    pub fn iter(&self) -> std::slice::Iter<'_, Value> {
+        self.0.iter()
+    }
+
+    pub fn kind(&self) -> Type {
+        match self.0.first() {
+            Some(v) => match v {
+                Value::Byte(_) => Type::BYTE,
+                Value::Short(_) => Type::SHORT,
+                Value::SignedByte(_) => Type::SBYTE,
+                Value::SignedShort(_) => Type::SSHORT,
+                Value::Signed(_) => Type::SLONG,
+                Value::SignedBig(_) => Type::SLONG8,
+                Value::Unsigned(_) => Type::LONG,
+                Value::UnsignedBig(_) => Type::LONG8,
+                Value::Float(_) => Type::FLOAT,
+                Value::Double(_) => Type::DOUBLE,
+                Value::List(_) => Type::UNDEFINED,
+                Value::Rational(_, _) => Type::RATIONAL,
+                Value::SRational(_, _) => Type::SRATIONAL,
+                Value::Ascii(_) => Type::ASCII,
+                Value::Ifd(_) => Type::IFD,
+                Value::IfdBig(_) => Type::IFD8,
+                Value::Undefined(_) => Type::UNDEFINED,
+                Value::RationalBig(_, _) | Value::SRationalBig(_, _) => unreachable!(),
+            },
+            None => Type::UNDEFINED,
+        }
+    }
+
+    pub fn count(&self) -> usize {
+        match self.0.first() {
+            Some(v) => match v {
+                Value::List(l) => l.len(),
+                Value::Ascii(s) => s.len(),
+                _ => self.0.len(),
+            },
+            None => 0,
+        }
+    }
+
+    fn data(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(self.count() * self.kind().size());
+
+        for v in &self.0 {
+            match v {
+                Value::Byte(e) => data.push(*e),
+                Value::Short(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::SignedByte(e) => data.push(*e as u8),
+                Value::SignedShort(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::Signed(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::SignedBig(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::Unsigned(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::UnsignedBig(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::Float(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::Double(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::List(_) => todo!(),
+                Value::Rational(n, d) => {
+                    data.extend_from_slice(&n.to_ne_bytes());
+                    data.extend_from_slice(&d.to_ne_bytes());
+                }
+                Value::RationalBig(n, d) => {
+                    data.extend_from_slice(&n.to_ne_bytes());
+                    data.extend_from_slice(&d.to_ne_bytes());
+                }
+                Value::SRational(n, d) => {
+                    data.extend_from_slice(&n.to_ne_bytes());
+                    data.extend_from_slice(&d.to_ne_bytes());
+                }
+                Value::SRationalBig(n, d) => {
+                    data.extend_from_slice(&n.to_ne_bytes());
+                    data.extend_from_slice(&d.to_ne_bytes());
+                }
+                Value::Ascii(e) => data.extend_from_slice(e.as_bytes()),
+                Value::Ifd(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::IfdBig(e) => data.extend_from_slice(&e.to_ne_bytes()),
+                Value::Undefined(e) => data.push(*e),
+            }
+        }
+
+        data
+    }
+}
+
 /// Type representing an Image File Directory
 #[derive(Debug, Clone)]
 pub struct ImageFileDirectory<T: Ord, E>(BTreeMap<T, E>);
@@ -558,9 +648,7 @@ where
         refs.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
         for (tag, entry) in refs {
-            let entry: String = entry.0.iter().map(|v| tag.format(v)).join(", ");
-
-            writeln!(f, "{tag}: {entry}")?;
+            writeln!(f, "{tag}: {}", tag.format(&entry))?;
         }
 
         Ok(())
