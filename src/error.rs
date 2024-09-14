@@ -244,12 +244,14 @@ pub enum UsageError {
     PredictorCompressionMismatch,
     PredictorIncompatible,
     PredictorUnavailable,
+    CloseNonExistentIfd,
 }
 
 impl fmt::Display for UsageError {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::UsageError::*;
         match *self {
+            CloseNonExistentIfd => write!(fmt, "Attempted to close a non-existent IFD"),
             InvalidChunkType(expected, actual) => {
                 write!(
                     fmt,

@@ -1275,7 +1275,7 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
             });
 
             // return to ifd0 and write offset
-            let ifd_offset = new_ifd.subirectory_close()?;
+            let ifd_offset = new_ifd.subdirectory_close()?;
             new_ifd.write_tag(tag, ifd_offset as u32)?;
         }
 

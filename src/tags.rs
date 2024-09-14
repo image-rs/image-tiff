@@ -73,6 +73,20 @@ macro_rules! tags {
             }
         }
 
+        impl Into<u16> for $name {
+            fn into(self) -> u16 {
+                self.to_u16()
+            }
+        }
+
+        $(
+        impl From<u16> for $name {
+            fn from(raw: u16) -> Self {
+                $unknown_doc;
+                <$name>::from_u16_exhaustive(raw)
+            }
+        }
+        )*
     };
     // For other tag types, do nothing for now. With concat_idents one could
     // provide inherent conversion methods for all types.
@@ -376,7 +390,7 @@ macro_rules! intercept_u16 {
         $slice
             .iter()
             .filter_map(|v| v.clone().into_u16().ok())
-            .map(|c| <$target>::from_u16_exhaustive(c).to_string())
+            .map(|c| <$target>::from(c).to_string())
             .join(", ")
     };
 }

@@ -401,13 +401,36 @@ impl TiffValue for BufferedEntry {
         let tag_size = self.type_.size() as u32;
 
         match self.count.checked_mul(tag_size.into()) {
-            Some(n) => n.try_into().unwrap(),
+            Some(n) => n.try_into().unwrap_or_default(),
             None => 0usize,
         }
     }
 
     fn data(&self) -> Cow<[u8]> {
         Cow::Borrowed(&self.data)
+    }
+}
+
+impl From<ProcessedEntry> for BufferedEntry {
+    fn from(pe: ProcessedEntry) -> Self {
+        Self {
+            type_: pe.kind(),
+            count: pe.count() as u64,
+            data: pe.data(),
+        }
+    }
+}
+
+/// Entry with buffered instead of read data
+///
+/// The type of tag is determined by the contents of the list, its count being the size of
+/// the list.
+#[derive(Clone, Debug)]
+pub struct ProcessedEntry(Vec<Value>);
+
+impl std::fmt::Display for ProcessedEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.0.iter().map(|v| format!("{v}")).join(", "),)
     }
 }
 
@@ -434,19 +457,6 @@ macro_rules! cast {
     }};
 }
 
-/// Entry with buffered instead of read data
-///
-/// The type of tag is determined by the contents of the list, its count being the size of
-/// the list.
-#[derive(Clone, Debug)]
-pub struct ProcessedEntry(Vec<Value>);
-
-impl std::fmt::Display for ProcessedEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "{}", self.0.iter().map(|v| format!("{v}")).join(", "),)
-    }
-}
-
 impl From<BufferedEntry> for ProcessedEntry {
     fn from(be: BufferedEntry) -> Self {
         let contents: Vec<Value> = match be.type_ {
@@ -454,8 +464,7 @@ impl From<BufferedEntry> for ProcessedEntry {
             Type::SBYTE => be
                 .data
                 .into_iter()
-                .map(|b| i8::from_be_bytes([b; 1]))
-                .map(Value::SignedByte)
+                .map(|b| Value::SignedByte(i8::from_ne_bytes([b; 1])))
                 .collect(),
             Type::SHORT => cast!(be, u16, Value::Short),
             Type::LONG => cast!(be, u32, Value::Unsigned),
@@ -479,13 +488,9 @@ impl From<BufferedEntry> for ProcessedEntry {
     }
 }
 
-impl From<ProcessedEntry> for BufferedEntry {
-    fn from(pe: ProcessedEntry) -> Self {
-        Self {
-            type_: pe.kind(),
-            count: pe.count() as u64,
-            data: pe.data(),
-        }
+impl From<Value> for ProcessedEntry {
+    fn from(v: Value) -> Self {
+        ProcessedEntry(vec![v])
     }
 }
 
@@ -576,12 +581,12 @@ impl ProcessedEntry {
 
 /// Type representing an Image File Directory
 #[derive(Debug, Clone)]
-pub struct ImageFileDirectory<T: Ord, E>(BTreeMap<T, E>);
+pub struct ImageFileDirectory<T: Ord + Into<u16>, E>(BTreeMap<T, E>);
 pub type Directory<E> = ImageFileDirectory<Tag, E>;
 
 impl<T, E> Default for ImageFileDirectory<T, E>
 where
-    T: Ord,
+    T: Ord + Into<u16>,
 {
     fn default() -> Self {
         ImageFileDirectory(BTreeMap::new())
@@ -590,7 +595,7 @@ where
 
 impl<T, E> ImageFileDirectory<T, E>
 where
-    T: Ord,
+    T: Ord + Into<u16>,
 {
     pub fn new() -> Self {
         ImageFileDirectory(BTreeMap::new())
@@ -631,7 +636,7 @@ where
 
 impl<T, E, K> FromIterator<(T, K)> for ImageFileDirectory<T, E>
 where
-    T: Ord,
+    T: Ord + Into<u16>,
     K: Into<E>,
 {
     fn from_iter<I: IntoIterator<Item = (T, K)>>(iter: I) -> Self {
@@ -641,7 +646,7 @@ where
 
 impl<T> std::fmt::Display for ImageFileDirectory<T, ProcessedEntry>
 where
-    T: DispatchFormat + Ord + std::fmt::Display,
+    T: DispatchFormat + Ord + std::fmt::Display + Into<u16>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut refs = self.iter().collect::<Vec<(&T, &ProcessedEntry)>>();
