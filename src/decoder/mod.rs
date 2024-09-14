@@ -889,6 +889,7 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
     }
+
     pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
         self.get_tag(tag)?.into_u64()
     }
@@ -911,6 +912,7 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
     pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
         self.get_tag(tag)?.into_u16_vec()
     }
+
     pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
         self.get_tag(tag)?.into_u64_vec()
     }

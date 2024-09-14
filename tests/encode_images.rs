@@ -652,7 +652,7 @@ fn test_recode_exif_data() {
         output.flush().expect("Unable to flush output");
         output.set_position(0);
         let sum: u64 = output.into_inner().into_iter().map(u64::from).sum();
-        assert_eq!(sum, 64202);
+        assert_eq!(sum, 64565);
     } else {
         panic!("Wrong data type");
     }

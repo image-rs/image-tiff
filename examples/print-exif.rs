@@ -28,7 +28,7 @@ fn main() {
         .get_exif_data()
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| process(be, false).map(|e| (id, e)))
+        .map(|(id, be)| process(be).map(|e| (id, e)))
         .collect::<Result<Vec<(Tag, ProcessedEntry)>, _>>()
         .unwrap();
 
@@ -40,7 +40,7 @@ fn main() {
         .get_exif_ifd(Tag::ExifIfd)
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| process(be, false).map(|e| (id, e)))
+        .map(|(id, be)| process(be).map(|e| (id, e)))
         .collect::<Result<std::collections::HashMap<Tag, ProcessedEntry>, _>>()
         .unwrap()
         .into_iter()
@@ -50,7 +50,7 @@ fn main() {
         .get_gps_ifd()
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| process(be, false).map(|e| (id, e)))
+        .map(|(id, be)| process(be).map(|e| (id, e)))
         .collect::<Result<Vec<(GpsTag, ProcessedEntry)>, _>>()
         .unwrap();
 
@@ -62,7 +62,7 @@ fn main() {
         .get_exif_ifd(Tag::InteropIfd)
         .expect("Unable to read Exif data")
         .into_iter()
-        .map(|(id, be)| process(be, false).map(|e| (id, e)))
+        .map(|(id, be)| process(be).map(|e| (id, e)))
         .collect::<Result<std::collections::HashMap<Tag, ProcessedEntry>, _>>()
         .unwrap()
         .into_iter()

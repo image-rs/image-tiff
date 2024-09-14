@@ -543,7 +543,7 @@ fn test_exif_decoding() {
 
     output.set_position(0);
     let sum: u64 = output.into_inner().into_iter().map(u64::from).sum();
-    assert_eq!(sum, 4177);
+    assert_eq!(sum, 4955);
 }
 
 extern crate exif;

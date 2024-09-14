@@ -4,6 +4,7 @@ use crate::{TiffError, TiffFormatError, TiffKind, TiffResult};
 use std::io::{self, Read, Seek};
 use std::mem;
 
+use crate::decoder::fix_endianness;
 use crate::ifd::{
     BufferedEntry,
     Value::{
@@ -386,34 +387,9 @@ impl<K: TiffKind> DecodedEntry<K> {
         };
 
         let mut buf = vec![0; value_bytes as usize];
-        // read values that fit within the IFD entry
         if value_bytes <= 4 || (K::is_big() && value_bytes <= 8) {
+            // read values that fit within the IFD entry
             self.r(bo).read_exact(&mut buf)?;
-
-            match self.type_ {
-                // for multi-byte values
-                Type::SHORT
-                | Type::SSHORT
-                | Type::LONG
-                | Type::SLONG
-                | Type::FLOAT
-                | Type::IFD
-                | Type::LONG8
-                | Type::SLONG8
-                | Type::DOUBLE
-                | Type::IFD8 => {
-                    if native_bo != bo {
-                        // if byte-order is non-native
-                        // reverse byte order
-                        let mut new_buf = vec![0; value_bytes as usize];
-                        for i in 0..value_bytes {
-                            new_buf[i as usize] = buf[(value_bytes - 1 - i) as usize];
-                        }
-                        buf = new_buf;
-                    }
-                }
-                _ => {}
-            }
         } else {
             // values that use a pointer
             // read pointed data
@@ -423,38 +399,16 @@ impl<K: TiffKind> DecodedEntry<K> {
                 reader.goto_offset(self.r(bo).read_u32()?.into())?;
             }
             reader.read_exact(&mut buf)?;
+        }
 
-            match self.type_ {
-                // for multi-byte values
-                Type::LONG8 | Type::SLONG8 | Type::DOUBLE => {
-                    if native_bo != bo {
-                        // if byte-order is non-native
-                        // reverse byte order
-                        let mut new_buf = vec![0; value_bytes as usize];
-                        for i in 0..value_bytes {
-                            new_buf[i as usize] = buf[(value_bytes - 1 - i) as usize];
-                        }
-                        buf = new_buf;
-                    }
-                }
-                Type::RATIONAL | Type::SRATIONAL => {
-                    if native_bo != bo {
-                        // if byte-order is non-native
-                        // reverse byte order
-                        let mut new_buf = vec![0; 8];
-                        new_buf[0] = buf[3];
-                        new_buf[1] = buf[2];
-                        new_buf[2] = buf[1];
-                        new_buf[3] = buf[0];
-                        new_buf[4] = buf[7];
-                        new_buf[5] = buf[6];
-                        new_buf[6] = buf[5];
-                        new_buf[7] = buf[4];
-                        buf = new_buf;
-                    }
-                }
-                _ => {}
-            }
+        // convert buffer to native byte order
+        if native_bo != bo {
+            let bit_size = match self.type_ {
+                Type::RATIONAL | Type::SRATIONAL => 32,
+                _ => 8 * tag_size as u8,
+            };
+
+            fix_endianness(&mut buf, bo, bit_size);
         }
 
         Ok(BufferedEntry {

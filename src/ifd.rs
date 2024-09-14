@@ -417,30 +417,28 @@ impl TiffValue for BufferedEntry {
 }
 
 macro_rules! step_through {
-    ($vec:expr, $type:ty, $big_endian:expr) => {
+    ($vec:expr, $type:ty) => {
         (0..$vec.len()).step_by(size_of::<$type>()).map(|i| {
-            Ok(if $big_endian {
-                <$type>::from_be_bytes($vec[i..i + size_of::<$type>()].try_into()?)
-            } else {
-                <$type>::from_le_bytes($vec[i..i + size_of::<$type>()].try_into()?)
-            })
+            Ok(<$type>::from_ne_bytes(
+                $vec[i..i + size_of::<$type>()].try_into()?,
+            ))
         })
     };
 }
 
 macro_rules! cast {
-    ($be:expr, $big_endian:expr, $type:ty, $value:expr) => {{
+    ($be:expr, $type:ty, $value:expr) => {{
         assert!($be.data.len() as u64 == size_of::<$type>() as u64 * $be.count);
-        step_through!($be.data, $type, $big_endian)
+        step_through!($be.data, $type)
             .collect::<Result<Vec<$type>, Box<dyn std::error::Error>>>()?
             .into_iter()
             .map($value)
             .collect()
     }};
 
-    ($be:expr, $big_endian:expr, $type:ty, $second:ty, $value:expr) => {{
+    ($be:expr, $type:ty, $second:ty, $value:expr) => {{
         assert!($be.data.len() as u64 == size_of::<$type>() as u64 * $be.count * 2);
-        step_through!($be.data, $type, $big_endian)
+        step_through!($be.data, $type)
             .collect::<Result<Vec<$type>, Box<dyn std::error::Error>>>()?
             .into_iter()
             .tuples::<($type, $type)>()
@@ -449,10 +447,7 @@ macro_rules! cast {
     }};
 }
 
-pub fn process(
-    be: BufferedEntry,
-    is_big_endian: bool,
-) -> Result<ProcessedEntry, Box<dyn std::error::Error>> {
+pub fn process(be: BufferedEntry) -> Result<ProcessedEntry, Box<dyn std::error::Error>> {
     let contents: Vec<Value> = match be.type_ {
         Type::BYTE => be.data.into_iter().map(Value::Byte).collect(),
         Type::SBYTE => be
@@ -461,18 +456,18 @@ pub fn process(
             .map(|b| i8::from_be_bytes([b; 1]))
             .map(Value::SignedByte)
             .collect(),
-        Type::SHORT => cast!(be, is_big_endian, u16, Value::Short),
-        Type::LONG => cast!(be, is_big_endian, u32, Value::Unsigned),
-        Type::SLONG8 => cast!(be, is_big_endian, u64, Value::UnsignedBig),
-        Type::SSHORT => cast!(be, is_big_endian, i16, Value::SignedShort),
-        Type::SLONG => cast!(be, is_big_endian, i32, Value::Signed),
-        Type::LONG8 => cast!(be, is_big_endian, i64, Value::SignedBig),
-        Type::FLOAT => cast!(be, is_big_endian, f32, Value::Float),
-        Type::DOUBLE => cast!(be, is_big_endian, f64, Value::Double),
-        Type::RATIONAL => cast!(be, is_big_endian, u32, u32, Value::Rational),
-        Type::SRATIONAL => cast!(be, is_big_endian, i32, i32, Value::SRational),
-        Type::IFD => cast!(be, is_big_endian, u32, Value::Ifd),
-        Type::IFD8 => cast!(be, is_big_endian, u64, Value::IfdBig),
+        Type::SHORT => cast!(be, u16, Value::Short),
+        Type::LONG => cast!(be, u32, Value::Unsigned),
+        Type::SLONG8 => cast!(be, u64, Value::UnsignedBig),
+        Type::SSHORT => cast!(be, i16, Value::SignedShort),
+        Type::SLONG => cast!(be, i32, Value::Signed),
+        Type::LONG8 => cast!(be, i64, Value::SignedBig),
+        Type::FLOAT => cast!(be, f32, Value::Float),
+        Type::DOUBLE => cast!(be, f64, Value::Double),
+        Type::RATIONAL => cast!(be, u32, u32, Value::Rational),
+        Type::SRATIONAL => cast!(be, i32, i32, Value::SRational),
+        Type::IFD => cast!(be, u32, Value::Ifd),
+        Type::IFD8 => cast!(be, u64, Value::IfdBig),
         Type::UNDEFINED => be.data.into_iter().map(Value::Undefined).collect(),
         Type::ASCII => {
             vec![Value::Ascii(String::from_utf8(be.data)?)]
