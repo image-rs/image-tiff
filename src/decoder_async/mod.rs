@@ -171,6 +171,45 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         &self.image
     }
 
+    /// Loads the IFD at the specified index in the list, if one exists
+    pub async fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
+        // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
+        if ifd_index >= self.ifd_offsets.len() {
+            // We possibly need to load in the next IFD
+            if self.next_ifd.is_none() {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::ImageFileDirectoryNotFound,
+                ));
+            }
+
+            loop {
+                // Follow the list until we find the one we want, or we reach the end, whichever happens first
+                let (_ifd, next_ifd) = self.next_ifd().await?;
+
+                if next_ifd.is_none() {
+                    break;
+                }
+
+                if ifd_index < self.ifd_offsets.len() {
+                    break;
+                }
+            }
+        }
+
+        // If the index is within the list of ifds then we can load the selected image/IFD
+        if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
+            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset).await?;
+
+            self.image = AsyncImage::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff).await?;
+
+            Ok(())
+        } else {
+            Err(TiffError::FormatError(
+                TiffFormatError::ImageFileDirectoryNotFound,
+            ))
+        }
+    }
+
     /// reads in the first IFD tag and constructs
     // pub async fn read_first_ifd_into_image_metadata() {
 
@@ -202,6 +241,11 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         }
 
         Ok((ifd, next_ifd))
+    }
+
+    /// Returns `true` if there is at least one more image available.
+    pub fn more_images(&self) -> bool {
+        self.next_ifd.is_some()
     }
 
     /// Reads in the next image.

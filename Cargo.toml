@@ -22,7 +22,7 @@ jpeg = { package = "jpeg-decoder", version = "0.3.0", default-features = false }
 flate2 = "1.0.20"
 futures = "0.3.30"
 tokio-util = { version = "0.7.10", features = ["compat"] }
-async-trait = "0.1.82"
+async-trait = "^0.1"
 
 [dev-dependencies]
 criterion = "0.3.1"

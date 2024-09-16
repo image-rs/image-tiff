@@ -388,7 +388,6 @@ impl AsyncImage {
     }
 
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
-        println!("getting colortype for {:?}", self, );
         match self.photometric_interpretation {
             PhotometricInterpretation::RGB => match self.samples {
                 3 => Ok(ColorType::RGB(self.bits_per_sample)),
@@ -781,7 +780,7 @@ impl AsyncImage {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 
-                println!("chunk={chunk_index}, index={i}");
+                // println!("chunk={chunk_index}, index={i}");
 
                 // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {

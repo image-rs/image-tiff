@@ -687,7 +687,7 @@ impl Image {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 
-                println!("chunk={chunk_index}, index={i}");
+                // println!("chunk={chunk_index}, index={i}");
 
                 // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {

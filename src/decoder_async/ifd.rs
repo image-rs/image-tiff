@@ -1,6 +1,6 @@
 use crate::decoder_async::stream::AsyncSmartReader;
 use crate::tags::Type;
-use crate::{
+pub use crate::{
     decoder::{
         ifd::Value::{
             self, Ascii, Byte, Double, Float, Ifd, IfdBig, List, Rational, RationalBig, SRational,
