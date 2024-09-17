@@ -1,12 +1,16 @@
+// #[cfg(feature="async_decoder")]
+mod test_async
+{
 extern crate tiff;
 
-use tiff::decoder_async::{ifd, Decoder};
 use tiff::decoder::DecodingResult;
+use tiff::decoder::Decoder;
 use tiff::ColorType;
 
 use futures::io::AllowStdIo;
 
 use std::fs::File;
+use std::io::Cursor;
 use std::path::PathBuf;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
@@ -16,9 +20,11 @@ macro_rules! test_image_sum {
         async fn $name(file: &str, expected_type: ColorType, expected_sum: $sum_ty) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let img_file = AllowStdIo::new(File::open(path).expect("Cannot find test image!"));
-            let mut decoder = Decoder::new(img_file).await.expect("Cannot create decoder");
+            let mut decoder = Decoder::new_async(img_file)
+                .await
+                .expect("Cannot create decoder");
             assert_eq!(decoder.colortype().unwrap(), expected_type);
-            let img_res = decoder.read_image().await.unwrap();
+            let img_res = decoder.read_image_async().await.unwrap();
 
             match img_res {
                 DecodingResult::$buffer(res) => {
@@ -46,9 +52,11 @@ test_image_sum!(test_image_sum_f64, F64, f64);
 async fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = AllowStdIo::new(File::open(path).expect("Cannot find test image!"));
-    let mut decoder = Decoder::new(img_file).await.expect("Cannot create decoder");
+    let mut decoder = Decoder::new_async(img_file)
+        .await
+        .expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), expected_type);
-    assert!(match decoder.read_image().await {
+    assert!(match decoder.read_image_async().await {
         Err(tiff::TiffError::UnsupportedError(
             tiff::TiffUnsupportedError::UnsupportedColorType(_),
         )) => true,
@@ -107,7 +115,8 @@ async fn test_gray_f64() {
         "gradient-1c-64b-float.tiff",
         ColorType::Gray(64),
         128.0319210877642,
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -168,8 +177,10 @@ async fn test_string_tags() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = AllowStdIo::new(File::open(path).expect("Cannot find test image!"));
-        let mut decoder = Decoder::new(img_file).await.expect("Cannot create decoder");
-        let software = decoder.get_tag(tiff::tags::Tag::Software).await.unwrap();
+        let mut decoder = Decoder::new_async(img_file)
+            .await
+            .expect("Cannot create decoder");
+        let software = decoder.get_tag_async(tiff::tags::Tag::Software).await.unwrap();
         match software {
             tiff::decoder::ifd::Value::Ascii(s) => assert_eq!(
                 &s,
@@ -192,10 +203,10 @@ async fn test_decode_data() {
         }
     }
     let file = AllowStdIo::new(File::open("./tests/decodedata-rgb-3c-8b.tiff").unwrap());
-    let mut decoder = Decoder::new(file).await.unwrap();
+    let mut decoder = Decoder::new_async(file).await.unwrap();
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
     assert_eq!(decoder.dimensions().unwrap(), (100, 100));
-    if let DecodingResult::U8(img_res) = decoder.read_image().await.unwrap() {
+    if let DecodingResult::U8(img_res) = decoder.read_image_async().await.unwrap() {
         assert_eq!(image_data, img_res);
     } else {
         panic!("Wrong data type");
@@ -213,9 +224,9 @@ async fn issue_69() {
 //fn test_gray_alpha_u8()
 //{
 //let img_file = File::open("./tests/images/minisblack-2c-8b-alpha.tiff").expect("Cannot find test image!");
-//let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+//let mut decoder = Decoder::new_async(img_file).expect("Cannot create decoder");
 //assert_eq!(decoder.colortype().unwrap(), ColorType::GrayA(8));
-//let img_res = decoder.read_image();
+//let img_res = decoder.read_image_async();
 //assert!(img_res.is_ok());
 //}
 
@@ -270,14 +281,16 @@ async fn test_tiled_incremental() {
 
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = AllowStdIo::new(File::open(path).expect("Cannot find test image!"));
-    let mut decoder = Decoder::new(img_file).await.expect("Cannot create decoder");
+    let mut decoder = Decoder::new_async(img_file)
+        .await
+        .expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), expected_type);
 
     let tiles = decoder.tile_count().unwrap();
     assert_eq!(tiles as usize, sums.len());
 
     for tile in 0..tiles {
-        match decoder.read_chunk(tile).await.unwrap() {
+        match decoder.read_chunk_async(tile).await.unwrap() {
             DecodingResult::U8(res) => {
                 let sum: u64 = res.into_iter().map(<u64>::from).sum();
                 assert_eq!(sum, sums[tile as usize]);
@@ -295,7 +308,9 @@ async fn test_planar_rgb_u8() {
 
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = AllowStdIo::new(File::open(path).expect("Cannot find test image!"));
-    let mut decoder = Decoder::new(img_file).await.expect("Cannot create decoder");
+    let mut decoder = Decoder::new_async(img_file)
+        .await
+        .expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), expected_type);
 
     let chunks = decoder.strip_count().unwrap();
@@ -305,21 +320,21 @@ async fn test_planar_rgb_u8() {
     // 0,0: (73,51,30)  #49331E  srgb(73,51,30)
 
     // 1st band (red)
-    match decoder.read_chunk(0).await.unwrap() {
+    match decoder.read_chunk_async(0).await.unwrap() {
         DecodingResult::U8(chunk) => {
             assert_eq!(chunk[0], 73);
         }
         _ => panic!("Wrong bit depth"),
     }
     // 2nd band (green)
-    match decoder.read_chunk(chunks / 3).await.unwrap() {
+    match decoder.read_chunk_async(chunks / 3).await.unwrap() {
         DecodingResult::U8(chunk) => {
             assert_eq!(chunk[0], 51);
         }
         _ => panic!("Wrong bit depth"),
     }
     // 3rd band (blue)
-    match decoder.read_chunk(chunks / 3 * 2).await.unwrap() {
+    match decoder.read_chunk_async(chunks / 3 * 2).await.unwrap() {
         DecodingResult::U8(chunk) => {
             assert_eq!(chunk[0], 30);
         }
@@ -341,7 +356,9 @@ async fn test_div_zero() {
         178, 178, 178,
     ];
 
-    let err = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let err = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 
     match err {
         TiffError::FormatError(TiffFormatError::StripTileTagConflict) => {}
@@ -359,7 +376,9 @@ async fn test_too_many_value_bytes() {
         0, 89, 89, 89, 89, 89, 89, 89, 89, 96, 1, 20, 89, 89, 89, 89, 18,
     ];
 
-    let error = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let error = Decoder::new_async(AllowStdIo::new(std::io::Cursor::new(&image)))
+        .await
+        .unwrap_err();
 
     match error {
         tiff::TiffError::LimitsExceeded => {}
@@ -377,7 +396,9 @@ async fn fuzzer_testcase5() {
         178, 178, 178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -390,7 +411,9 @@ async fn fuzzer_testcase1() {
         178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -403,7 +426,9 @@ async fn fuzzer_testcase6() {
         178, 178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -415,7 +440,9 @@ async fn oom() {
         0, 0, 0, 40, 0, 0, 0, 23, 1, 4, 0, 1, 0, 0, 0, 178, 48, 178, 178, 178, 178, 162, 178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -427,7 +454,9 @@ async fn fuzzer_testcase4() {
         0, 0, 0, 40, 0, 0, 0, 23, 1, 4, 0, 1, 0, 0, 0, 48, 178, 178, 178, 0, 1, 0, 13, 13,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -443,7 +472,9 @@ async fn fuzzer_testcase2() {
         73,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -459,7 +490,9 @@ async fn invalid_jpeg_tag_2() {
         0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 36, 73, 73, 0, 42, 36, 36, 36, 36, 0, 0, 8, 0,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -472,7 +505,9 @@ async fn fuzzer_testcase3() {
         255, 255,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let _ = Decoder::new_async(AllowStdIo::new(Cursor::new(&image)))
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -490,7 +525,11 @@ async fn timeout() {
         0, 0, 73, 73, 42, 0, 8, 0, 0, 0, 0, 0, 32,
     ];
 
-    let error = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    // hacked the test a bit: seek until we are sure that we loop, 
+    // otherwise it will read the faulty image before finding out it is circular
+    let error = Decoder::new_overview_async(AllowStdIo::new(Cursor::new(&image)), 5)
+        .await
+        .unwrap_err();
 
     match error {
         TiffError::FormatError(TiffFormatError::CycleInOffsets) => {}
@@ -511,4 +550,5 @@ async fn test_predictor_3_rgb_f32() {
 #[tokio::test]
 async fn test_predictor_3_gray_f32() {
     test_image_sum_f32("predictor-3-gray-f32.tif", ColorType::Gray(32), 20008.275).await;
+}
 }

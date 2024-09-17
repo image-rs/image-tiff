@@ -164,7 +164,7 @@ impl Image {
 
         // Technically bits_per_sample.len() should be *equal* to samples, but libtiff also allows
         // it to be a single value that applies to all samples.
-        if bits_per_sample.len() != samples as usize && bits_per_sample.len() != 1 {
+        if bits_per_sample.len() != usize::from(samples) && bits_per_sample.len() != 1 {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
@@ -687,7 +687,7 @@ impl Image {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 
-                // println!("chunk={chunk_index}, index={i}");
+                println!("chunk={chunk_index}, index={i}");
 
                 // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {

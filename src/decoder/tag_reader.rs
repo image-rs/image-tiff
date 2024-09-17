@@ -1,5 +1,3 @@
-use futures::AsyncRead;
-
 use std::io::{Read, Seek};
 
 use crate::tags::Tag;

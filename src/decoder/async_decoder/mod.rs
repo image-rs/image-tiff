@@ -5,7 +5,7 @@ use futures::{
 };
 use std::collections::{HashMap, HashSet};
 
-use crate::{TiffError, TiffFormatError, TiffUnsupportedError, UsageError, TiffResult, ColorType};
+use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 
 // use self::ifd::Directory;
 // use self::image::Image;
@@ -15,32 +15,28 @@ use crate::tags::{
 };
 
 use crate::decoder::{
-    stream::ByteOrder,
-    ifd::Value,
-    DecodingBuffer,
-    DecodingResult,
-    Limits,
-    ChunkType,
+    Decoder, 
+    ifd::{Value, Directory}, Image, stream::{
+        ByteOrder, SmartReader,
+    }, ChunkType, DecodingBuffer, DecodingResult, Limits,
 };
+
+use stream::EndianAsyncReader;
 
 extern crate async_trait;
 
-pub use crate::decoder::invert_colors;
-use ifd::Directory;
-use image::AsyncImage;
-use stream::AsyncSmartReader;
-
 pub mod ifd;
 pub mod image;
-pub mod stream;
+pub(self) mod stream;
+// pub mod stream;
 pub mod tag_reader;
 
 #[async_trait::async_trait]
 pub trait RangeReader {
     async fn read_range(
         &mut self,
-        bytes_start: usize,
-        bytes_end: usize,
+        bytes_start: u64,
+        bytes_end: u64,
     ) -> futures::io::Result<Vec<u8>>;
 }
 
@@ -48,11 +44,11 @@ pub trait RangeReader {
 impl<R: AsyncRead + AsyncSeek + Unpin + Send> RangeReader for R {
     async fn read_range(
         &mut self,
-        bytes_start: usize,
-        bytes_end: usize,
+        bytes_start: u64,
+        bytes_end: u64,
     ) -> futures::io::Result<Vec<u8>> {
         let length = bytes_end - bytes_start;
-        let mut buffer = vec![0; length];
+        let mut buffer = vec![0; length.try_into().map_err(|e| std::io::Error::other(e))?];
 
         // Seek to the start position
         self.seek(SeekFrom::Start(bytes_start as u64)).await?;
@@ -64,18 +60,13 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send> RangeReader for R {
     }
 }
 
-pub struct Decoder<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> {
-    reader: AsyncSmartReader<R>,
-    bigtiff: bool,
-    limits: Limits, // Replace with actual type
-    next_ifd: Option<u64>,
-    ifd_offsets: Vec<u64>,
-    seen_ifds: HashSet<u64>,
-    pub image: AsyncImage,
-}
-
 impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
-    pub async fn new(mut r: R) -> Result<Decoder<R>, TiffError> {
+
+    pub async fn new_async(r: R) -> TiffResult<Decoder<R>> {
+        Self::new_overview_async(r, 0).await
+    }
+
+    pub async fn new_overview_async(mut r: R, overview: u32) -> TiffResult<Decoder<R>> {
         let mut endianess = [0; 2];
         r.read_exact(&mut endianess).await?;
         let byte_order = match &endianess {
@@ -88,7 +79,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
             }
         };
 
-        let mut reader = AsyncSmartReader::wrap(r, byte_order);
+        let mut reader = SmartReader::wrap(r, byte_order);
 
         let bigtiff = match reader.read_u16().await? {
             42 => false,
@@ -128,7 +119,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
             next_ifd,
             ifd_offsets: vec![next_ifd.unwrap()],
             seen_ifds,
-            image: AsyncImage {
+            image: Image {
                 ifd: None,
                 width: 0,
                 height: 0,
@@ -148,31 +139,13 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
             },
         };
 
-        decoder.next_image().await?;
-
+        decoder.seek_to_image_async(overview.try_into()?).await?;
+        decoder.next_image_async().await?;
         Ok(decoder)
     }
 
-
-    pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
-        self.limits = limits;
-        self
-    }
-
-    pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
-        Ok((self.image().width, self.image().height))
-    }
-
-    pub fn colortype(&mut self) -> TiffResult<ColorType> {
-        self.image().colortype()
-    }
-
-    fn image(&self) -> &AsyncImage {
-        &self.image
-    }
-
     /// Loads the IFD at the specified index in the list, if one exists
-    pub async fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
+    pub async fn seek_to_image_async(&mut self, ifd_index: usize) -> TiffResult<()> {
         // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
         if ifd_index >= self.ifd_offsets.len() {
             // We possibly need to load in the next IFD
@@ -184,7 +157,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
 
             loop {
                 // Follow the list until we find the one we want, or we reach the end, whichever happens first
-                let (_ifd, next_ifd) = self.next_ifd().await?;
+                let (_ifd, next_ifd) = self.next_ifd_async().await?;
 
                 if next_ifd.is_none() {
                     break;
@@ -198,9 +171,10 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
 
         // If the index is within the list of ifds then we can load the selected image/IFD
         if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            let (ifd, _next_ifd) = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset).await?;
-
-            self.image = AsyncImage::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff).await?;
+            let (ifd, _next_ifd) =
+                Self::read_ifd_async(&mut self.reader, self.bigtiff, *ifd_offset).await?;
+            self.image =
+                Image::from_async_reader(&mut self.reader, ifd, &self.limits, self.bigtiff).await?;
 
             Ok(())
         } else {
@@ -210,27 +184,19 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         }
     }
 
-    /// reads in the first IFD tag and constructs
-    // pub async fn read_first_ifd_into_image_metadata() {
-
-    // }
-
-    // pub async fn get_tile(overview: u64, x_index: u64, y_index: u64) -> TiffResult<DecodingResult> {
-
-    // }
-
-    async fn next_ifd(&mut self) -> TiffResult<(Directory, Option<u64>)> {
+    async fn next_ifd_async(&mut self) -> TiffResult<(Directory, Option<u64>)> {
         if self.next_ifd.is_none() {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
         }
 
-        let (ifd, next_ifd) = Self::read_ifd(
+        let (ifd, next_ifd) = Self::read_ifd_async(
             &mut self.reader,
             self.bigtiff,
             self.next_ifd.take().unwrap(),
-        ).await?;
+        )
+        .await?;
 
         if let Some(next) = next_ifd {
             if !self.seen_ifds.insert(next) {
@@ -243,29 +209,23 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         Ok((ifd, next_ifd))
     }
 
-    /// Returns `true` if there is at least one more image available.
-    pub fn more_images(&self) -> bool {
-        self.next_ifd.is_some()
-    }
-
     /// Reads in the next image.
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
-    pub async fn next_image(&mut self) -> TiffResult<()> {
-        let (ifd, _next_ifd) = self.next_ifd().await?;
+    pub async fn next_image_async(&mut self) -> TiffResult<()> {
+        let (ifd, _next_ifd) = self.next_ifd_async().await?;
 
-        self.image = AsyncImage::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff).await?;
+        self.image = Image::from_async_reader(&mut self.reader, ifd, &self.limits, self.bigtiff).await?;
         Ok(())
     }
 
     // Reads the IFD starting at the indicated location.
-    /// Reads the ifd, skipping all tags.
-    async fn read_ifd(
-        reader: &mut AsyncSmartReader<R>,
+    async fn read_ifd_async(
+        reader: &mut SmartReader<R>,
         bigtiff: bool,
         ifd_location: u64,
     ) -> TiffResult<(Directory, Option<u64>)> {
-        reader.goto_offset(ifd_location).await?;
+        reader.goto_offset_async(ifd_location).await?;
 
         let mut dir: Directory = HashMap::new();
 
@@ -282,7 +242,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         //     ))
         //     .await?;
         for _ in 0..num_tags {
-            let (tag, entry) = match Self::read_entry(reader, bigtiff).await? {
+            let (tag, entry) = match Self::read_entry_async(reader, bigtiff).await? {
                 Some(val) => val,
                 None => {
                     continue;
@@ -312,8 +272,8 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
     // Type  2 bytes
     // Count 4 bytes
     // Value 4 bytes either a pointer the value itself
-    async fn read_entry(
-        reader: &mut AsyncSmartReader<R>,
+    async fn read_entry_async(
+        reader: &mut SmartReader<R>,
         bigtiff: bool,
     ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
         let tag = Tag::from_u16_exhaustive(reader.read_u16().await?);
@@ -342,25 +302,25 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         Ok(Some((tag, entry)))
     }
 
-
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
-    pub async fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
+    pub async fn find_tag_async(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
         let entry = match self.image().ifd.as_ref().unwrap().get(&tag) {
             None => return Ok(None),
             Some(entry) => entry.clone(),
         };
 
-        Ok(Some(entry.val(
-            &self.limits,
-            self.bigtiff,
-            &mut self.reader,
-        ).await?))
+        Ok(Some(
+            entry
+                .async_val(&self.limits, self.bigtiff, &mut self.reader)
+                .await?,
+        ))
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
-    pub async fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
-        self.find_tag(tag).await?
+    pub async fn find_tag_unsigned_async<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
+        self.find_tag_async(tag)
+            .await?
             .map(|v| v.into_u64())
             .transpose()?
             .map(|value| {
@@ -371,11 +331,12 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
 
     /// Tries to retrieve a vector of all a tag's values and convert them to
     /// the desired unsigned type.
-    pub async fn find_tag_unsigned_vec<T: TryFrom<u64>>(
+    pub async fn find_tag_unsigned_vec_async<T: TryFrom<u64>>(
         &mut self,
         tag: Tag,
     ) -> TiffResult<Option<Vec<T>>> {
-        self.find_tag(tag).await?
+        self.find_tag_async(tag)
+            .await?
             .map(|v| v.into_u64_vec())
             .transpose()?
             .map(|v| {
@@ -390,15 +351,16 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
     /// Returns an error if the tag is not present.
-    pub async fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
-        self.find_tag_unsigned(tag).await?
+    pub async fn get_tag_unsigned_async<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
+        self.find_tag_unsigned_async(tag)
+            .await?
             .ok_or_else(|| TiffFormatError::RequiredTagNotFound(tag).into())
     }
 
     /// Tries to retrieve a tag.
     /// Returns an error if the tag is not present
-    pub async fn get_tag(&mut self, tag: Tag) -> TiffResult<Value> {
-        match self.find_tag(tag).await? {
+    pub async fn get_tag_async(&mut self, tag: Tag) -> TiffResult<Value> {
+        match self.find_tag_async(tag).await? {
             Some(val) => Ok(val),
             None => Err(TiffError::FormatError(
                 TiffFormatError::RequiredTagNotFound(tag),
@@ -406,109 +368,67 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         }
     }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub async fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
-        self.get_tag(tag).await?.into_u32()
-    }
-    pub async fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
-        self.get_tag(tag).await?.into_u64()
-    }
+    // /// Tries to retrieve a tag and convert it to the desired type.
+    // pub async fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
+    //     self.get_tag(tag).await?.into_u32()
+    // }
+    // pub async fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
+    //     self.get_tag(tag).await?.into_u64()
+    // }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub async fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
-        self.get_tag(tag).await?.into_f32()
-    }
+    // /// Tries to retrieve a tag and convert it to the desired type.
+    // pub async fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
+    //     self.get_tag(tag).await?.into_f32()
+    // }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub async fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
-        self.get_tag(tag).await?.into_f64()
-    }
+    // /// Tries to retrieve a tag and convert it to the desired type.
+    // pub async fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
+    //     self.get_tag(tag).await?.into_f64()
+    // }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub async fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
-        self.get_tag(tag).await?.into_u32_vec()
-    }
+    // /// Tries to retrieve a tag and convert it to the desired type.
+    // pub async fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
+    //     self.get_tag(tag).await?.into_u32_vec()
+    // }
 
-    pub async fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
-        self.get_tag(tag).await?.into_u16_vec()
-    }
-    pub async fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
-        self.get_tag(tag).await?.into_u64_vec()
-    }
+    // pub async fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
+    //     self.get_tag(tag).await?.into_u16_vec()
+    // }
+    // pub async fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
+    //     self.get_tag(tag).await?.into_u64_vec()
+    // }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub async fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
-        self.get_tag(tag).await?.into_f32_vec()
-    }
+    // /// Tries to retrieve a tag and convert it to the desired type.
+    // pub async fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
+    //     self.get_tag(tag).await?.into_f32_vec()
+    // }
 
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub async fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
-        self.get_tag(tag).await?.into_f64_vec()
-    }
+    // /// Tries to retrieve a tag and convert it to the desired type.
+    // pub async fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
+    //     self.get_tag(tag).await?.into_f64_vec()
+    // }
 
-    /// Tries to retrieve a tag and convert it to a 8bit vector.
-    pub async fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
-        self.get_tag(tag).await?.into_u8_vec()
-    }
+    // /// Tries to retrieve a tag and convert it to a 8bit vector.
+    // pub async fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
+    //     self.get_tag(tag).await?.into_u8_vec()
+    // }
 
-    /// Tries to retrieve a tag and convert it to a ascii vector.
-    pub async fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
-        self.get_tag(tag).await?.into_string()
-    }
+    // /// Tries to retrieve a tag and convert it to a ascii vector.
+    // pub async fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
+    //     self.get_tag(tag).await?.into_string()
+    // }
 
-    fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
-        if expected != self.image().chunk_type {
-            return Err(TiffError::UsageError(UsageError::InvalidChunkType(
-                expected,
-                self.image().chunk_type,
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// The chunk type (Strips / Tiles) of the image
-    pub fn get_chunk_type(&self) -> ChunkType {
-        self.image().chunk_type
-    }
-
-    /// Number of strips in image
-    pub fn strip_count(&mut self) -> TiffResult<u32> {
-        self.check_chunk_type(ChunkType::Strip)?;
-        let rows_per_strip = self.image().strip_decoder.as_ref().unwrap().rows_per_strip;
-
-        if rows_per_strip == 0 {
-            return Ok(0);
-        }
-
-        // rows_per_strip - 1 can never fail since we know it's at least 1
-        let height = match self.image().height.checked_add(rows_per_strip - 1) {
-            Some(h) => h,
-            None => return Err(TiffError::IntSizeError),
-        };
-
-        let strips = match self.image().planar_config {
-            PlanarConfiguration::Chunky => height / rows_per_strip,
-            PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
-        };
-
-        Ok(strips)
-    }
-
-    /// Number of tiles in image
-    pub fn tile_count(&mut self) -> TiffResult<u32> {
-        self.check_chunk_type(ChunkType::Tile)?;
-        Ok(u32::try_from(self.image().chunk_offsets.len())?)
-    }
-
-    pub async fn read_chunk_to_buffer(
+    pub async fn read_chunk_to_buffer_async(
         &mut self,
         mut buffer: DecodingBuffer<'_>,
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
-        let (offset,  length) = self.image.chunk_file_range(chunk_index)?;
-        let v = self.reader.read_range(offset.try_into()?, (offset + length).try_into()?).await?;
+        let (offset, length) = self.image.chunk_file_range(chunk_index)?;
+        let v = self
+            .reader
+            .read_range(offset, offset + length)
+            .await?;
 
         let byte_order = self.reader.byte_order;
 
@@ -529,73 +449,20 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         Ok(())
     }
 
-    fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = match width
-            .checked_mul(height)
-            .and_then(|x| x.checked_mul(self.image().samples_per_pixel()))
-        {
-            Some(s) => s,
-            None => return Err(TiffError::LimitsExceeded),
-        };
-
-        let max_sample_bits = self.image().bits_per_sample;
-        match self.image().sample_format {
-            SampleFormat::Uint => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
-                n => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                )),
-            },
-            SampleFormat::IEEEFP => match max_sample_bits {
-                32 => DecodingResult::new_f32(buffer_size, &self.limits),
-                64 => DecodingResult::new_f64(buffer_size, &self.limits),
-                n => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                )),
-            },
-            SampleFormat::Int => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_i8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_i16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_i32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_i64(buffer_size, &self.limits),
-                n => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                )),
-            },
-            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format]).into()),
-        }
-    }
-
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
-    pub async fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
+    pub async fn read_chunk_async(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
         let mut result = self.result_buffer(data_dims.0 as usize, data_dims.1 as usize)?;
 
-        self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize).await?;
+        self.read_chunk_to_buffer_async(result.as_buffer(0), chunk_index, data_dims.0 as usize)
+            .await?;
 
         Ok(result)
     }
 
-    /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
-    /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
-    pub fn chunk_dimensions(&self) -> (u32, u32) {
-        self.image().chunk_dimensions().unwrap()
-    }
-
-    /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
-    /// minus any padding.
-    pub fn chunk_data_dimensions(&self, chunk_index: u32) -> (u32, u32) {
-        self.image()
-            .chunk_data_dimensions(chunk_index)
-            .expect("invalid chunk_index")
-    }
-
     /// Decodes the entire image and return it as a Vector
-    pub async fn read_image(&mut self) -> TiffResult<DecodingResult> {
+    pub async fn read_image_async(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
         let height = self.image().height;
         let mut result = self.result_buffer(width as usize, height as usize)?;
@@ -639,15 +506,18 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
             ));
         }
 
-        // in planar config, an image has chunks/n_bands chunks 
+        // in planar config, an image has chunks/n_bands chunks
         let image_chunks = self.image().chunk_offsets.len() / self.image().strips_per_pixel();
         // For multi-band images, only the first band is read.
         // Possible improvements:
         // * pass requested band as parameter
         // * collect bands to a RGB encoding result in case of RGB bands
         for chunk in 0..image_chunks {
-            let (offset,  length) = self.image.chunk_file_range(chunk.try_into().unwrap())?;
-            let v = self.reader.read_range(offset.try_into()?, (offset + length).try_into()?).await?;
+            let (offset, length) = self.image.chunk_file_range(chunk.try_into().unwrap())?;
+            let v = self
+                .reader
+                .read_range(offset, offset + length)
+                .await?;
             let mut reader = std::io::Cursor::new(v);
             // self.goto_offset_u64(self.image().chunk_offsets[chunk]).await?;
 
@@ -668,15 +538,4 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
 
         Ok(result)
     }
-
-
-    #[inline]
-    pub async fn goto_offset_u64(&mut self, offset: u64) -> std::io::Result<()> {
-        self.reader.seek(SeekFrom::Start(offset)).await.map(|_| ())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
 }
