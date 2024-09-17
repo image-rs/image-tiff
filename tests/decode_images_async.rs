@@ -1,4 +1,4 @@
-// #[cfg(feature="async_decoder")]
+#[cfg(feature="async_decoder")]
 mod test_async
 {
 extern crate tiff;

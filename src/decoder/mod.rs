@@ -18,6 +18,8 @@ pub mod ifd;
 mod image;
 mod stream;
 mod tag_reader;
+
+#[cfg(feature = "async_decoder")]
 mod async_decoder;
 
 /// Result of a decoding process

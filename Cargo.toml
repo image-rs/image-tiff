@@ -17,14 +17,16 @@ categories = ["multimedia::images", "multimedia::encoding"]
 exclude = ["tests/images/*", "tests/fuzz_images/*"]
 
 [features]
-async_decoder = []#["dep:futures", "dep:async-trait"]
+async_decoder = ["dep:futures", "dep:async-trait"]
+ehttp = ["dep:ehttp", "async_decoder"]
 
 [dependencies]
 weezl = "0.1.0"
 jpeg = { package = "jpeg-decoder", version = "0.3.0", default-features = false }
 flate2 = "1.0.20"
-futures = {version = "0.3.30", optional = false}#true }
-async-trait = {version ="^0.1", optional = false}#true }
+futures = {version = "0.3.30", optional = true }
+async-trait = {version ="^0.1", optional = true }
+ehttp = { version = "0.5.0", features=["native-async"], optional = true }
 
 [dev-dependencies]
 criterion = "0.3.1"
@@ -34,3 +36,12 @@ tokio = {version = "1.29.1", features = ["macros", "fs", "rt-multi-thread"]}
 [[bench]]
 name = "lzw"
 harness = false
+
+[package.metadata.example.async_http]
+name = "Async http"
+description = "Example showing use of async features using async http requests"
+
+[[example]]
+name = "async_http"
+path="examples/async_http.rs"
+required-features=["ehttp"]
