@@ -27,7 +27,7 @@ extern crate async_trait;
 
 pub mod ifd;
 pub mod image;
-pub(self) mod stream;
+pub(crate) mod stream;
 // pub mod stream;
 pub mod tag_reader;
 
@@ -81,15 +81,15 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
 
         let mut reader = SmartReader::wrap(r, byte_order);
 
-        let bigtiff = match reader.read_u16().await? {
+        let bigtiff = match reader.read_u16_async().await? {
             42 => false,
             43 => {
-                if reader.read_u16().await? != 8 {
+                if reader.read_u16_async().await? != 8 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::TiffSignatureNotFound,
                     ));
                 }
-                if reader.read_u16().await? != 0 {
+                if reader.read_u16_async().await? != 0 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::TiffSignatureNotFound,
                     ));
@@ -104,9 +104,9 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         };
 
         let next_ifd = if bigtiff {
-            Some(reader.read_u64().await?)
+            Some(reader.read_u64_async().await?)
         } else {
-            Some(u64::from(reader.read_u32().await?))
+            Some(u64::from(reader.read_u32_async().await?))
         };
 
         let mut seen_ifds = HashSet::new();
@@ -230,9 +230,9 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         let mut dir: Directory = HashMap::new();
 
         let num_tags = if bigtiff {
-            reader.read_u64().await?
+            reader.read_u64_async().await?
         } else {
-            reader.read_u16().await?.into()
+            reader.read_u16_async().await?.into()
         };
 
         // const TAG_SIZE: i64 = 2 + 2 + 4 + 4;
@@ -252,9 +252,9 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         }
 
         let next_ifd = if bigtiff {
-            reader.read_u64().await?
+            reader.read_u64_async().await?
         } else {
-            reader.read_u32().await?.into()
+            reader.read_u32_async().await?.into()
         };
 
         let next_ifd = match next_ifd {
@@ -276,26 +276,26 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         reader: &mut SmartReader<R>,
         bigtiff: bool,
     ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
-        let tag = Tag::from_u16_exhaustive(reader.read_u16().await?);
-        let type_ = match Type::from_u16(reader.read_u16().await?) {
+        let tag = Tag::from_u16_exhaustive(reader.read_u16_async().await?);
+        let type_ = match Type::from_u16(reader.read_u16_async().await?) {
             Some(t) => t,
             None => {
                 // Unknown type. Skip this entry according to spec.
-                reader.read_u32().await?;
-                reader.read_u32().await?;
+                reader.read_u32_async().await?;
+                reader.read_u32_async().await?;
                 return Ok(None);
             }
         };
         let entry = if bigtiff {
             let mut offset = [0; 8];
 
-            let count = reader.read_u64().await?;
+            let count = reader.read_u64_async().await?;
             reader.read_exact(&mut offset).await?;
             ifd::Entry::new_u64(type_, count, offset)
         } else {
             let mut offset = [0; 4];
 
-            let count = reader.read_u32().await?;
+            let count = reader.read_u32_async().await?;
             reader.read_exact(&mut offset).await?;
             ifd::Entry::new(type_, count, offset)
         };
@@ -521,10 +521,10 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
             let mut reader = std::io::Cursor::new(v);
             // self.goto_offset_u64(self.image().chunk_offsets[chunk]).await?;
 
-            let x = chunk % chunks_across;
-            let y = chunk / chunks_across;
+            let i = chunk % chunks_across;
+            let j = chunk / chunks_across;
             let buffer_offset =
-                y * output_row_stride * chunk_dimensions.1 as usize + x * chunk_row_bytes;
+                j * output_row_stride * chunk_dimensions.1 as usize + i * chunk_row_bytes;
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
                 &mut reader,

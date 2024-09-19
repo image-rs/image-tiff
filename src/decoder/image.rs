@@ -1,4 +1,4 @@
-use super::ifd::{Directory, Value};
+use super::ifd::{Directory, Entry, Value};
 use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
 use super::{predict_f32, predict_f64, Limits};
@@ -9,6 +9,7 @@ use crate::tags::{
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct StripDecodeState {
@@ -31,6 +32,17 @@ impl TileAttributes {
     }
     pub fn tiles_down(&self) -> usize {
         (self.image_height + self.tile_length - 1) / self.tile_length
+    }
+    #[inline(always)]
+    pub fn chunk_index_to_ij(&self, chunk_index: usize) -> (usize, usize) {
+        (
+            chunk_index % self.tiles_across(),
+            chunk_index / self.tiles_across()
+        )
+    }
+    #[inline(always)]
+    pub fn ij_to_chunk_index(&self, i: usize, j: usize) -> usize {
+        i + j * self.tiles_across()
     }
     fn padding_right(&self) -> usize {
         (self.tile_width - self.image_width % self.tile_width) % self.tile_width
@@ -57,6 +69,101 @@ impl TileAttributes {
         (padding_right, padding_down)
     }
 }
+
+/// Enum for partially-loaded tags for chunk_offset and chunk_bytes
+pub enum TagData {
+    /// This tag has not been loaded yet, please read in the chunk you need
+   Uninitialized(Entry), // Entry field for ergonomic initialization
+   /// This tag has a minority of values read that are not necessarily close to each other
+   Sparse(Entry, HashMap<u32, u64>),
+   /// This tag has chunks read that form a sub-rectangle in the larger tiff
+   /// assumes a rectangle from topleft-botright, where x and y difference (or rather I and J according to [GeoTiff Spec](https://docs.ogc.org/is/19-008r4/19-008r4.html#_device_space_and_geotiff)) is calculated from TileAttributes
+   Rect{
+     entry: Entry,
+     tiles_across: u32,
+     top_left: u32,
+     bot_right: u32,
+     data: Vec<u64>
+   },
+   /// This tag is either entirely loaded, or has loaded enough data to be dense. `0` indicates a missing value.
+   Dense(Entry, Vec<u64>)
+ }
+ 
+ impl TagData {
+    /// get chunk_index from this data, returning [`UsageError::InvalidChunkIndex`] if the corresponding data is currently not loaded.
+    /// Implementations should call [`retrieve`] to load the tag data in that case.
+   pub fn get(&self, chunk_index: u32) -> TiffResult<u64> {
+     match &self {
+        TagData::Uninitialized(_) => Err(TiffError::UsageError(UsageError::InvalidChunkIndex(chunk_index))),
+        TagData::Sparse(_, hm) => hm.get(&chunk_index).ok_or(TiffError::UsageError(UsageError::InvalidChunkIndex(chunk_index))).copied(),
+        TagData::Dense(_, v) => {
+            if let Some(val) = v.get(usize::try_from(chunk_index)?) {
+                if val == &0 {
+                    Err(TiffError::UsageError(UsageError::InvalidChunkIndex(chunk_index)))
+                } else {
+                    Ok(*val)
+                }
+            } else {Err(TiffError::LimitsExceeded)}
+        }
+        TagData::Rect { entry: _, tiles_across, top_left, bot_right, data } => {
+            let i = chunk_index % tiles_across;
+            let j = chunk_index / tiles_across;
+            let tl_i = top_left % tiles_across;
+            let tl_j = top_left / tiles_across;
+            let br_i = bot_right % tiles_across;
+            let br_j = bot_right / tiles_across;
+            if i >= tl_i && i < br_i && j >= tl_j && j < br_j {
+                // We want to index, say 10 into a smaller sub-rectangle, say 5-10:
+                // ```
+                // +---+---+---+---+
+                // | 0 | 1 | 2 | 3 |
+                // +---+---+---+---+
+                // | 4 | 5 | 6 | 7 |
+                // +---+---+---+---+
+                // | 8 | 9 |10 |11 |
+                // +---+---+---+---+
+                // |12 |13 |14 |15 |
+                // +---+---+---+---+
+                // ```
+                // 10 has i=2, j=2, tl=5 has tl_i=1,tl_j=1
+                let rect_width = br_i - tl_i;
+                let d_i = i - tl_i;
+                let d_j = j - tl_j;
+                data.get(usize::try_from(d_i + d_j*rect_width)?).ok_or(TiffError::LimitsExceeded).copied()
+            } else {
+                Err(TiffError::UsageError(UsageError::InvalidChunkIndex(chunk_index)))
+            }
+        }
+     }
+   }
+
+   pub(super) fn entry(&self) -> &Entry {
+    match self {
+      TagData::Uninitialized(e) => &e,
+      TagData::Sparse(e, _) => &e,
+      TagData::Rect { entry, tiles_across: _, top_left: _, bot_right: _, data: _ } => &entry,
+      TagData::Dense(e, _) => &e,
+    }
+   }
+
+   pub(super) fn insert(&mut self, chunk_index: u32, val: u64) -> TiffResult<()>{
+    match self {
+        TagData::Sparse(_, ref mut hm) => {hm.insert(chunk_index, val);},
+        TagData::Dense(_, ref mut v) => *v.get_mut(usize::try_from(chunk_index)?).ok_or(TiffError::LimitsExceeded)? = val,
+        _ => println!("did not cache chunk nr. {}, with value {}", chunk_index, val),
+    }
+    Ok(())
+   }
+
+   pub fn retrieve<R: Read + Seek>(&mut self, chunk_index: u32, bigtiff: bool, reader: &mut SmartReader<R>) -> TiffResult<u64>{
+    //  reader.goto_offset(self.entry().offset(bigtiff, byte_order)? + u64::from(chunk_index) * self.entry().tag_size());
+    //  let val = reader.read_u64().map_err(|e| TiffError::IoError(e))?;
+    let val = self.entry().val_single_into_u64(u64::from(chunk_index), bigtiff, reader)?;
+
+     self.insert(chunk_index, val)?;
+     Ok(val)
+   }
+ }
 
 #[derive(Debug, Clone)]
 pub struct Image {

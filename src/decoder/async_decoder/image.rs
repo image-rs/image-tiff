@@ -1,7 +1,7 @@
 use super::{tag_reader::AsyncTagReader};
 use crate::decoder::{
     ifd::{Value, Directory},
-    image::{StripDecodeState, TileAttributes},
+    image::{StripDecodeState, TileAttributes, TagData},
     stream::SmartReader,
     Limits, ChunkType, Image,
 };
@@ -13,6 +13,20 @@ use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 use futures::{AsyncRead, AsyncSeek};
 
 use std::sync::Arc;
+
+
+impl TagData {
+    pub async fn retrieve_async<R: AsyncRead + AsyncSeek + Unpin>(&mut self, chunk_index: u32, bigtiff: bool, reader: &mut SmartReader<R>) -> TiffResult<u64> {
+    //more logics.await?
+    //  reader.goto_offset_async(self.entry().offset(bigtiff, byte_order)?);
+    //  EndianAsyncReader::read_u64(&reader).map_err(|e| TiffError::IoError(e))
+    let val = self.entry().val_single_into_u64_async(u64::from(chunk_index), bigtiff, reader).await?;
+
+
+    self.insert(chunk_index, val)?;
+    Ok(val)
+    }
+}
 
 impl Image {
     /// Creates this image from a reader. Will not read in chunk tags

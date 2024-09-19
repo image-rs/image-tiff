@@ -23,13 +23,13 @@ pub trait AsyncEndianReader: AsyncRead + Unpin {
     /// Byte order that should be adhered to
     fn byte_order(&self) -> ByteOrder;
     
-    read_async_fn!(read_u16, u16);
-    // read_async_fn!(read_i8, i8);
-    // read_async_fn!(read_i16, i16);
-    read_async_fn!(read_u32, u32);
-    // read_async_fn!(read_i32, i32);
-    read_async_fn!(read_u64, u64);
-    // read_async_fn!(read_i64, i64);
+    read_async_fn!(read_u16_async, u16);
+    read_async_fn!(read_i8_async, i8);
+    read_async_fn!(read_i16_async, i16);
+    read_async_fn!(read_u32_async, u32);
+    read_async_fn!(read_i32_async, i32);
+    read_async_fn!(read_u64_async, u64);
+    read_async_fn!(read_i64_async, i64);
     // read_async_fn!(read_f32, f32);
     // read_async_fn!(read_f64, f64);
 }

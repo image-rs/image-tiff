@@ -331,7 +331,7 @@ impl Value {
 
 #[derive(Clone)]
 pub struct Entry {
-    type_: Type,
+    pub(super) type_: Type,
     count: u64,
     offset: [u8; 8],
 }
@@ -563,6 +563,31 @@ impl Entry {
         reader.read_exact(&mut buf)?;
         let mut r = SmartReader::wrap(std::io::Cursor::new(buf), bo);
         self.val_from_cursor(&mut r)
+    }
+
+    /// Reads a single value, treating the value field as an offset field
+    pub fn val_single_into_u64<R: Read + Seek>(
+        &self,
+        index: u64,
+        bigtiff: bool,
+        reader: &mut SmartReader<R>
+    ) -> TiffResult<u64> {
+        reader.goto_offset(self.offset(bigtiff, reader.byte_order())? + index * self.tag_size())?;
+        match self.type_ {
+            Type::BYTE => {
+                let mut buf = [0u8;1];
+                reader.read_exact(&mut buf)?;
+                Ok(u64::from(buf[0]))
+            }
+            Type::SHORT => Ok(u64::from(reader.read_u16()?)),
+            Type::LONG => Ok(u64::from(reader.read_u32()?)),
+            Type::LONG8 => Ok(reader.read_u64()?),
+            Type::SBYTE => Ok(u64::try_from(reader.read_i8()?)?),
+            Type::SSHORT => Ok(u64::try_from(reader.read_i16()?)?),
+            Type::SLONG => Ok(u64::try_from(reader.read_i32()?)?),
+            Type::SLONG8 => Ok(u64::try_from(reader.read_i64()?)?),
+            _ => Err(TiffError::IntSizeError),
+        }
     }
 
     pub(crate) fn val_from_cursor<R: Read>(

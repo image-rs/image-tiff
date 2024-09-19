@@ -16,7 +16,7 @@ use self::stream::{ByteOrder, EndianReader, SmartReader};
 
 pub mod ifd;
 pub mod image;
-pub mod stream;
+pub(crate) mod stream;
 mod tag_reader;
 
 #[cfg(feature = "async_decoder")]
@@ -1115,10 +1115,10 @@ impl<R: Read + Seek> Decoder<R> {
         for chunk in 0..image_chunks {
             self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
 
-            let x = chunk % chunks_across;
-            let y = chunk / chunks_across;
+            let i = chunk % chunks_across;
+            let j = chunk / chunks_across;
             let buffer_offset =
-                y * output_row_stride * chunk_dimensions.1 as usize + x * chunk_row_bytes;
+                j * output_row_stride * chunk_dimensions.1 as usize + i * chunk_row_bytes;
             let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
                 &mut self.reader,
