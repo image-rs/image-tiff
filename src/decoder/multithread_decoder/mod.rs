@@ -7,10 +7,7 @@ use std::sync::Arc;
 use futures::{AsyncRead, AsyncSeek};
 
 use crate::decoder::{
-    image::Image,
-    Decoder, Limits, DecodingResult,
-    stream::SmartReader,
-    async_decoder::RangeReader,
+    async_decoder::RangeReader, image::Image, stream::SmartReader, Decoder, DecodingResult, Limits,
 };
 use crate::TiffResult;
 /// Decoder that can be Cloned, sharing the [`Image`] data between threads
@@ -31,7 +28,7 @@ impl<R: Clone> Clone for SmartReader<R> {
     }
 }
 
-impl<R: RangeReader + AsyncRead + AsyncSeek + Clone + Send + Unpin> ChunkDecoder<R>{
+impl<R: RangeReader + AsyncRead + AsyncSeek + Clone + Send + Unpin> ChunkDecoder<R> {
     pub fn from_decoder(decoder: Decoder<R>) -> Self {
         ChunkDecoder {
             reader: decoder.reader.clone(),
@@ -44,17 +41,25 @@ impl<R: RangeReader + AsyncRead + AsyncSeek + Clone + Send + Unpin> ChunkDecoder
     /// Get a reference to the image (in read mode)
     pub fn image(&self) -> &Image {
         // this is really bad
-        &self.image//.read().expect("Could not obtain lock")
+        &self.image //.read().expect("Could not obtain lock")
     }
 
-    pub async fn read_chunk_async(&mut self, chunk_index: u32) -> TiffResult<DecodingResult>{
+    pub async fn read_chunk_async(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         // read_chunk code
         let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
-        let mut result = Decoder::<R>::result_buffer(usize::try_from(width)?, usize::try_from(height)?, self.image(), &self.limits)?;
+        let mut result = Decoder::<R>::result_buffer(
+            usize::try_from(width)?,
+            usize::try_from(height)?,
+            self.image(),
+            &self.limits,
+        )?;
         // read_chunk_to_buffer code
         let (offset, length) = self.image().chunk_file_range(chunk_index)?;
         let v = self.reader.read_range(offset, offset + length).await?;
-        let output_row_stride = (width as u64).saturating_mul(self.image().samples_per_pixel() as u64).saturating_mul(self.image.bits_per_sample as u64) / 8;
+        let output_row_stride = (width as u64)
+            .saturating_mul(self.image().samples_per_pixel() as u64)
+            .saturating_mul(self.image.bits_per_sample as u64)
+            / 8;
         self.image().expand_chunk(
             &mut std::io::Cursor::new(v),
             result.as_buffer(0).as_bytes_mut(),

@@ -15,10 +15,10 @@ use crate::tags::{
 };
 
 use crate::decoder::{
-    Decoder, 
-    ifd::{Value, Directory}, Image, stream::{
-        ByteOrder, SmartReader,
-    }, ChunkType, DecodingBuffer, DecodingResult,
+    ifd::{Directory, Value},
+    image::{Image, TagData},
+    stream::{ByteOrder, SmartReader},
+    ChunkType, Decoder, DecodingBuffer, DecodingResult,
 };
 
 use stream::AsyncEndianReader;
@@ -61,7 +61,6 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send> RangeReader for R {
 }
 
 impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
-
     pub async fn new_async(r: R) -> TiffResult<Decoder<R>> {
         Self::new_overview_async(r, 0).await
     }
@@ -134,8 +133,8 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
                 planar_config: PlanarConfiguration::Chunky,
                 strip_decoder: None,
                 tile_attributes: None,
-                chunk_offsets: Vec::new(),
-                chunk_bytes: Vec::new(),
+                chunk_offsets: TagData::Uninitialized(None),
+                chunk_bytes: TagData::Uninitialized(None),
             },
         };
 
@@ -215,7 +214,8 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
     pub async fn next_image_async(&mut self) -> TiffResult<()> {
         let (ifd, _next_ifd) = self.next_ifd_async().await?;
 
-        self.image = Image::from_async_reader(&mut self.reader, ifd, &self.limits, self.bigtiff).await?;
+        self.image =
+            Image::from_async_reader(&mut self.reader, ifd, &self.limits, self.bigtiff).await?;
         Ok(())
     }
 
@@ -318,7 +318,10 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
-    pub async fn find_tag_unsigned_async<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
+    pub async fn find_tag_unsigned_async<T: TryFrom<u64>>(
+        &mut self,
+        tag: Tag,
+    ) -> TiffResult<Option<T>> {
         self.find_tag_async(tag)
             .await?
             .map(|v| v.into_u64())
@@ -425,10 +428,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         output_width: usize,
     ) -> TiffResult<()> {
         let (offset, length) = self.image.chunk_file_range(chunk_index)?;
-        let v = self
-            .reader
-            .read_range(offset, offset + length)
-            .await?;
+        let v = self.reader.read_range(offset, offset + length).await?;
 
         let byte_order = self.reader.byte_order;
 
@@ -453,7 +453,12 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
     pub async fn read_chunk_async(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let mut result = Self::result_buffer(data_dims.0 as usize, data_dims.1 as usize, self.image(), &self.limits)?;
+        let mut result = Self::result_buffer(
+            data_dims.0 as usize,
+            data_dims.1 as usize,
+            self.image(),
+            &self.limits,
+        )?;
 
         self.read_chunk_to_buffer_async(result.as_buffer(0), chunk_index, data_dims.0 as usize)
             .await?;
@@ -465,7 +470,12 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
     pub async fn read_image_async(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
         let height = self.image().height;
-        let mut result = Self::result_buffer(usize::try_from(width)?, usize::try_from(height)?, self.image(), &self.limits )?;
+        let mut result = Self::result_buffer(
+            usize::try_from(width)?,
+            usize::try_from(height)?,
+            self.image(),
+            &self.limits,
+        )?;
         if width == 0 || height == 0 {
             return Ok(result);
         }
@@ -514,10 +524,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
         // * collect bands to a RGB encoding result in case of RGB bands
         for chunk in 0..image_chunks {
             let (offset, length) = self.image.chunk_file_range(chunk.try_into().unwrap())?;
-            let v = self
-                .reader
-                .read_range(offset, offset + length)
-                .await?;
+            let v = self.reader.read_range(offset, offset + length).await?;
             let mut reader = std::io::Cursor::new(v);
             // self.goto_offset_u64(self.image().chunk_offsets[chunk]).await?;
 

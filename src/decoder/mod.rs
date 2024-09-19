@@ -264,8 +264,7 @@ impl Default for Limits {
 ///
 /// Currently does not support decoding of interlaced images
 #[derive(Debug)]
-pub struct Decoder<R>
-{
+pub struct Decoder<R> {
     reader: SmartReader<R>,
     bigtiff: bool,
     limits: Limits,
@@ -463,7 +462,6 @@ impl<R> Decoder<R> {
         self.next_ifd.is_some()
     }
 
-
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
         if expected != self.image().chunk_type {
             return Err(TiffError::UsageError(UsageError::InvalidChunkType(
@@ -509,8 +507,12 @@ impl<R> Decoder<R> {
         Ok(u32::try_from(self.image().chunk_offsets.len())?)
     }
 
-
-    fn result_buffer(width: usize, height: usize, image: &Image, limits: &Limits) -> TiffResult<DecodingResult> {
+    fn result_buffer(
+        width: usize,
+        height: usize,
+        image: &Image,
+        limits: &Limits,
+    ) -> TiffResult<DecodingResult> {
         let buffer_size = match width
             .checked_mul(height)
             .and_then(|x| x.checked_mul(image.samples_per_pixel()))
@@ -549,7 +551,6 @@ impl<R> Decoder<R> {
             format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format]).into()),
         }
     }
-
 
     /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
     /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
@@ -637,14 +638,13 @@ impl<R: Read + Seek> Decoder<R> {
                 planar_config: PlanarConfiguration::Chunky,
                 strip_decoder: None,
                 tile_attributes: None,
-                chunk_offsets: Vec::new(),
-                chunk_bytes: Vec::new(),
+                chunk_offsets: image::TagData::Uninitialized(None),
+                chunk_bytes: image::TagData::Uninitialized(None),
             },
         };
         decoder.next_image()?;
         Ok(decoder)
     }
-
 
     /// Loads the IFD at the specified index in the list, if one exists
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
@@ -718,7 +718,6 @@ impl<R: Read + Seek> Decoder<R> {
         self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
         Ok(())
     }
-
 
     /// Returns the byte_order
     pub fn byte_order(&self) -> ByteOrder {
@@ -1021,14 +1020,23 @@ impl<R: Read + Seek> Decoder<R> {
         self.get_tag(tag)?.into_string()
     }
 
-
     pub fn read_chunk_to_buffer(
         &mut self,
         mut buffer: DecodingBuffer,
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
-        let offset = self.image.chunk_file_range(chunk_index)?.0;
+        let offset = match self.image.chunk_file_range(chunk_index) {
+            Ok((off, _length)) => off,
+            Err(TiffError::UsageError(UsageError::InvalidChunkIndex(i))) => {
+                self.image
+                    .retrieve_chunk_info(i, self.bigtiff, &mut self.reader)?
+                    .0
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        };
         self.goto_offset_u64(offset)?;
 
         let byte_order = self.reader.byte_order;
@@ -1050,12 +1058,16 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let mut result = Self::result_buffer(data_dims.0 as usize, data_dims.1 as usize, self.image(), &self.limits)?;
+        let mut result = Self::result_buffer(
+            data_dims.0 as usize,
+            data_dims.1 as usize,
+            self.image(),
+            &self.limits,
+        )?;
 
         self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
 
@@ -1066,7 +1078,8 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
         let height = self.image().height;
-        let mut result = Self::result_buffer(width as usize, height as usize, self.image(), &self.limits)?;
+        let mut result =
+            Self::result_buffer(width as usize, height as usize, self.image(), &self.limits)?;
         if width == 0 || height == 0 {
             return Ok(result);
         }
@@ -1113,7 +1126,7 @@ impl<R: Read + Seek> Decoder<R> {
         // * pass requested band as parameter
         // * collect bands to a RGB encoding result in case of RGB bands
         for chunk in 0..image_chunks {
-            self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
+            self.goto_offset_u64(self.image().chunk_offsets.get(chunk)?)?;
 
             let i = chunk % chunks_across;
             let j = chunk / chunks_across;

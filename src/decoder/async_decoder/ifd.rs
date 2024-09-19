@@ -1,11 +1,8 @@
 use futures::{AsyncRead, AsyncReadExt, AsyncSeek};
 
-use crate::decoder::{
-    Limits, stream::SmartReader,
-    ifd::Value
-};
-use crate::{TiffResult, TiffError, tags::Type};
 pub use crate::decoder::ifd::Entry;
+use crate::decoder::{ifd::Value, stream::SmartReader, Limits};
+use crate::{tags::Type, TiffError, TiffResult};
 
 use super::stream::AsyncEndianReader;
 
@@ -39,12 +36,14 @@ impl Entry {
         &self,
         index: u64,
         bigtiff: bool,
-        reader: &mut SmartReader<R>
+        reader: &mut SmartReader<R>,
     ) -> TiffResult<u64> {
-        reader.goto_offset_async(self.offset(bigtiff, reader.byte_order())? + index * self.tag_size()).await?;
+        reader
+            .goto_offset_async(self.offset(bigtiff, reader.byte_order())? + index * self.tag_size())
+            .await?;
         match self.type_ {
             Type::BYTE => {
-                let mut buf = [0u8;1];
+                let mut buf = [0u8; 1];
                 reader.read_exact(&mut buf).await?;
                 Ok(u64::from(buf[0]))
             }

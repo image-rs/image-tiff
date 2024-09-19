@@ -1,9 +1,9 @@
-use super::{tag_reader::AsyncTagReader};
+use super::tag_reader::AsyncTagReader;
 use crate::decoder::{
-    ifd::{Value, Directory},
-    image::{StripDecodeState, TileAttributes, TagData},
+    ifd::{Directory, Value},
+    image::{StripDecodeState, TagData, TileAttributes},
     stream::SmartReader,
-    Limits, ChunkType, Image,
+    ChunkType, Image, Limits,
 };
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
@@ -14,17 +14,23 @@ use futures::{AsyncRead, AsyncSeek};
 
 use std::sync::Arc;
 
-
 impl TagData {
-    pub async fn retrieve_async<R: AsyncRead + AsyncSeek + Unpin>(&mut self, chunk_index: u32, bigtiff: bool, reader: &mut SmartReader<R>) -> TiffResult<u64> {
-    //more logics.await?
-    //  reader.goto_offset_async(self.entry().offset(bigtiff, byte_order)?);
-    //  EndianAsyncReader::read_u64(&reader).map_err(|e| TiffError::IoError(e))
-    let val = self.entry().val_single_into_u64_async(u64::from(chunk_index), bigtiff, reader).await?;
+    pub async fn retrieve_async<R: AsyncRead + AsyncSeek + Unpin>(
+        &mut self,
+        chunk_index: u32,
+        bigtiff: bool,
+        reader: &mut SmartReader<R>,
+    ) -> TiffResult<u64> {
+        if let TagData::Full(v) = self {
+            return self.get(usize::try_from(chunk_index)?);
+        }
+        let val = self
+            .entry()?
+            .val_single_into_u64_async(u64::from(chunk_index), bigtiff, reader)
+            .await?;
 
-
-    self.insert(chunk_index, val)?;
-    Ok(val)
+        self.insert(chunk_index, val)?;
+        Ok(val)
     }
 }
 
@@ -177,15 +183,15 @@ impl Image {
                 chunk_type = ChunkType::Strip;
 
                 chunk_offsets = //ifd[&Tag::StripOffsets];
-                tag_reader
+                TagData::Full(tag_reader
                     .find_tag(Tag::StripOffsets).await?
                     .unwrap()
-                    .into_u64_vec()?;
+                    .into_u64_vec()?);
                 chunk_bytes = //ifd[&Tag::StripByteCounts];
-                tag_reader
+                TagData::Full(tag_reader
                 .find_tag(Tag::StripByteCounts).await?
                 .unwrap()
-                .into_u64_vec()?;
+                .into_u64_vec()?);
                 let rows_per_strip = tag_reader
                     .find_tag(Tag::RowsPerStrip)
                     .await?
@@ -227,15 +233,15 @@ impl Image {
                     tile_length,
                 });
                 chunk_offsets = //ifd[&Tag::TileOffsets];
-                tag_reader
+                TagData::Full(tag_reader
                     .find_tag(Tag::TileOffsets).await?
                     .unwrap()
-                    .into_u64_vec()?;
+                    .into_u64_vec()?);
                 chunk_bytes = //ifd[&Tag::TileByteCounts];
-                tag_reader
+                TagData::Full(tag_reader
                     .find_tag(Tag::TileByteCounts).await?
                     .unwrap()
-                    .into_u64_vec()?;
+                    .into_u64_vec()?);
 
                 let tile = tile_attributes.as_ref().unwrap();
                 if chunk_offsets.len() != chunk_bytes.len()

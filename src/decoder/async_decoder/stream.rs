@@ -1,6 +1,6 @@
+use crate::decoder::stream::{ByteOrder, SmartReader};
 use futures::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 use std::io;
-use crate::decoder::stream::{SmartReader, ByteOrder};
 
 macro_rules! read_async_fn {
     ($name:ident, $type:ty) => {
@@ -22,7 +22,7 @@ macro_rules! read_async_fn {
 pub trait AsyncEndianReader: AsyncRead + Unpin {
     /// Byte order that should be adhered to
     fn byte_order(&self) -> ByteOrder;
-    
+
     read_async_fn!(read_u16_async, u16);
     read_async_fn!(read_i8_async, i8);
     read_async_fn!(read_i16_async, i16);
@@ -34,8 +34,6 @@ pub trait AsyncEndianReader: AsyncRead + Unpin {
     // read_async_fn!(read_f64, f64);
 }
 
-
-
 impl<R: AsyncRead + Unpin> AsyncEndianReader for SmartReader<R> {
     #[inline(always)]
     fn byte_order(&self) -> ByteOrder {
@@ -45,10 +43,10 @@ impl<R: AsyncRead + Unpin> AsyncEndianReader for SmartReader<R> {
 
 impl<R: AsyncRead + Unpin> AsyncRead for SmartReader<R> {
     fn poll_read(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &mut [u8],
-            ) -> std::task::Poll<io::Result<usize>> {
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<io::Result<usize>> {
         let pinned = std::pin::Pin::new(&mut self.get_mut().reader);
         pinned.poll_read(cx, buf)
     }
@@ -56,10 +54,10 @@ impl<R: AsyncRead + Unpin> AsyncRead for SmartReader<R> {
 
 impl<R: AsyncSeek + Unpin> AsyncSeek for SmartReader<R> {
     fn poll_seek(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                pos: io::SeekFrom,
-            ) -> std::task::Poll<io::Result<u64>> {
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        pos: io::SeekFrom,
+    ) -> std::task::Poll<io::Result<u64>> {
         let pinned = std::pin::Pin::new(&mut self.get_mut().reader);
         pinned.poll_seek(cx, pos)
     }

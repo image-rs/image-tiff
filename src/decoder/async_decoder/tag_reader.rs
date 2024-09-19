@@ -1,8 +1,8 @@
 use crate::tags::Tag;
 use crate::{TiffError, TiffFormatError, TiffResult};
 
-use super::{Directory};
-use crate::decoder::{ifd::Value, Limits, stream::SmartReader};
+use super::Directory;
+use crate::decoder::{ifd::Value, stream::SmartReader, Limits};
 
 use futures::{AsyncRead, AsyncSeek};
 

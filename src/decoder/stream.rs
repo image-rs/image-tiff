@@ -2,8 +2,6 @@
 
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
-
-
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug)]
 pub enum ByteOrder {
@@ -28,12 +26,11 @@ macro_rules! read_fn {
     };
 }
 
-
 /// Reader that is aware of the byte order.
 pub trait EndianReader: Read {
     /// Byte order that should be adhered to
     fn byte_order(&self) -> ByteOrder;
-    
+
     read_fn!(read_u16, u16);
     read_fn!(read_i8, i8);
     read_fn!(read_i16, i16);
@@ -187,14 +184,12 @@ impl<R: Read> Read for PackBitsReader<R> {
 
 /// Reader that is aware of the byte order.
 #[derive(Debug)]
-pub struct SmartReader<R>
-{
+pub struct SmartReader<R> {
     pub(super) reader: R,
     pub byte_order: ByteOrder,
 }
 
-impl<R> SmartReader<R>
-{
+impl<R> SmartReader<R> {
     /// Wraps a reader
     pub fn wrap(reader: R, byte_order: ByteOrder) -> SmartReader<R> {
         SmartReader { reader, byte_order }
@@ -209,14 +204,12 @@ impl<R: Read + Seek> SmartReader<R> {
     }
 }
 
-impl<R: Read> EndianReader for SmartReader<R>
-{
+impl<R: Read> EndianReader for SmartReader<R> {
     #[inline(always)]
     fn byte_order(&self) -> ByteOrder {
         self.byte_order
     }
 }
-
 
 impl<R: Read> Read for SmartReader<R> {
     #[inline]
@@ -231,7 +224,6 @@ impl<R: Read + Seek> Seek for SmartReader<R> {
         self.reader.seek(pos)
     }
 }
-
 
 #[cfg(test)]
 mod test {
