@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
-use std::mem;
 use std::str;
 
 use super::stream::{ByteOrder, EndianReader, SmartReader};
@@ -676,40 +675,6 @@ impl Entry {
         let mut v = Vec::with_capacity(usize::try_from(value_count)?);
         for _ in 0..value_count {
             v.push(decode_fn(reader)?);
-        }
-        Ok(List(v))
-    }
-
-    #[inline]
-    fn decode_offset<R, F>(
-        &self,
-        value_count: u64,
-        bo: ByteOrder,
-        bigtiff: bool,
-        limits: &super::Limits,
-        reader: &mut SmartReader<R>,
-        decode_fn: F,
-    ) -> TiffResult<Value>
-    where
-        R: Read + Seek,
-        F: Fn(&mut SmartReader<R>) -> TiffResult<Value>,
-    {
-        let value_count = usize::try_from(value_count)?;
-        if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
-            return Err(TiffError::LimitsExceeded);
-        }
-
-        let mut v = Vec::with_capacity(value_count);
-
-        let offset = if bigtiff {
-            self.r(bo).read_u64()?
-        } else {
-            self.r(bo).read_u32()?.into()
-        };
-        reader.goto_offset(offset)?;
-
-        for _ in 0..value_count {
-            v.push(decode_fn(reader)?)
         }
         Ok(List(v))
     }
