@@ -19,24 +19,24 @@ macro_rules! read_async_fn {
 
 #[async_trait::async_trait]
 /// Reader that is aware of the byte order.
-pub trait EndianAsyncReader: AsyncRead + Unpin {
+pub trait AsyncEndianReader: AsyncRead + Unpin {
     /// Byte order that should be adhered to
     fn byte_order(&self) -> ByteOrder;
     
     read_async_fn!(read_u16, u16);
-    read_async_fn!(read_i8, i8);
-    read_async_fn!(read_i16, i16);
+    // read_async_fn!(read_i8, i8);
+    // read_async_fn!(read_i16, i16);
     read_async_fn!(read_u32, u32);
-    read_async_fn!(read_i32, i32);
+    // read_async_fn!(read_i32, i32);
     read_async_fn!(read_u64, u64);
-    read_async_fn!(read_i64, i64);
-    read_async_fn!(read_f32, f32);
-    read_async_fn!(read_f64, f64);
+    // read_async_fn!(read_i64, i64);
+    // read_async_fn!(read_f32, f32);
+    // read_async_fn!(read_f64, f64);
 }
 
 
 
-impl<R: AsyncRead + Unpin> EndianAsyncReader for SmartReader<R> {
+impl<R: AsyncRead + Unpin> AsyncEndianReader for SmartReader<R> {
     #[inline(always)]
     fn byte_order(&self) -> ByteOrder {
         self.byte_order

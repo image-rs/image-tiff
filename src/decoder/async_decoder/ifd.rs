@@ -7,7 +7,7 @@ use crate::decoder::{
 use crate::{TiffResult, TiffError};
 pub use crate::decoder::ifd::Entry;
 
-use super::stream::EndianAsyncReader;
+use super::stream::AsyncEndianReader;
 
 impl Entry {
     pub async fn async_val<R: AsyncRead + AsyncSeek + Unpin>(

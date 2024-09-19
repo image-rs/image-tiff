@@ -21,7 +21,7 @@ use crate::decoder::{
     }, ChunkType, DecodingBuffer, DecodingResult, Limits,
 };
 
-use stream::EndianAsyncReader;
+use stream::AsyncEndianReader;
 
 extern crate async_trait;
 
