@@ -480,16 +480,16 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         // Write the (possible compressed) data to the encoder.
         let offset = match self.predictor {
             Predictor::None => self.encoder.write_data(value)?,
-            Predictor::Horizontal => value
-                .chunks(self.row_samples as usize)
-                .map(|row| {
-                    self.encoder
-                        .write_data(T::horizontal_predict(row).as_slice())
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .sum(),
-            _ => unreachable!(),
+            Predictor::Horizontal => {
+                let mut row_result = Vec::with_capacity(self.row_samples as _);
+                let mut offset = 0;
+                for row in value.chunks_exact(self.row_samples as usize) {
+                    T::horizontal_predict(row, &mut row_result);
+                    offset += self.encoder.write_data(row_result.as_slice())?;
+                }
+                offset
+            }
+            _ => unimplemented!(),
         };
 
         let byte_count = self.encoder.last_written() as usize;
