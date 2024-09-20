@@ -371,9 +371,6 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
 impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T, K> {
     fn sanity_check(compression: Compression, predictor: Predictor) -> TiffResult<()> {
         match (predictor, compression, T::SAMPLE_FORMAT[0]) {
-            (Predictor::Horizontal, Compression::Uncompressed, _) => Err(TiffError::UsageError(
-                UsageError::PredictorCompressionMismatch,
-            )),
             (Predictor::Horizontal, _, SampleFormat::IEEEFP | SampleFormat::Void) => {
                 Err(TiffError::UsageError(UsageError::PredictorIncompatible))
             }
