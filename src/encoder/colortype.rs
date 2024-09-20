@@ -4,20 +4,19 @@ macro_rules! integer_horizontal_predict {
     () => {
         fn horizontal_predict(row: &[Self::Inner], result: &mut Vec<Self::Inner>) {
             let sample_size = Self::SAMPLE_FORMAT.len();
+
             if row.len() < sample_size {
                 debug_assert!(false);
                 return;
             }
+
             let (start, rest) = row.split_at(sample_size);
 
-            result.clear();
-            if result.capacity() - result.len() < row.len() {
-                return;
-            }
             result.extend_from_slice(start);
             if result.capacity() - result.len() < rest.len() {
                 return;
             }
+
             result.extend(
                 row.into_iter()
                     .zip(rest)

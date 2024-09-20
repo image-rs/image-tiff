@@ -26,7 +26,8 @@ macro_rules! test_predict {
                 _ => panic!("Wrong data type"),
             };
 
-            let mut predicted = C::horizontal_predict(&image_data);
+            let mut predicted = Vec::with_capacity(image_data.len());
+            C::horizontal_predict(&image_data, &mut predicted);
 
             let sample_size = C::SAMPLE_FORMAT.len();
 

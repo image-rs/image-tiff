@@ -478,13 +478,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         let offset = match self.predictor {
             Predictor::None => self.encoder.write_data(value)?,
             Predictor::Horizontal => {
-                let mut row_result = Vec::with_capacity(self.row_samples as _);
-                let mut offset = 0;
+                let mut row_result = Vec::with_capacity(value.len());
                 for row in value.chunks_exact(self.row_samples as usize) {
                     T::horizontal_predict(row, &mut row_result);
-                    offset += self.encoder.write_data(row_result.as_slice())?;
                 }
-                offset
+                self.encoder.write_data(row_result.as_slice())?
             }
             _ => unimplemented!(),
         };
