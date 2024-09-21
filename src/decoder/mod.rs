@@ -265,21 +265,21 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
         9..=16 => {
             for i in (samples * 2..buf.len()).step_by(2) {
                 let v = u16::from_ne_bytes(buf[i..][..2].try_into().unwrap());
-                let p = u16::from_ne_bytes(buf[i - samples..][..2].try_into().unwrap());
+                let p = u16::from_ne_bytes(buf[i - 2 * samples..][..2].try_into().unwrap());
                 buf[i..][..2].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
             }
         }
         17..=32 => {
             for i in (samples * 4..buf.len()).step_by(4) {
                 let v = u32::from_ne_bytes(buf[i..][..4].try_into().unwrap());
-                let p = u32::from_ne_bytes(buf[i - samples..][..4].try_into().unwrap());
+                let p = u32::from_ne_bytes(buf[i - 4 * samples..][..4].try_into().unwrap());
                 buf[i..][..4].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
             }
         }
         33..=64 => {
             for i in (samples * 8..buf.len()).step_by(8) {
                 let v = u64::from_ne_bytes(buf[i..][..8].try_into().unwrap());
-                let p = u64::from_ne_bytes(buf[i - samples..][..8].try_into().unwrap());
+                let p = u64::from_ne_bytes(buf[i - 8 * samples..][..8].try_into().unwrap());
                 buf[i..][..8].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
             }
         }
