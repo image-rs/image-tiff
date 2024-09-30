@@ -1,4 +1,4 @@
-use super::ifd::{Directory, Value};
+use super::ifd::{Directory, Entry, Value};
 use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
 use super::{predict_f32, predict_f64, Limits};
@@ -7,17 +7,18 @@ use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
 };
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
+use std::collections::HashMap;
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
-#[derive(Debug)]
-pub(crate) struct StripDecodeState {
+#[derive(Debug, Clone)]
+pub struct StripDecodeState {
     pub rows_per_strip: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Computed values useful for tile decoding
-pub(crate) struct TileAttributes {
+pub struct TileAttributes {
     pub image_width: usize,
     pub image_height: usize,
 
@@ -31,6 +32,17 @@ impl TileAttributes {
     }
     pub fn tiles_down(&self) -> usize {
         (self.image_height + self.tile_length - 1) / self.tile_length
+    }
+    #[inline(always)]
+    pub fn chunk_index_to_ij(&self, chunk_index: usize) -> (usize, usize) {
+        (
+            chunk_index % self.tiles_across(),
+            chunk_index / self.tiles_across(),
+        )
+    }
+    #[inline(always)]
+    pub fn ij_to_chunk_index(&self, i: usize, j: usize) -> usize {
+        i + j * self.tiles_across()
     }
     fn padding_right(&self) -> usize {
         (self.tile_width - self.image_width % self.tile_width) % self.tile_width
@@ -58,8 +70,167 @@ impl TileAttributes {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Image {
+/// Enum for partially-loaded tags for chunk_offset and chunk_bytes
+#[derive(Debug, Clone)]
+pub enum TagData {
+    /// This tag has not been loaded yet, please read in the chunk you need
+    Uninitialized(Option<Entry>), // Entry field for ergonomic initialization
+    /// This tag has a minority of values read that are not necessarily close to each other
+    Sparse(Entry, HashMap<u32, u64>),
+    /// This tag has chunks read that form a sub-rectangle in the larger tiff
+    /// assumes a rectangle from topleft-botright, where x and y difference (or rather I and J according to [GeoTiff Spec](https://docs.ogc.org/is/19-008r4/19-008r4.html#_device_space_and_geotiff)) is calculated from TileAttributes
+    Rect {
+        entry: Entry,
+        tiles_across: u32,
+        top_left: u32,
+        bot_right: u32,
+        data: Vec<u64>,
+    },
+    /// This tag is either entirely loaded, or has loaded enough data to be dense. `0` indicates a missing value.
+    Dense(Entry, Vec<u64>),
+    Full(Vec<u64>),
+}
+
+impl TagData {
+    /// get chunk_index from this data, returning [`UsageError::InvalidChunkIndex`] if the corresponding data is currently not loaded.
+    /// Implementations should call [`retrieve`] to load the tag data in that case.
+    pub fn get(&self, chunk_index: usize) -> TiffResult<u64> {
+        let ci_32 = u32::try_from(chunk_index)?;
+        match &self {
+            // ordered by complexity
+            TagData::Uninitialized(_) => {
+                Err(TiffError::UsageError(UsageError::InvalidChunkIndex(ci_32)))
+            }
+            TagData::Full(v) => v
+                .get(chunk_index)
+                .ok_or(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ))
+                .copied(),
+            TagData::Sparse(_, hm) => hm
+                .get(&ci_32)
+                .ok_or(TiffError::UsageError(UsageError::InvalidChunkIndex(ci_32)))
+                .copied(),
+            TagData::Dense(_, v) => {
+                if let Some(val) = v.get(chunk_index) {
+                    if val == &0 {
+                        Err(TiffError::UsageError(UsageError::InvalidChunkIndex(ci_32)))
+                    } else {
+                        Ok(*val)
+                    }
+                } else {
+                    Err(TiffError::LimitsExceeded)
+                }
+            }
+            TagData::Rect {
+                entry: _,
+                tiles_across,
+                top_left,
+                bot_right,
+                data,
+            } => {
+                let i = ci_32 % tiles_across;
+                let j = ci_32 / tiles_across;
+                let tl_i = top_left % tiles_across;
+                let tl_j = top_left / tiles_across;
+                let br_i = bot_right % tiles_across;
+                let br_j = bot_right / tiles_across;
+                if i >= tl_i && i < br_i && j >= tl_j && j < br_j {
+                    // We want to index, say 10 into a smaller sub-rectangle, say 5-10:
+                    // ```
+                    // +---+---+---+---+
+                    // | 0 | 1 | 2 | 3 |
+                    // +---+---+---+---+
+                    // | 4 | 5 | 6 | 7 |
+                    // +---+---+---+---+
+                    // | 8 | 9 |10 |11 |
+                    // +---+---+---+---+
+                    // |12 |13 |14 |15 |
+                    // +---+---+---+---+
+                    // ```
+                    // 10 has i=2, j=2, tl=5 has tl_i=1,tl_j=1
+                    let rect_width = br_i - tl_i;
+                    let d_i = i - tl_i;
+                    let d_j = j - tl_j;
+                    data.get(usize::try_from(d_i + d_j * rect_width)?)
+                        .ok_or(TiffError::LimitsExceeded)
+                        .copied()
+                } else {
+                    Err(TiffError::UsageError(UsageError::InvalidChunkIndex(ci_32)))
+                }
+            }
+        }
+    }
+
+    /// Get the lenght of a **fully loaded** buffer. For convenience, since we often assume bla
+    pub fn len(&self) -> usize {
+        match self {
+            TagData::Full(v) => v.len(),
+            TagData::Uninitialized(None) => 0,
+            _ => usize::try_from(self.entry().unwrap().count)
+                .expect("tag count in TagData (Entry) should fit in usize"),
+        }
+    }
+
+    pub(super) fn entry(&self) -> TiffResult<&Entry> {
+        match self {
+            TagData::Uninitialized(Some(e)) => Ok(&e),
+            TagData::Sparse(e, _) => Ok(&e),
+            TagData::Rect {
+                entry,
+                tiles_across: _,
+                top_left: _,
+                bot_right: _,
+                data: _,
+            } => Ok(&entry),
+            TagData::Dense(e, _) => Ok(&e),
+            _ => Err(TiffError::FormatError(TiffFormatError::Format(
+                "We did something horribly wwrong...".to_string(),
+            ))),
+        }
+    }
+
+    pub(super) fn insert(&mut self, chunk_index: u32, val: u64) -> TiffResult<()> {
+        match self {
+            TagData::Sparse(_, ref mut hm) => {
+                hm.insert(chunk_index, val);
+            }
+            TagData::Dense(_, ref mut v) => {
+                *v.get_mut(usize::try_from(chunk_index)?)
+                    .ok_or(TiffError::LimitsExceeded)? = val
+            }
+            _ => println!(
+                "did not cache chunk nr. {}, with value {}",
+                chunk_index, val
+            ),
+        }
+        Ok(())
+    }
+
+    pub fn retrieve<R: Read + Seek>(
+        &mut self,
+        chunk_index: u32,
+        bigtiff: bool,
+        reader: &mut SmartReader<R>,
+    ) -> TiffResult<u64> {
+        // return early if we don't have an entry
+        match self {
+            TagData::Full(_) => {
+                return self.get(usize::try_from(chunk_index)?);
+            }
+            _ => {}
+        }
+        let val = self
+            .entry()?
+            .val_single_into_u64(u64::from(chunk_index), bigtiff, reader)?;
+
+        self.insert(chunk_index, val)?;
+        Ok(val)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Image {
     pub ifd: Option<Directory>,
     pub width: u32,
     pub height: u32,
@@ -74,11 +245,23 @@ pub(crate) struct Image {
     pub planar_config: PlanarConfiguration,
     pub strip_decoder: Option<StripDecodeState>,
     pub tile_attributes: Option<TileAttributes>,
-    pub chunk_offsets: Vec<u64>,
-    pub chunk_bytes: Vec<u64>,
+    pub chunk_offsets: TagData,
+    pub chunk_bytes: TagData,
 }
 
 impl Image {
+    pub fn retrieve_chunk_info<R: Read + Seek>(
+        &mut self,
+        chunk_index: u32,
+        bigtiff: bool,
+        reader: &mut SmartReader<R>,
+    ) -> TiffResult<(u64, u64)> {
+        Ok((
+            self.chunk_offsets.retrieve(chunk_index, bigtiff, reader)?,
+            self.chunk_bytes.retrieve(chunk_index, bigtiff, reader)?,
+        ))
+    }
+
     pub fn from_reader<R: Read + Seek>(
         reader: &mut SmartReader<R>,
         ifd: Directory,
@@ -164,7 +347,7 @@ impl Image {
 
         // Technically bits_per_sample.len() should be *equal* to samples, but libtiff also allows
         // it to be a single value that applies to all samples.
-        if bits_per_sample.len() != samples.into() && bits_per_sample.len() != 1 {
+        if bits_per_sample.len() != usize::from(samples) && bits_per_sample.len() != 1 {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
@@ -218,14 +401,18 @@ impl Image {
             (true, true, false, false) => {
                 chunk_type = ChunkType::Strip;
 
-                chunk_offsets = tag_reader
-                    .find_tag(Tag::StripOffsets)?
-                    .unwrap()
-                    .into_u64_vec()?;
-                chunk_bytes = tag_reader
-                    .find_tag(Tag::StripByteCounts)?
-                    .unwrap()
-                    .into_u64_vec()?;
+                chunk_offsets = TagData::Full(
+                    tag_reader
+                        .find_tag(Tag::StripOffsets)?
+                        .unwrap()
+                        .into_u64_vec()?,
+                );
+                chunk_bytes = TagData::Full(
+                    tag_reader
+                        .find_tag(Tag::StripByteCounts)?
+                        .unwrap()
+                        .into_u64_vec()?,
+                );
                 let rows_per_strip = tag_reader
                     .find_tag(Tag::RowsPerStrip)?
                     .map(Value::into_u32)
@@ -265,14 +452,18 @@ impl Image {
                     tile_width,
                     tile_length,
                 });
-                chunk_offsets = tag_reader
-                    .find_tag(Tag::TileOffsets)?
-                    .unwrap()
-                    .into_u64_vec()?;
-                chunk_bytes = tag_reader
-                    .find_tag(Tag::TileByteCounts)?
-                    .unwrap()
-                    .into_u64_vec()?;
+                chunk_offsets = TagData::Full(
+                    tag_reader
+                        .find_tag(Tag::TileOffsets)?
+                        .unwrap()
+                        .into_u64_vec()?,
+                );
+                chunk_bytes = TagData::Full(
+                    tag_reader
+                        .find_tag(Tag::TileByteCounts)?
+                        .unwrap()
+                        .into_u64_vec()?,
+                );
 
                 let tile = tile_attributes.as_ref().unwrap();
                 if chunk_offsets.len() != chunk_bytes.len()
@@ -477,22 +668,13 @@ impl Image {
         }
     }
 
+    /// read the file range
     pub(crate) fn chunk_file_range(&self, chunk: u32) -> TiffResult<(u64, u64)> {
-        let file_offset = self
-            .chunk_offsets
-            .get(chunk as usize)
-            .ok_or(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ))?;
+        let file_offset = self.chunk_offsets.get(chunk as usize)?;
 
-        let compressed_bytes =
-            self.chunk_bytes
-                .get(chunk as usize)
-                .ok_or(TiffError::FormatError(
-                    TiffFormatError::InconsistentSizesEncountered,
-                ))?;
+        let compressed_bytes = self.chunk_bytes.get(chunk as usize)?;
 
-        Ok((*file_offset, *compressed_bytes))
+        Ok((file_offset, compressed_bytes))
     }
 
     pub(crate) fn chunk_dimensions(&self) -> TiffResult<(u32, u32)> {
@@ -605,13 +787,8 @@ impl Image {
             _ => {}
         }
 
-        let compressed_bytes =
-            self.chunk_bytes
-                .get(chunk_index as usize)
-                .ok_or(TiffError::FormatError(
-                    TiffFormatError::InconsistentSizesEncountered,
-                ))?;
-        if *compressed_bytes > limits.intermediate_buffer_size as u64 {
+        let compressed_bytes = self.chunk_bytes.get(chunk_index as usize)?;
+        if compressed_bytes > limits.intermediate_buffer_size as u64 {
             return Err(TiffError::LimitsExceeded);
         }
 
@@ -641,7 +818,7 @@ impl Image {
             reader,
             photometric_interpretation,
             compression_method,
-            *compressed_bytes,
+            compressed_bytes,
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
@@ -679,15 +856,13 @@ impl Image {
                 }
             }
         } else {
-            for (i, row) in buf
+            for (_, row) in buf
                 .chunks_mut(output_row_stride)
                 .take(data_dims.1 as usize)
                 .enumerate()
             {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
-
-                println!("chunk={chunk_index}, index={i}");
 
                 // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {
