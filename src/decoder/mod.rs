@@ -15,9 +15,16 @@ use crate::tags::{
 use self::stream::{ByteOrder, EndianReader, SmartReader};
 
 pub mod ifd;
-mod image;
-mod stream;
+pub mod image;
+pub mod stream;
 mod tag_reader;
+
+#[cfg(feature = "async_decoder")]
+pub mod async_decoder;
+#[cfg(feature = "multithread")]
+mod multithread_decoder;
+#[cfg(feature = "multithread")]
+pub use multithread_decoder::ChunkDecoder;
 
 /// Result of a decoding process
 #[derive(Debug)]
@@ -139,6 +146,21 @@ impl DecodingResult {
             DecodingResult::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[start..]),
         }
     }
+
+    pub fn len(&self) -> usize {
+        match self {
+            DecodingResult::U8(v) => v.len(),
+            DecodingResult::U16(v) => v.len(),
+            DecodingResult::U32(v) => v.len(),
+            DecodingResult::U64(v) => v.len(),
+            DecodingResult::F32(v) => v.len(),
+            DecodingResult::F64(v) => v.len(),
+            DecodingResult::I8(v) => v.len(),
+            DecodingResult::I16(v) => v.len(),
+            DecodingResult::I32(v) => v.len(),
+            DecodingResult::I64(v) => v.len(),
+        }
+    }
 }
 
 // A buffer for image decoding
@@ -243,8 +265,6 @@ impl Default for Limits {
 /// Currently does not support decoding of interlaced images
 #[derive(Debug)]
 pub struct Decoder<R>
-where
-    R: Read + Seek,
 {
     reader: SmartReader<R>,
     bigtiff: bool,
@@ -420,6 +440,132 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     };
 }
 
+impl<R> Decoder<R> {
+    pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
+        self.limits = limits;
+        self
+    }
+
+    pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
+        Ok((self.image().width, self.image().height))
+    }
+
+    pub fn colortype(&mut self) -> TiffResult<ColorType> {
+        self.image().colortype()
+    }
+
+    pub fn image(&self) -> &Image {
+        &self.image
+    }
+
+    /// Returns `true` if there is at least one more image available.
+    pub fn more_images(&self) -> bool {
+        self.next_ifd.is_some()
+    }
+
+
+    fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
+        if expected != self.image().chunk_type {
+            return Err(TiffError::UsageError(UsageError::InvalidChunkType(
+                expected,
+                self.image().chunk_type,
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// The chunk type (Strips / Tiles) of the image
+    pub fn get_chunk_type(&self) -> ChunkType {
+        self.image().chunk_type
+    }
+
+    /// Number of strips in image
+    pub fn strip_count(&mut self) -> TiffResult<u32> {
+        self.check_chunk_type(ChunkType::Strip)?;
+        let rows_per_strip = self.image().strip_decoder.as_ref().unwrap().rows_per_strip;
+
+        if rows_per_strip == 0 {
+            return Ok(0);
+        }
+
+        // rows_per_strip - 1 can never fail since we know it's at least 1
+        let height = match self.image().height.checked_add(rows_per_strip - 1) {
+            Some(h) => h,
+            None => return Err(TiffError::IntSizeError),
+        };
+
+        let strips = match self.image().planar_config {
+            PlanarConfiguration::Chunky => height / rows_per_strip,
+            PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
+        };
+
+        Ok(strips)
+    }
+
+    /// Number of tiles in image
+    pub fn tile_count(&mut self) -> TiffResult<u32> {
+        self.check_chunk_type(ChunkType::Tile)?;
+        Ok(u32::try_from(self.image().chunk_offsets.len())?)
+    }
+
+
+    fn result_buffer(width: usize, height: usize, image: &Image, limits: &Limits) -> TiffResult<DecodingResult> {
+        let buffer_size = match width
+            .checked_mul(height)
+            .and_then(|x| x.checked_mul(image.samples_per_pixel()))
+        {
+            Some(s) => s,
+            None => return Err(TiffError::LimitsExceeded),
+        };
+
+        let max_sample_bits = image.bits_per_sample;
+        match image.sample_format {
+            SampleFormat::Uint => match max_sample_bits {
+                n if n <= 8 => DecodingResult::new_u8(buffer_size, &limits),
+                n if n <= 16 => DecodingResult::new_u16(buffer_size, &limits),
+                n if n <= 32 => DecodingResult::new_u32(buffer_size, &limits),
+                n if n <= 64 => DecodingResult::new_u64(buffer_size, &limits),
+                n => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                )),
+            },
+            SampleFormat::IEEEFP => match max_sample_bits {
+                32 => DecodingResult::new_f32(buffer_size, &limits),
+                64 => DecodingResult::new_f64(buffer_size, &limits),
+                n => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                )),
+            },
+            SampleFormat::Int => match max_sample_bits {
+                n if n <= 8 => DecodingResult::new_i8(buffer_size, &limits),
+                n if n <= 16 => DecodingResult::new_i16(buffer_size, &limits),
+                n if n <= 32 => DecodingResult::new_i32(buffer_size, &limits),
+                n if n <= 64 => DecodingResult::new_i64(buffer_size, &limits),
+                n => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
+                )),
+            },
+            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format]).into()),
+        }
+    }
+
+
+    /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
+    /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
+    pub fn chunk_dimensions(&self) -> (u32, u32) {
+        self.image().chunk_dimensions().unwrap()
+    }
+
+    /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
+    /// minus any padding.
+    pub fn chunk_data_dimensions(&self, chunk_index: u32) -> (u32, u32) {
+        self.image()
+            .chunk_data_dimensions(chunk_index)
+            .expect("invalid chunk_index")
+    }
+}
+
 impl<R: Read + Seek> Decoder<R> {
     /// Create a new decoder that decodes from the stream ```r```
     pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
@@ -499,22 +645,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(decoder)
     }
 
-    pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
-        self.limits = limits;
-        self
-    }
-
-    pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
-        Ok((self.image().width, self.image().height))
-    }
-
-    pub fn colortype(&mut self) -> TiffResult<ColorType> {
-        self.image().colortype()
-    }
-
-    fn image(&self) -> &Image {
-        &self.image
-    }
 
     /// Loads the IFD at the specified index in the list, if one exists
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
@@ -589,10 +719,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    /// Returns `true` if there is at least one more image available.
-    pub fn more_images(&self) -> bool {
-        self.next_ifd.is_some()
-    }
 
     /// Returns the byte_order
     pub fn byte_order(&self) -> ByteOrder {
@@ -895,50 +1021,6 @@ impl<R: Read + Seek> Decoder<R> {
         self.get_tag(tag)?.into_string()
     }
 
-    fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
-        if expected != self.image().chunk_type {
-            return Err(TiffError::UsageError(UsageError::InvalidChunkType(
-                expected,
-                self.image().chunk_type,
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// The chunk type (Strips / Tiles) of the image
-    pub fn get_chunk_type(&self) -> ChunkType {
-        self.image().chunk_type
-    }
-
-    /// Number of strips in image
-    pub fn strip_count(&mut self) -> TiffResult<u32> {
-        self.check_chunk_type(ChunkType::Strip)?;
-        let rows_per_strip = self.image().strip_decoder.as_ref().unwrap().rows_per_strip;
-
-        if rows_per_strip == 0 {
-            return Ok(0);
-        }
-
-        // rows_per_strip - 1 can never fail since we know it's at least 1
-        let height = match self.image().height.checked_add(rows_per_strip - 1) {
-            Some(h) => h,
-            None => return Err(TiffError::IntSizeError),
-        };
-
-        let strips = match self.image().planar_config {
-            PlanarConfiguration::Chunky => height / rows_per_strip,
-            PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
-        };
-
-        Ok(strips)
-    }
-
-    /// Number of tiles in image
-    pub fn tile_count(&mut self) -> TiffResult<u32> {
-        self.check_chunk_type(ChunkType::Tile)?;
-        Ok(u32::try_from(self.image().chunk_offsets.len())?)
-    }
 
     pub fn read_chunk_to_buffer(
         &mut self,
@@ -968,76 +1050,23 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = match width
-            .checked_mul(height)
-            .and_then(|x| x.checked_mul(self.image().samples_per_pixel()))
-        {
-            Some(s) => s,
-            None => return Err(TiffError::LimitsExceeded),
-        };
-
-        let max_sample_bits = self.image().bits_per_sample;
-        match self.image().sample_format {
-            SampleFormat::Uint => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
-                n => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                )),
-            },
-            SampleFormat::IEEEFP => match max_sample_bits {
-                32 => DecodingResult::new_f32(buffer_size, &self.limits),
-                64 => DecodingResult::new_f64(buffer_size, &self.limits),
-                n => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                )),
-            },
-            SampleFormat::Int => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_i8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_i16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_i32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_i64(buffer_size, &self.limits),
-                n => Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                )),
-            },
-            format => Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format]).into()),
-        }
-    }
 
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let mut result = self.result_buffer(data_dims.0 as usize, data_dims.1 as usize)?;
+        let mut result = Self::result_buffer(data_dims.0 as usize, data_dims.1 as usize, self.image(), &self.limits)?;
 
         self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
 
         Ok(result)
     }
 
-    /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
-    /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
-    pub fn chunk_dimensions(&self) -> (u32, u32) {
-        self.image().chunk_dimensions().unwrap()
-    }
-
-    /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
-    /// minus any padding.
-    pub fn chunk_data_dimensions(&self, chunk_index: u32) -> (u32, u32) {
-        self.image()
-            .chunk_data_dimensions(chunk_index)
-            .expect("invalid chunk_index")
-    }
-
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
         let height = self.image().height;
-        let mut result = self.result_buffer(width as usize, height as usize)?;
+        let mut result = Self::result_buffer(width as usize, height as usize, self.image(), &self.limits)?;
         if width == 0 || height == 0 {
             return Ok(result);
         }

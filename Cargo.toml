@@ -16,14 +16,43 @@ categories = ["multimedia::images", "multimedia::encoding"]
 
 exclude = ["tests/images/*", "tests/fuzz_images/*"]
 
+[features]
+async_decoder = ["dep:futures", "dep:async-trait"]
+multithread = ["async_decoder"]
+# only for async example reading a COG
+ehttp = ["async_decoder", "dep:ehttp"]
+
 [dependencies]
 weezl = "0.1.0"
 jpeg = { package = "jpeg-decoder", version = "0.3.0", default-features = false }
 flate2 = "1.0.20"
+futures = {version = "0.3.30", optional = true }
+async-trait = {version ="^0.1", optional = true }
+ehttp = { version = "0.5.0", features=["native-async"], optional = true }
 
 [dev-dependencies]
 criterion = "0.3.1"
+# use rt since most is io-bound
+tokio = {version = "1.29.1", features = ["macros", "fs", "rt-multi-thread"]}
 
 [[bench]]
 name = "lzw"
 harness = false
+
+[package.metadata.example.async_http]
+name = "Async http"
+description = "Example showing use of async features using async http requests"
+
+[[example]]
+name = "async_http"
+path="examples/async_http.rs"
+required-features=["ehttp", "async_decoder"]
+
+[package.metadata.example.multithread]
+name="multithread_http"
+description = "example showing multithreaded reading of COG"
+
+[[example]]
+name = "multithread_http"
+path="examples/multithread_http.rs"
+required-features=["ehttp", "multithread"]
