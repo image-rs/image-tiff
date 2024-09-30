@@ -10,14 +10,14 @@ use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedEr
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
-#[derive(Debug)]
-pub(crate) struct StripDecodeState {
+#[derive(Debug, Clone)]
+pub struct StripDecodeState {
     pub rows_per_strip: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Computed values useful for tile decoding
-pub(crate) struct TileAttributes {
+pub struct TileAttributes {
     pub image_width: usize,
     pub image_height: usize,
 
@@ -58,8 +58,8 @@ impl TileAttributes {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Image {
+#[derive(Debug, Clone)]
+pub struct Image {
     pub ifd: Option<Directory>,
     pub width: u32,
     pub height: u32,
@@ -679,15 +679,13 @@ impl Image {
                 }
             }
         } else {
-            for (i, row) in buf
+            for (_, row) in buf
                 .chunks_mut(output_row_stride)
                 .take(data_dims.1 as usize)
                 .enumerate()
             {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
-
-                println!("chunk={chunk_index}, index={i}");
 
                 // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {

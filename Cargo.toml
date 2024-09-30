@@ -18,7 +18,9 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 
 [features]
 async_decoder = ["dep:futures", "dep:async-trait"]
-ehttp = ["dep:ehttp", "async_decoder"]
+multithread = ["async_decoder"]
+# only for async example reading a COG
+ehttp = ["async_decoder", "dep:ehttp"]
 
 [dependencies]
 weezl = "0.1.0"
@@ -44,4 +46,13 @@ description = "Example showing use of async features using async http requests"
 [[example]]
 name = "async_http"
 path="examples/async_http.rs"
-required-features=["ehttp"]
+required-features=["ehttp", "async_decoder"]
+
+[package.metadata.example.multithread]
+name="multithread_http"
+description = "example showing multithreaded reading of COG"
+
+[[example]]
+name = "multithread_http"
+path="examples/multithread_http.rs"
+required-features=["ehttp", "multithread"]

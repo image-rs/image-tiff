@@ -15,12 +15,16 @@ use crate::tags::{
 use self::stream::{ByteOrder, EndianReader, SmartReader};
 
 pub mod ifd;
-mod image;
-mod stream;
+pub mod image;
+pub mod stream;
 mod tag_reader;
 
 #[cfg(feature = "async_decoder")]
-mod async_decoder;
+pub mod async_decoder;
+#[cfg(feature = "multithread")]
+mod multithread_decoder;
+#[cfg(feature = "multithread")]
+pub use multithread_decoder::ChunkDecoder;
 
 /// Result of a decoding process
 #[derive(Debug)]
@@ -140,6 +144,21 @@ impl DecodingResult {
             DecodingResult::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[start..]),
             DecodingResult::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[start..]),
             DecodingResult::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[start..]),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            DecodingResult::U8(v) => v.len(),
+            DecodingResult::U16(v) => v.len(),
+            DecodingResult::U32(v) => v.len(),
+            DecodingResult::U64(v) => v.len(),
+            DecodingResult::F32(v) => v.len(),
+            DecodingResult::F64(v) => v.len(),
+            DecodingResult::I8(v) => v.len(),
+            DecodingResult::I16(v) => v.len(),
+            DecodingResult::I32(v) => v.len(),
+            DecodingResult::I64(v) => v.len(),
         }
     }
 }
@@ -435,7 +454,7 @@ impl<R> Decoder<R> {
         self.image().colortype()
     }
 
-    fn image(&self) -> &Image {
+    pub fn image(&self) -> &Image {
         &self.image
     }
 
@@ -491,38 +510,38 @@ impl<R> Decoder<R> {
     }
 
 
-    fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
+    fn result_buffer(width: usize, height: usize, image: &Image, limits: &Limits) -> TiffResult<DecodingResult> {
         let buffer_size = match width
             .checked_mul(height)
-            .and_then(|x| x.checked_mul(self.image().samples_per_pixel()))
+            .and_then(|x| x.checked_mul(image.samples_per_pixel()))
         {
             Some(s) => s,
             None => return Err(TiffError::LimitsExceeded),
         };
 
-        let max_sample_bits = self.image().bits_per_sample;
-        match self.image().sample_format {
+        let max_sample_bits = image.bits_per_sample;
+        match image.sample_format {
             SampleFormat::Uint => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
+                n if n <= 8 => DecodingResult::new_u8(buffer_size, &limits),
+                n if n <= 16 => DecodingResult::new_u16(buffer_size, &limits),
+                n if n <= 32 => DecodingResult::new_u32(buffer_size, &limits),
+                n if n <= 64 => DecodingResult::new_u64(buffer_size, &limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
             },
             SampleFormat::IEEEFP => match max_sample_bits {
-                32 => DecodingResult::new_f32(buffer_size, &self.limits),
-                64 => DecodingResult::new_f64(buffer_size, &self.limits),
+                32 => DecodingResult::new_f32(buffer_size, &limits),
+                64 => DecodingResult::new_f64(buffer_size, &limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
             },
             SampleFormat::Int => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_i8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_i16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_i32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_i64(buffer_size, &self.limits),
+                n if n <= 8 => DecodingResult::new_i8(buffer_size, &limits),
+                n if n <= 16 => DecodingResult::new_i16(buffer_size, &limits),
+                n if n <= 32 => DecodingResult::new_i32(buffer_size, &limits),
+                n if n <= 64 => DecodingResult::new_i64(buffer_size, &limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
@@ -1036,7 +1055,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let mut result = self.result_buffer(data_dims.0 as usize, data_dims.1 as usize)?;
+        let mut result = Self::result_buffer(data_dims.0 as usize, data_dims.1 as usize, self.image(), &self.limits)?;
 
         self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
 
@@ -1047,7 +1066,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
         let height = self.image().height;
-        let mut result = self.result_buffer(width as usize, height as usize)?;
+        let mut result = Self::result_buffer(width as usize, height as usize, self.image(), &self.limits)?;
         if width == 0 || height == 0 {
             return Ok(result);
         }

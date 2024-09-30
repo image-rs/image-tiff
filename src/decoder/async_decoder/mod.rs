@@ -5,7 +5,7 @@ use futures::{
 };
 use std::collections::{HashMap, HashSet};
 
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
+use crate::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError};
 
 // use self::ifd::Directory;
 // use self::image::Image;
@@ -18,7 +18,7 @@ use crate::decoder::{
     Decoder, 
     ifd::{Value, Directory}, Image, stream::{
         ByteOrder, SmartReader,
-    }, ChunkType, DecodingBuffer, DecodingResult, Limits,
+    }, ChunkType, DecodingBuffer, DecodingResult,
 };
 
 use stream::AsyncEndianReader;
@@ -453,7 +453,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
     pub async fn read_chunk_async(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let mut result = self.result_buffer(data_dims.0 as usize, data_dims.1 as usize)?;
+        let mut result = Self::result_buffer(data_dims.0 as usize, data_dims.1 as usize, self.image(), &self.limits)?;
 
         self.read_chunk_to_buffer_async(result.as_buffer(0), chunk_index, data_dims.0 as usize)
             .await?;
@@ -465,7 +465,7 @@ impl<R: AsyncRead + AsyncSeek + RangeReader + Unpin + Send> Decoder<R> {
     pub async fn read_image_async(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
         let height = self.image().height;
-        let mut result = self.result_buffer(width as usize, height as usize)?;
+        let mut result = Self::result_buffer(usize::try_from(width)?, usize::try_from(height)?, self.image(), &self.limits )?;
         if width == 0 || height == 0 {
             return Ok(result);
         }
