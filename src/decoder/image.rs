@@ -1,5 +1,5 @@
 use super::ifd::{Directory, Value};
-use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
+use super::stream::{ByteOrder, DeflateReader, Group4Reader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
 use super::{predict_f32, predict_f64, Limits};
 use super::{stream::SmartReader, ChunkType};
@@ -76,6 +76,7 @@ pub(crate) struct Image {
     pub tile_attributes: Option<TileAttributes>,
     pub chunk_offsets: Vec<u64>,
     pub chunk_bytes: Vec<u64>,
+    pub expand_samples_to_bytes: bool,
 }
 
 impl Image {
@@ -84,6 +85,7 @@ impl Image {
         ifd: Directory,
         limits: &Limits,
         bigtiff: bool,
+        expand_samples_to_bytes: bool,
     ) -> TiffResult<Image> {
         let mut tag_reader = TagReader {
             reader,
@@ -308,6 +310,7 @@ impl Image {
             tile_attributes,
             chunk_offsets,
             chunk_bytes,
+            expand_samples_to_bytes,
         })
     }
 
@@ -368,11 +371,13 @@ impl Image {
     }
 
     fn create_reader<'r, R: 'r + Read>(
+        dimensions: (u32, u32),
         reader: R,
         photometric_interpretation: PhotometricInterpretation,
         compression_method: CompressionMethod,
         compressed_length: u64,
         jpeg_tables: Option<&[u8]>,
+        expand_samples_to_bytes: bool,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
@@ -447,6 +452,12 @@ impl Image {
 
                 Box::new(Cursor::new(data))
             }
+            CompressionMethod::Fax4 => Box::new(Group4Reader::new(
+                dimensions,
+                reader,
+                compressed_length,
+                expand_samples_to_bytes,
+            )?),
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),
@@ -529,7 +540,13 @@ impl Image {
                 // Ignore potential vertical padding on the bottommost strip
                 let strip_height = dims.1.min(strip_height_without_padding);
 
-                Ok((dims.0, strip_height))
+                let strip_width = if !self.expand_samples_to_bytes && self.bits_per_sample < 8 {
+                    (dims.0 * self.bits_per_sample as u32).div_ceil(8)
+                } else {
+                    dims.0
+                };
+
+                Ok((strip_width, strip_height))
             }
             ChunkType::Tile => {
                 let tile_attrs = self.tile_attributes.as_ref().unwrap();
@@ -638,11 +655,13 @@ impl Image {
         assert!(buf.len() >= output_row_stride * (data_dims.1 as usize - 1) + data_row_bytes);
 
         let mut reader = Self::create_reader(
+            chunk_dims,
             reader,
             photometric_interpretation,
             compression_method,
             *compressed_bytes,
             self.jpeg_tables.as_deref().map(|a| &**a),
+            self.expand_samples_to_bytes,
         )?;
 
         if output_row_stride == chunk_row_bytes as usize {
