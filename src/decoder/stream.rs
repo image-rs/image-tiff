@@ -1,5 +1,7 @@
 //! All IO functionality needed for TIFF decoding
 
+#[cfg(feature = "fax")]
+use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
 /// Byte order of the TIFF file.
@@ -273,6 +275,71 @@ impl<R: Read> Read for PackBitsReader<R> {
             self.state = PackBitsReaderState::Header;
         }
         Ok(actual)
+    }
+}
+
+#[cfg(feature = "fax")]
+pub struct Group4Reader<R: Read> {
+    decoder: fax::decoder::Group4Decoder<io::Bytes<io::Take<R>>>,
+    bits: bitvec::vec::BitVec<u8, bitvec::prelude::Msb0>,
+    byte_buf: VecDeque<u8>,
+    height: u16,
+    width: u16,
+    y: u16,
+}
+
+#[cfg(feature = "fax")]
+impl<R: Read> Group4Reader<R> {
+    pub fn new(
+        dimensions: (u32, u32),
+        reader: R,
+        compressed_length: u64,
+    ) -> crate::TiffResult<Self> {
+        let width = u16::try_from(dimensions.0)?;
+        let height = u16::try_from(dimensions.1)?;
+
+        Ok(Self {
+            decoder: fax::decoder::Group4Decoder::new(
+                reader.take(compressed_length).bytes(),
+                width,
+            )?,
+            bits: bitvec::vec::BitVec::new(),
+            byte_buf: VecDeque::new(),
+            width: width,
+            height: height,
+            y: 0,
+        })
+    }
+
+    pub fn dump_bits(&mut self) -> () {
+        self.byte_buf.extend(self.bits.as_raw_slice());
+        self.bits.clear()
+    }
+}
+
+#[cfg(feature = "fax")]
+impl<R: Read> Read for Group4Reader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.byte_buf.is_empty() && self.y < self.height {
+            let next = self
+                .decoder
+                .advance()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            match next {
+                fax::decoder::DecodeStatus::End => self.dump_bits(),
+                fax::decoder::DecodeStatus::Incomplete => {
+                    self.y += 1;
+                    for c in fax::decoder::pels(self.decoder.transition(), self.width) {
+                        self.bits.push(match c {
+                            fax::Color::Black => true,
+                            fax::Color::White => false,
+                        });
+                    }
+                    self.dump_bits();
+                }
+            }
+        }
+        self.byte_buf.read(buf)
     }
 }
 

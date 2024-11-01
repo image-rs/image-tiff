@@ -547,7 +547,6 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
 }
 
 impl<R: Read + Seek> Decoder<R> {
-    /// Create a new decoder that decodes from the stream ```r```
     pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;

@@ -10,8 +10,6 @@ use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 
-#[cfg(feature = "fax")]
-use std::collections::VecDeque;
 use std::io::{self, Cursor, Read, Seek};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -458,68 +456,11 @@ impl Image {
                 Box::new(Cursor::new(data))
             }
             #[cfg(feature = "fax")]
-            CompressionMethod::Fax4 => {
-                let width = u16::try_from(dimensions.0)?;
-                let height = u16::try_from(dimensions.1)?;
-
-                struct Group4Reader<R2> {
-                    decoder: fax::decoder::Group4Decoder<std::io::Bytes<R2>>,
-                    bits: bitvec::vec::BitVec<u8, bitvec::prelude::Msb0>,
-                    byte_buf: VecDeque<u8>,
-                    y: u16,
-                    height: u16,
-                    width: u16,
-                }
-
-                impl<R2: Read> Read for Group4Reader<R2> {
-                    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                        if self.byte_buf.is_empty() && self.y < self.height {
-                            let next = self
-                                .decoder
-                                .advance()
-                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-
-                            match next {
-                                fax::decoder::DecodeStatus::End => {
-                                    // eprintln!("DONE!");
-                                    self.byte_buf.extend(self.bits.as_raw_slice())
-                                }
-                                fax::decoder::DecodeStatus::Incomplete => {
-                                    self.y += 1;
-                                    // eprintln!("{:?}", self.y);
-                                    for c in
-                                        fax::decoder::pels(self.decoder.transition(), self.width)
-                                    {
-                                        self.bits.push(match c {
-                                            fax::Color::Black => true,
-                                            fax::Color::White => false,
-                                        });
-                                        if self.bits.len() == 8 {
-                                            self.byte_buf.extend(self.bits.as_raw_slice());
-                                            self.bits.clear()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // eprintln!("{:?}: {:?} / {:?}", self.y, self.byte_buf.len(), self.bits.len());
-
-                        self.byte_buf.read(buf)
-                    }
-                }
-
-                Box::new(Group4Reader {
-                    decoder: fax::decoder::Group4Decoder::new(
-                        reader.take(compressed_length).bytes(),
-                        width,
-                    )?,
-                    bits: bitvec::vec::BitVec::new(),
-                    byte_buf: VecDeque::new(),
-                    y: 0,
-                    width: width,
-                    height: height,
-                })
-            }
+            CompressionMethod::Fax4 => Box::new(super::stream::Group4Reader::new(
+                dimensions,
+                reader,
+                compressed_length,
+            )?),
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),

@@ -20,7 +20,7 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 half = { version = "2.4.1" }
 quick-error = "2.0.1"
 
-fax = { version = "0.2.2", optional = true }
+fax = { version = "0.2.4", optional = true }
 flate2 = { version = "1.0.20", optional = true }
 weezl = { version = "0.1.10", optional = true }
 zstd = { version = "0.13", optional = true }
