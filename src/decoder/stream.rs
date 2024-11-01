@@ -310,11 +310,6 @@ impl<R: Read> Group4Reader<R> {
             y: 0,
         })
     }
-
-    pub fn dump_bits(&mut self) -> () {
-        self.byte_buf.extend(self.bits.as_raw_slice());
-        self.bits.clear()
-    }
 }
 
 #[cfg(feature = "fax")]
@@ -325,17 +320,18 @@ impl<R: Read> Read for Group4Reader<R> {
                 .decoder
                 .advance()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
             match next {
-                fax::decoder::DecodeStatus::End => self.dump_bits(),
+                fax::decoder::DecodeStatus::End => (),
                 fax::decoder::DecodeStatus::Incomplete => {
                     self.y += 1;
-                    for c in fax::decoder::pels(self.decoder.transition(), self.width) {
-                        self.bits.push(match c {
-                            fax::Color::Black => true,
-                            fax::Color::White => false,
-                        });
-                    }
-                    self.dump_bits();
+                    let transitions = fax::decoder::pels(self.decoder.transition(), self.width);
+                    self.bits.extend(transitions.map(|c| match c {
+                        fax::Color::Black => true,
+                        fax::Color::White => false,
+                    }));
+                    self.byte_buf.extend(self.bits.as_raw_slice());
+                    self.bits.clear();
                 }
             }
         }
