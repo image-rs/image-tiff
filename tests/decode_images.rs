@@ -217,6 +217,11 @@ fn issue_69() {
 //}
 
 #[test]
+fn test_tiled_gray_i1() {
+    test_image_sum_u8("tiled-gray-i1.tif", ColorType::Gray(1), 30531);
+}
+
+#[test]
 fn test_tiled_rgb_u8() {
     test_image_sum_u8("tiled-rgb-u8.tif", ColorType::RGB(8), 39528948);
 }

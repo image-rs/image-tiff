@@ -969,13 +969,20 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
-        let buffer_size = match width
+        let bits_per_sample = self.image().bits_per_sample;
+
+        let row_samples = if bits_per_sample >= 8 {
+            width
+        } else {
+            ((((width as u64) * bits_per_sample as u64) + 7) / 8)
+                .try_into()
+                .map_err(|_| TiffError::LimitsExceeded)?
+        };
+
+        let buffer_size = row_samples
             .checked_mul(height)
             .and_then(|x| x.checked_mul(self.image().samples_per_pixel()))
-        {
-            Some(s) => s,
-            None => return Err(TiffError::LimitsExceeded),
-        };
+            .ok_or(TiffError::LimitsExceeded)?;
 
         let max_sample_bits = self.image().bits_per_sample;
         match self.image().sample_format {
