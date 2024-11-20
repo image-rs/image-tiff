@@ -1,22 +1,25 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek};
 
+use either::Either;
+
+use crate::decoder::tag_iter::TagIter;
+use crate::tags::{
+    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
+    Tag, Type,
+};
 use crate::{
     bytecast, ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 
 use self::ifd::Directory;
 use self::image::Image;
-use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
-    Tag, Type,
-};
-
 use self::stream::{ByteOrder, EndianReader, SmartReader};
 
 pub mod ifd;
 mod image;
 mod stream;
+mod tag_iter;
 mod tag_reader;
 
 /// Result of a decoding process
@@ -893,6 +896,18 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag and convert it to a ascii vector.
     pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
         self.get_tag(tag)?.into_string()
+    }
+
+    pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
+        match self.image().ifd.as_ref() {
+            None => Either::Left(std::iter::empty()),
+            Some(ifd) => Either::Right(TagIter::new(
+                ifd.clone(),
+                &self.limits,
+                self.bigtiff,
+                &mut self.reader,
+            )),
+        }
     }
 
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
