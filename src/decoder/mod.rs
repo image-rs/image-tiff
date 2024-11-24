@@ -1,9 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek};
 
-use either::Either;
-
-use crate::decoder::tag_iter::TagIter;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
     Tag, Type,
@@ -19,7 +16,6 @@ use self::stream::{ByteOrder, EndianReader, SmartReader};
 pub mod ifd;
 mod image;
 mod stream;
-mod tag_iter;
 mod tag_reader;
 
 /// Result of a decoding process
@@ -899,15 +895,11 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
-        match self.image().ifd.as_ref() {
-            None => Either::Left(std::iter::empty()),
-            Some(ifd) => Either::Right(TagIter::new(
-                ifd.clone(),
-                &self.limits,
-                self.bigtiff,
-                &mut self.reader,
-            )),
-        }
+        self.image.ifd.as_ref().unwrap().iter().map(|(tag, entry)| {
+            entry
+                .val(&self.limits, self.bigtiff, &mut self.reader)
+                .map(|value| (*tag, value))
+        })
     }
 
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
