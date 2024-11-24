@@ -41,7 +41,7 @@ fn encode_decode() {
             .tag_iter()
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
-        all_tags.sort_by(|(t1, _), (t2, _)| t1.to_u16().cmp(&t2.to_u16()));
+        all_tags.sort_by_key(|(t, _)| t.to_u16());
         assert_eq!(
             all_tags,
             vec![
@@ -121,7 +121,7 @@ fn encode_decode_big() {
             .tag_iter()
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
-        all_tags.sort_by(|(t1, _), (t2, _)| t1.to_u16().cmp(&t2.to_u16()));
+        all_tags.sort_by_key(|(t, _)| t.to_u16());
         assert_eq!(
             all_tags,
             vec![
