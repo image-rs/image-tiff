@@ -894,6 +894,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.get_tag(tag)?.into_string()
     }
 
+    /// Returns an iterator over all tags in the current image, along with their values.
     pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
         self.image.ifd.as_ref().unwrap().iter().map(|(tag, entry)| {
             entry
