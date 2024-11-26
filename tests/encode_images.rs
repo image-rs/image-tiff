@@ -36,6 +36,47 @@ fn encode_decode() {
         let mut decoder = Decoder::new(&mut file).unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
+
+        let mut all_tags = decoder
+            .tag_iter()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        all_tags.sort_by_key(|(t, _)| t.to_u16());
+        assert_eq!(
+            all_tags,
+            vec![
+                (Tag::ImageWidth, ifd::Value::Unsigned(100)),
+                (Tag::ImageLength, ifd::Value::Unsigned(100)),
+                (
+                    Tag::BitsPerSample,
+                    ifd::Value::List(vec![
+                        ifd::Value::UnsignedBig(8),
+                        ifd::Value::UnsignedBig(8),
+                        ifd::Value::UnsignedBig(8)
+                    ])
+                ),
+                (Tag::Compression, ifd::Value::Unsigned(1)),
+                (Tag::PhotometricInterpretation, ifd::Value::Unsigned(2)),
+                (Tag::StripOffsets, ifd::Value::Unsigned(8)),
+                (Tag::SamplesPerPixel, ifd::Value::Unsigned(3)),
+                (Tag::RowsPerStrip, ifd::Value::Unsigned(3334)),
+                (Tag::StripByteCounts, ifd::Value::Unsigned(30000)),
+                (Tag::XResolution, ifd::Value::Rational(1, 1)),
+                (Tag::YResolution, ifd::Value::Rational(1, 1)),
+                (Tag::ResolutionUnit, ifd::Value::Unsigned(1)),
+                (Tag::Artist, ifd::Value::Ascii("Image-tiff".into())),
+                (Tag::Predictor, ifd::Value::Unsigned(1)),
+                (
+                    Tag::SampleFormat,
+                    ifd::Value::List(vec![
+                        ifd::Value::UnsignedBig(1),
+                        ifd::Value::UnsignedBig(1),
+                        ifd::Value::UnsignedBig(1)
+                    ])
+                ),
+            ]
+        );
+
         assert_eq!(
             decoder.get_tag(Tag::Artist).unwrap(),
             ifd::Value::Ascii("Image-tiff".into())
@@ -75,6 +116,47 @@ fn encode_decode_big() {
         let mut decoder = Decoder::new(&mut file).unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
+
+        let mut all_tags = decoder
+            .tag_iter()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        all_tags.sort_by_key(|(t, _)| t.to_u16());
+        assert_eq!(
+            all_tags,
+            vec![
+                (Tag::ImageWidth, ifd::Value::Unsigned(100)),
+                (Tag::ImageLength, ifd::Value::Unsigned(100)),
+                (
+                    Tag::BitsPerSample,
+                    ifd::Value::List(vec![
+                        ifd::Value::Short(8),
+                        ifd::Value::Short(8),
+                        ifd::Value::Short(8)
+                    ])
+                ),
+                (Tag::Compression, ifd::Value::Unsigned(1)),
+                (Tag::PhotometricInterpretation, ifd::Value::Unsigned(2)),
+                (Tag::StripOffsets, ifd::Value::UnsignedBig(16)),
+                (Tag::SamplesPerPixel, ifd::Value::Unsigned(3)),
+                (Tag::RowsPerStrip, ifd::Value::Unsigned(3334)),
+                (Tag::StripByteCounts, ifd::Value::UnsignedBig(30000)),
+                (Tag::XResolution, ifd::Value::Rational(1, 1)),
+                (Tag::YResolution, ifd::Value::Rational(1, 1)),
+                (Tag::ResolutionUnit, ifd::Value::Unsigned(1)),
+                (Tag::Artist, ifd::Value::Ascii("Image-tiff".into())),
+                (Tag::Predictor, ifd::Value::Unsigned(1)),
+                (
+                    Tag::SampleFormat,
+                    ifd::Value::List(vec![
+                        ifd::Value::Short(1),
+                        ifd::Value::Short(1),
+                        ifd::Value::Short(1)
+                    ])
+                ),
+            ]
+        );
+
         assert_eq!(
             decoder.get_tag(Tag::Artist).unwrap(),
             ifd::Value::Ascii("Image-tiff".into())
