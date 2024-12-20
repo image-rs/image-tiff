@@ -379,6 +379,7 @@ impl Image {
             CompressionMethod::LZW => {
                 Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
             },
+            #[cfg(feature = "zstd")]
             CompressionMethod::ZSTD => {
                 Box::new(zstd::Decoder::new(reader)?)
             },
