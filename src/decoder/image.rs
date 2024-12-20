@@ -378,7 +378,11 @@ impl Image {
             CompressionMethod::None => Box::new(reader),
             CompressionMethod::LZW => {
                 Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
-            }
+            },
+            #[cfg(feature = "zstd")]
+            CompressionMethod::ZSTD => {
+                Box::new(zstd::Decoder::new(reader)?)
+            },
             CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
                 Box::new(DeflateReader::new(reader))
