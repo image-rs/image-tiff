@@ -1,7 +1,7 @@
 use super::ifd::{Directory, Value};
 use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
-use super::{predict_f32, predict_f64, Limits};
+use super::{predict_f16, predict_f32, predict_f64, Limits};
 use super::{stream::SmartReader, ChunkType};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
@@ -592,7 +592,10 @@ impl Image {
 
         // Validate that the predictor is supported for the sample type.
         match (self.predictor, self.sample_format) {
-            (Predictor::Horizontal, SampleFormat::Int | SampleFormat::Uint) => {}
+            (
+                Predictor::Horizontal,
+                SampleFormat::Int | SampleFormat::Uint | SampleFormat::IEEEFP,
+            ) => {}
             (Predictor::Horizontal, _) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::HorizontalPredictor(color_type),
@@ -672,6 +675,7 @@ impl Image {
 
                 let row = &mut row[..data_row_bytes];
                 match color_type.bit_depth() {
+                    16 => predict_f16(&mut encoded, row, samples),
                     32 => predict_f32(&mut encoded, row, samples),
                     64 => predict_f64(&mut encoded, row, samples),
                     _ => unreachable!(),
