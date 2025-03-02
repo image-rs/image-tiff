@@ -4,14 +4,15 @@ mod directory_encoder;
 mod tiff_value;
 mod writer;
 
-use self::colortype::*;
-use self::compression::Compression as Comp;
-use self::compression::*;
 pub use self::writer::*;
+use self::{
+    colortype::*,
+    compression::{Compression as Comp, *},
+};
 use crate::{
     decoder::GenericTiffDecoder,
     error::{TiffResult, UsageError},
-    ifd::Directory,
+    ifd::{BufferedEntry, Directory, ProcessedEntry, Value},
     tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag},
     TiffError, TiffFormatError, TiffKind, TiffKindBig, TiffKindStandard,
 };
@@ -101,6 +102,7 @@ pub struct GenericTiffEncoder<W, K: TiffKind> {
     kind: PhantomData<K>,
     predictor: Predictor,
     compression: Compression,
+    exif: Directory<BufferedEntry>,
 }
 
 /// Generic functions that are available for both Tiff and BigTiff encoders.
@@ -112,6 +114,7 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
             kind: PhantomData,
             predictor: Predictor::None,
             compression: Compression::Uncompressed,
+            exif: Directory::new(),
         };
 
         K::write_header(&mut encoder.writer)?;
@@ -136,6 +139,16 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
         self
     }
 
+    /// Set EXIF fields to write
+    pub fn with_exif<E>(mut self, exif: Directory<E>) -> Self
+    where
+        E: Into<BufferedEntry>,
+    {
+        self.exif = exif.into_iter().map(|(k, v)| (k, v.into())).collect();
+
+        self
+    }
+
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.
     pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W, K>> {
         DirectoryEncoder::<W, K>::new(&mut self.writer)
@@ -147,8 +160,14 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
         width: u32,
         height: u32,
     ) -> TiffResult<ImageEncoder<W, C, K>> {
-        let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        ImageEncoder::new(encoder, width, height, self.compression, self.predictor)
+        ImageEncoder::new_with_exif(
+            &mut self.writer,
+            width,
+            height,
+            self.compression,
+            self.predictor,
+            &self.exif,
+        )
     }
 
     /// Convenience function to write an entire image from memory.
@@ -161,9 +180,14 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
     where
         [C::Inner]: TiffValue,
     {
-        let encoder = DirectoryEncoder::new(&mut self.writer)?;
-        let image: ImageEncoder<W, C, K> =
-            ImageEncoder::new(encoder, width, height, self.compression, self.predictor)?;
+        let image: ImageEncoder<W, C, K> = ImageEncoder::new_with_exif(
+            &mut self.writer,
+            width,
+            height,
+            self.compression,
+            self.predictor,
+            &self.exif,
+        )?;
         image.write_data(data)
     }
 }
@@ -231,12 +255,50 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     }
 
     fn new(
-        mut encoder: DirectoryEncoder<'a, W, K>,
+        writer: &'a mut TiffWriter<W>,
         width: u32,
         height: u32,
         compression: Compression,
         predictor: Predictor,
     ) -> TiffResult<Self> {
+        Self::new_with_raw_exif(
+            writer,
+            width,
+            height,
+            compression,
+            predictor,
+            &Self::default_exif(width, height, compression, predictor)?,
+        )
+    }
+
+    /// Create a new [ImageEncoder] with a given EXIF block whose contents will be validated
+    fn new_with_exif(
+        writer: &'a mut TiffWriter<W>,
+        width: u32,
+        height: u32,
+        compression: Compression,
+        predictor: Predictor,
+        exif: &Directory<BufferedEntry>,
+    ) -> TiffResult<Self> {
+        let mut exif = exif.clone();
+        for (tag, value) in Self::default_exif(width, height, compression, predictor)?.into_iter() {
+            exif.insert(tag, value);
+        }
+
+        Self::new_with_raw_exif(writer, width, height, compression, predictor, &exif)
+    }
+
+    /// Create a new [ImageEncoder] with unchecked EXIF block
+    fn new_with_raw_exif(
+        writer: &'a mut TiffWriter<W>,
+        width: u32,
+        height: u32,
+        compression: Compression,
+        predictor: Predictor,
+        exif: &Directory<BufferedEntry>,
+    ) -> TiffResult<Self> {
+        let mut encoder = DirectoryEncoder::new(writer)?;
+
         if width == 0 || height == 0 {
             return Err(TiffError::FormatError(TiffFormatError::InvalidDimensions(
                 width, height,
@@ -259,25 +321,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
 
         let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
 
-        encoder.write_tag(Tag::ImageWidth, width)?;
-        encoder.write_tag(Tag::ImageLength, height)?;
-        encoder.write_tag(Tag::Compression, compression.tag().to_u16())?;
-        encoder.write_tag(Tag::Predictor, predictor.to_u16())?;
-
-        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
-        let sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
-        encoder.write_tag(Tag::SampleFormat, &sample_format[..])?;
-        encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
-
-        encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
-
-        encoder.write_tag(
-            Tag::SamplesPerPixel,
-            u16::try_from(<T>::BITS_PER_SAMPLE.len())?,
-        )?;
-        encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
-        encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
-        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
+        encoder.write_exif(exif)?;
 
         Ok(ImageEncoder {
             encoder,
@@ -294,6 +338,90 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             predictor,
             _phantom: ::std::marker::PhantomData,
         })
+    }
+
+    fn default_exif(
+        width: u32,
+        height: u32,
+        compression: Compression,
+        predictor: Predictor,
+    ) -> TiffResult<Directory<BufferedEntry>> {
+        let sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
+        // Limit the strip size to prevent potential memory and security issues.
+        // Also keep the multiple strip handling 'oiled'
+        let row_samples = width * u32::try_from(<T>::BITS_PER_SAMPLE.len())?;
+        let row_bytes = row_samples * u32::from(<T::Inner>::BYTE_LEN);
+        let rows_per_strip = {
+            match compression.tag() {
+                CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
+                _ => (1_000_000 + row_bytes - 1) / row_bytes,
+            }
+        };
+
+        let mut exif = Directory::<BufferedEntry>::new();
+
+        exif.insert(Tag::ImageWidth, ProcessedEntry::new(Value::Unsigned(width)));
+
+        exif.insert(
+            Tag::ImageLength,
+            ProcessedEntry::new(Value::Unsigned(height)),
+        );
+
+        exif.insert(
+            Tag::Compression,
+            ProcessedEntry::new(Value::Short(compression.tag().to_u16())),
+        );
+
+        exif.insert(
+            Tag::Predictor,
+            ProcessedEntry::new(Value::Short(predictor.to_u16())),
+        );
+
+        exif.insert(
+            Tag::BitsPerSample,
+            ProcessedEntry::new_vec(
+                &<T>::BITS_PER_SAMPLE
+                    .iter()
+                    .map(|b| Value::Short(*b))
+                    .collect::<Vec<_>>(),
+            ),
+        );
+
+        exif.insert(
+            Tag::SamplesPerPixel,
+            ProcessedEntry::new(Value::Short(u16::try_from(<T>::BITS_PER_SAMPLE.len())?)),
+        );
+
+        exif.insert(
+            Tag::SampleFormat,
+            ProcessedEntry::new_vec(
+                &sample_format[..]
+                    .iter()
+                    .map(|s| Value::Short(*s))
+                    .collect::<Vec<_>>(),
+            ),
+        );
+
+        exif.insert(
+            Tag::PhotometricInterpretation,
+            ProcessedEntry::new(Value::Short(<T>::TIFF_VALUE.to_u16())),
+        );
+
+        exif.insert(
+            Tag::RowsPerStrip,
+            ProcessedEntry::new(Value::Unsigned(rows_per_strip)),
+        );
+
+        exif.insert(Tag::XResolution, ProcessedEntry::new(Value::Rational(1, 1)));
+
+        exif.insert(Tag::YResolution, ProcessedEntry::new(Value::Rational(1, 1)));
+
+        exif.insert(
+            Tag::ResolutionUnit,
+            ProcessedEntry::new(Value::Short(ResolutionUnit::None.to_u16())),
+        );
+
+        Ok(exif)
     }
 
     /// Number of samples the next strip should have.
@@ -423,7 +551,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     }
 
     /// Write Exif data from TIFF encoded byte block
-    pub fn exif_tags<F: TiffKind>(&mut self, source: Vec<u8>) -> TiffResult<()> {
+    pub fn set_raw_exif_tags<F: TiffKind>(&mut self, source: Vec<u8>) -> TiffResult<()> {
         let mut decoder = GenericTiffDecoder::<_, F>::new(Cursor::new(source))?;
 
         for (t, e) in decoder.get_exif_data()?.into_iter() {

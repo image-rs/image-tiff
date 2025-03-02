@@ -643,7 +643,7 @@ fn test_recode_exif_data() {
         .new_image::<colortype::RGB8>(width, heigth)
         .expect("Unable to create encoder");
     image
-        .exif_tags::<TiffKindStandard>(raw_exif)
+        .set_raw_exif_tags::<TiffKindStandard>(raw_exif)
         .expect("Unable to write Exif data");
     if let DecodingResult::U8(vec) = image_data {
         image

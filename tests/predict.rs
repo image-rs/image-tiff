@@ -1,7 +1,7 @@
 extern crate tiff;
 
 use tiff::decoder::{DecodingResult, TiffDecoder};
-use tiff::encoder::{colortype, Compression, Predictor, TiffEncoder};
+use tiff::encoder::{colortype, Predictor, TiffEncoder};
 use tiff::ColorType;
 
 use std::fs::File;

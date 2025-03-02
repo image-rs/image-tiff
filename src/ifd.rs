@@ -495,6 +495,14 @@ impl From<Value> for ProcessedEntry {
 }
 
 impl ProcessedEntry {
+    pub fn new(content: Value) -> Self {
+        Self(vec![content])
+    }
+
+    pub fn new_vec(content: &[Value]) -> Self {
+        Self(content.iter().cloned().collect())
+    }
+
     pub fn iter(&self) -> std::slice::Iter<'_, Value> {
         self.0.iter()
     }
@@ -601,8 +609,11 @@ where
         ImageFileDirectory(BTreeMap::new())
     }
 
-    pub fn insert(&mut self, tag: T, entry: E) -> Option<E> {
-        self.0.insert(tag, entry)
+    pub fn insert<I>(&mut self, tag: T, entry: I) -> Option<E>
+    where
+        I: Into<E>,
+    {
+        self.0.insert(tag, entry.into())
     }
 
     pub fn contains_key(&self, tag: &T) -> bool {

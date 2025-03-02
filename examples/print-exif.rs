@@ -1,4 +1,3 @@
-extern crate exif;
 extern crate tiff;
 
 use tiff::{

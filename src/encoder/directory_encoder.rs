@@ -1,7 +1,7 @@
 use crate::{
     encoder::{TiffValue, TiffWriter},
     error::{TiffError, TiffResult, UsageError},
-    ifd::{BufferedEntry, ImageFileDirectory},
+    ifd::{BufferedEntry, Directory, ImageFileDirectory},
     tags::Tag,
     TiffKind,
 };
@@ -62,6 +62,14 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(offset)
     }
 
+    pub fn write_exif<T: TiffValue>(&mut self, exif: &Directory<T>) -> TiffResult<()> {
+        for (tag, value) in exif.iter() {
+            self.write_tag(*tag, value)?;
+        }
+
+        Ok(())
+    }
+
     /// Write a single ifd tag.
     pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
         let mut bytes = Vec::with_capacity(value.bytes());
@@ -91,7 +99,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         &mut self,
         mut ifd: ImageFileDirectory<T, BufferedEntry>,
     ) -> TiffResult<u64> {
-        // Start by writing out all values
+        // Prep work: go through the entries and write the ones that do not fit in an entry
         for &mut BufferedEntry {
             data: ref mut bytes,
             ..
@@ -100,14 +108,19 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             // Amount of bytes available in the Tiff type
             let data_bytes = K::OffsetType::BYTE_LEN as usize;
 
+            // If the data does not fit in the entry, we write it down now, and write the
+            // offset to it later
             if bytes.len() > data_bytes {
-                // If the data does not fit in the entry
-                // Record the offset
+                // Record where we are now
                 let offset = self.writer.offset();
+
+                // Write the data
                 self.writer.write_bytes(bytes)?;
+
                 // Overwrite the data with a buffer matching the offset size
                 *bytes = vec![0; data_bytes]; // TODO Maybe just truncate ?
-                                              // Write the offset to the data
+
+                // Replace the entry value with the offset recorded above
                 K::write_offset(&mut TiffWriter::new(bytes as &mut [u8]), offset)?;
             } else {
                 // Pad the data with zeros to the correct length
@@ -120,21 +133,21 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         // Record the offset
         let ifd_offset = self.writer.offset();
 
-        // Actually write the ifd
+        // Actually write the ifd - first the count, then entries in order
         K::write_entry_count(self.writer, ifd.len())?;
         for (
             tag,
             BufferedEntry {
                 type_: field_type,
                 count,
-                data: offset, // At this point data is of size K::OffsetType::BYTE_LEN
+                data, // At this point data is [u8; K::OffsetType::BYTE_LEN]
             },
         ) in ifd.into_iter()
         {
             self.writer.write_u16(tag.into())?;
             self.writer.write_u16(field_type.to_u16())?;
             K::convert_offset(count)?.write(self.writer)?;
-            self.writer.write_bytes(&offset)?;
+            self.writer.write_bytes(&data)?;
         }
 
         Ok(ifd_offset)
