@@ -3,7 +3,6 @@ extern crate tiff;
 use std::io::{Cursor, Seek, Write};
 use tiff::{
     decoder::{DecodingResult, TiffDecoder},
-    encoder::TiffEncoder,
     encoder::{
         colortype::{self, ColorType},
         compression::*,

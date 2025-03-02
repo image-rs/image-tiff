@@ -11,7 +11,7 @@ pub use self::writer::*;
 use crate::{
     decoder::GenericTiffDecoder,
     error::{TiffResult, UsageError},
-    ifd::{BufferedEntry, Directory},
+    ifd::Directory,
     tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag},
     TiffError, TiffFormatError, TiffKind, TiffKindBig, TiffKindStandard,
 };
@@ -20,7 +20,6 @@ use std::{
     cmp,
     io::{self, Cursor, Read, Seek, Write},
     marker::PhantomData,
-    mem,
 };
 pub use tiff_value::*;
 

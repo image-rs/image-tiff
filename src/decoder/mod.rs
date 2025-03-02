@@ -1,24 +1,22 @@
 use self::{
     decoded_entry::DecodedEntry,
-    ifd::Directory,
     image::Image,
     stream::{ByteOrder, EndianReader, SmartReader},
 };
 use crate::{
     bytecast,
-    decoder::ifd::Entry,
-    encoder::{DirectoryEncoder, GenericTiffEncoder, TiffEncoder, TiffKind},
+    encoder::{DirectoryEncoder, GenericTiffEncoder},
     ifd::{BufferedEntry, Directory, ImageFileDirectory, Value},
     tags::{
         CompressionMethod, GpsTag, PhotometricInterpretation, PlanarConfiguration, Predictor,
-        SampleFormat, Tag, Type, EXIF_TAGS,
+        SampleFormat, Tag, Type,
     },
     ColorType, TiffError, TiffFormatError, TiffKind, TiffKindBig, TiffKindStandard, TiffResult,
     TiffUnsupportedError, UsageError,
 };
 use half::f16;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     convert::TryFrom,
     io::{self, Cursor, Read, Seek, Write},
 };
@@ -27,7 +25,6 @@ pub type TiffDecoder<W> = GenericTiffDecoder<W, TiffKindStandard>;
 pub type BigTiffDecoder<W> = GenericTiffDecoder<W, TiffKindBig>;
 
 mod decoded_entry;
-pub mod ifd;
 mod image;
 mod stream;
 mod tag_reader;
@@ -219,6 +216,7 @@ pub enum ChunkType {
 
 /// Decoding limits
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// The maximum size of any `DecodingResult` in bytes, the default is
     /// 256MiB. If the entire image is decoded at once, then this will
@@ -231,10 +229,6 @@ pub struct Limits {
     /// Maximum size for intermediate buffer which may be used to limit the amount of data read per
     /// segment even if the entire image is decoded at once.
     pub intermediate_buffer_size: usize,
-    /// The purpose of this is to prevent all the fields of the struct from
-    /// being public, as this would make adding new fields a major version
-    /// bump.
-    _non_exhaustive: (),
 }
 
 impl Limits {
@@ -247,10 +241,9 @@ impl Limits {
     /// naturally, the machine running the program does not have infinite memory.
     pub fn unlimited() -> Limits {
         Limits {
-            decoding_buffer_size: usize::max_value(),
-            ifd_value_size: usize::max_value(),
-            intermediate_buffer_size: usize::max_value(),
-            _non_exhaustive: (),
+            decoding_buffer_size: usize::MAX,
+            ifd_value_size: usize::MAX,
+            intermediate_buffer_size: usize::MAX,
         }
     }
 }
@@ -261,7 +254,6 @@ impl Default for Limits {
             decoding_buffer_size: 256 * 1024 * 1024,
             intermediate_buffer_size: 128 * 1024 * 1024,
             ifd_value_size: 1024 * 1024,
-            _non_exhaustive: (),
         }
     }
 }
@@ -945,10 +937,10 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
     }
 
     /// Returns an iterator over all tags in the current image, along with their values.
-    pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
+    pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, Value)>> + '_ {
         self.image.ifd.as_ref().unwrap().iter().map(|(tag, entry)| {
             entry
-                .val(&self.limits, self.bigtiff, &mut self.reader)
+                .val(&self.limits, &mut self.reader)
                 .map(|value| (*tag, value))
         })
     }
@@ -1182,7 +1174,7 @@ impl<R: Read + Seek, K: TiffKind> GenericTiffDecoder<R, K> {
         // copy Exif tags from main IFD
         if let Some(ref main_ifd) = self.image.ifd {
             for (tag, entry) in main_ifd.iter() {
-                ifd.insert(tag.clone(), entry.as_buffered(&mut self.reader)?);
+                ifd.insert(*tag, entry.as_buffered(&mut self.reader)?);
             }
         }
 

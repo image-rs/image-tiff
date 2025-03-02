@@ -14,7 +14,7 @@ use crate::ifd::{
 };
 
 #[derive(Clone)]
-pub struct DecodedEntry<K: TiffKind + ?Sized> {
+pub struct DecodedEntry<K: TiffKind> {
     type_: Type,
     count: K::OffsetType,
     offset: Vec<u8>,
@@ -386,7 +386,7 @@ impl<K: TiffKind> DecodedEntry<K> {
             }
         };
 
-        let mut buf = vec![0; value_bytes as usize];
+        let mut buf = vec![0; value_bytes];
         if value_bytes <= 4 || (K::is_big() && value_bytes <= 8) {
             // read values that fit within the IFD entry
             self.r(bo).read_exact(&mut buf)?;
@@ -394,7 +394,7 @@ impl<K: TiffKind> DecodedEntry<K> {
             // values that use a pointer
             // read pointed data
             if K::is_big() {
-                reader.goto_offset(self.r(bo).read_u64()?.into())?;
+                reader.goto_offset(self.r(bo).read_u64()?)?;
             } else {
                 reader.goto_offset(self.r(bo).read_u32()?.into())?;
             }

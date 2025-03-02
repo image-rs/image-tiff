@@ -605,20 +605,16 @@ where
         self.0.insert(tag, entry)
     }
 
-    pub fn into_iter(self) -> std::collections::btree_map::IntoIter<T, E> {
-        self.0.into_iter()
-    }
-
     pub fn contains_key(&self, tag: &T) -> bool {
-        self.0.contains_key(&tag)
+        self.0.contains_key(tag)
     }
 
     pub fn get(&self, tag: &T) -> Option<&E> {
-        self.0.get(&tag)
+        self.0.get(tag)
     }
 
     pub fn get_mut(&mut self, tag: &T) -> Option<&mut E> {
-        self.0.get_mut(&tag)
+        self.0.get_mut(tag)
     }
 
     pub fn len(&self) -> usize {
@@ -631,6 +627,18 @@ where
 
     pub fn values_mut(&mut self) -> std::collections::btree_map::ValuesMut<T, E> {
         self.0.values_mut()
+    }
+}
+
+impl<T, E> std::iter::IntoIterator for ImageFileDirectory<T, E>
+where
+    T: Ord + Into<u16>,
+{
+    type Item = (T, E);
+    type IntoIter = std::collections::btree_map::IntoIter<T, E>;
+
+    fn into_iter(self) -> std::collections::btree_map::IntoIter<T, E> {
+        self.0.into_iter()
     }
 }
 

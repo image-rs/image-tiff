@@ -531,11 +531,9 @@ impl<K: TiffKind> Image<K> {
                     u32::try_from(tile_attrs.tile_length)?,
                 ))
             }
-            ChunkType::None => {
-                return Err(TiffError::FormatError(
-                    TiffFormatError::StripTileTagConflict,
-                ));
-            }
+            ChunkType::None => Err(TiffError::FormatError(
+                TiffFormatError::StripTileTagConflict,
+            )),
         }
     }
 
@@ -568,11 +566,9 @@ impl<K: TiffKind> Image<K> {
 
                 Ok((u32::try_from(tile_width)?, u32::try_from(tile_length)?))
             }
-            ChunkType::None => {
-                return Err(TiffError::FormatError(
-                    TiffFormatError::StripTileTagConflict,
-                ));
-            }
+            ChunkType::None => Err(TiffError::FormatError(
+                TiffFormatError::StripTileTagConflict,
+            )),
         }
     }
 
@@ -686,11 +682,11 @@ impl<K: TiffKind> Image<K> {
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
-        if output_row_stride == chunk_row_bytes as usize {
+        if output_row_stride == chunk_row_bytes {
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
-            for row in tile.chunks_mut(chunk_row_bytes as usize) {
+            for row in tile.chunks_mut(chunk_row_bytes) {
                 super::fix_endianness_and_predict(
                     row,
                     color_type.bit_depth(),
@@ -721,11 +717,7 @@ impl<K: TiffKind> Image<K> {
                 }
             }
         } else {
-            for (i, row) in buf
-                .chunks_mut(output_row_stride)
-                .take(data_dims.1 as usize)
-                .enumerate()
-            {
+            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 
