@@ -217,6 +217,11 @@ fn issue_69() {
 //}
 
 #[test]
+fn test_tiled_gray_i1() {
+    test_image_sum_u8("tiled-gray-i1.tif", ColorType::Gray(1), 30531);
+}
+
+#[test]
 fn test_tiled_rgb_u8() {
     test_image_sum_u8("tiled-rgb-u8.tif", ColorType::RGB(8), 39528948);
 }
@@ -509,4 +514,11 @@ fn test_predictor_3_rgb_f32() {
 #[test]
 fn test_predictor_3_gray_f32() {
     test_image_sum_f32("predictor-3-gray-f32.tif", ColorType::Gray(32), 20008.275);
+}
+
+#[test]
+#[cfg(feature = "zstd")]
+fn test_zstd_compression() {
+    // gdal_translate -co COMPRESS=ZSTD -co ZSTD_LEVEL=20 int16.tif int16_zstd.tif
+    test_image_sum_i16("int16_zstd.tif", ColorType::Gray(16), 354396);
 }

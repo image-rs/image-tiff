@@ -184,6 +184,9 @@ pub enum CompressionMethod(u16) unknown("A custom compression method") {
     Deflate = 8,
     OldDeflate = 0x80B2,
     PackBits = 0x8005,
+
+    // Self-assigned by libtiff
+    ZSTD = 0xC350,
 }
 }
 
@@ -209,8 +212,14 @@ pub enum PlanarConfiguration(u16) {
 
 tags! {
 pub enum Predictor(u16) {
+    /// No changes were made to the data
     None = 1,
+    /// The images' rows were processed to contain the difference of each pixel from the previous one.
+    ///
+    /// This means that instead of having in order `[r1, g1. b1, r2, g2 ...]` you will find
+    /// `[r1, g1, b1, r2-r1, g2-g1, b2-b1, r3-r2, g3-g2, ...]`
     Horizontal = 2,
+    /// Not currently supported
     FloatingPoint = 3,
 }
 }

@@ -35,6 +35,8 @@ This table lists photometric interpretations and sample formats which are suppor
 | LZW      | ✓        | ✓        |
 | Deflate  | ✓        | ✓        |
 | PackBits | ✓        | ✓        |
+| JPEG     | ✓        | not yet  |
+| ZSTD     | ✓        | not yet  |
 
 
 ## Not yet supported
