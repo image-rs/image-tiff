@@ -93,6 +93,10 @@ macro_rules! tags {
     ($name:tt, $ty:tt, $($unknown_doc:literal)*) => {};
 }
 
+pub trait IsTag: From<u16> + Into<u16> + std::cmp::Ord {}
+impl IsTag for Tag {}
+impl IsTag for GpsTag {}
+
 // Note: These tags appear in the order they are mentioned in the TIFF reference
 tags! {
 /// TIFF tags

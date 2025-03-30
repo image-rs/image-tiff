@@ -1,8 +1,8 @@
 use crate::{
     encoder::{TiffValue, TiffWriter},
     error::{TiffError, TiffResult, UsageError},
-    ifd::{BufferedEntry, Directory, ImageFileDirectory},
-    tags::Tag,
+    ifd::{BufferedEntry, ImageFileDirectory},
+    tags::{IsTag, Tag},
     TiffKind,
 };
 use std::{
@@ -62,7 +62,10 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(offset)
     }
 
-    pub fn write_exif<T: TiffValue>(&mut self, exif: &Directory<T>) -> TiffResult<()> {
+    pub fn write_exif<T: IsTag + Copy, V: TiffValue>(
+        &mut self,
+        exif: &ImageFileDirectory<T, V>,
+    ) -> TiffResult<()> {
         for (tag, value) in exif.iter() {
             self.write_tag(*tag, value)?;
         }
@@ -71,7 +74,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     /// Write a single ifd tag.
-    pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
+    pub fn write_tag<T: IsTag, V: TiffValue>(&mut self, tag: T, value: V) -> TiffResult<()> {
         let mut bytes = Vec::with_capacity(value.bytes());
         {
             let mut writer = TiffWriter::new(&mut bytes);

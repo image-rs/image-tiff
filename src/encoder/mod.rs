@@ -12,8 +12,8 @@ use self::{
 use crate::{
     decoder::GenericTiffDecoder,
     error::{TiffResult, UsageError},
-    ifd::{BufferedEntry, Directory, ProcessedEntry, Value},
-    tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag},
+    ifd::{BufferedEntry, Directory, ImageFileDirectory, ProcessedEntry, Value},
+    tags::{CompressionMethod, GpsTag, ResolutionUnit, SampleFormat, Tag},
     TiffError, TiffFormatError, TiffKind, TiffKindBig, TiffKindStandard,
 };
 pub use directory_encoder::DirectoryEncoder;
@@ -103,6 +103,7 @@ pub struct GenericTiffEncoder<W, K: TiffKind> {
     predictor: Predictor,
     compression: Compression,
     exif: Directory<BufferedEntry>,
+    gps: Option<ImageFileDirectory<GpsTag, BufferedEntry>>,
 }
 
 /// Generic functions that are available for both Tiff and BigTiff encoders.
@@ -115,6 +116,7 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
             predictor: Predictor::None,
             compression: Compression::Uncompressed,
             exif: Directory::new(),
+            gps: None,
         };
 
         K::write_header(&mut encoder.writer)?;
@@ -149,6 +151,16 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
         self
     }
 
+    /// Set EXIF fields to write
+    pub fn with_gps<E>(mut self, exif: ImageFileDirectory<GpsTag, E>) -> Self
+    where
+        E: Into<BufferedEntry>,
+    {
+        self.gps = Some(exif.into_iter().map(|(k, v)| (k, v.into())).collect());
+
+        self
+    }
+
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.
     pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W, K>> {
         DirectoryEncoder::<W, K>::new(&mut self.writer)
@@ -167,6 +179,7 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
             self.compression,
             self.predictor,
             &self.exif,
+            &self.gps,
         )
     }
 
@@ -187,6 +200,7 @@ impl<W: Write + Seek, K: TiffKind> GenericTiffEncoder<W, K> {
             self.compression,
             self.predictor,
             &self.exif,
+            &self.gps,
         )?;
         image.write_data(data)
     }
@@ -267,7 +281,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             height,
             compression,
             predictor,
-            &Self::default_exif(width, height, compression, predictor)?,
+            Self::default_exif(width, height, compression, predictor)?,
+            None,
         )
     }
 
@@ -279,13 +294,22 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         compression: Compression,
         predictor: Predictor,
         exif: &Directory<BufferedEntry>,
+        gps: &Option<ImageFileDirectory<GpsTag, BufferedEntry>>,
     ) -> TiffResult<Self> {
         let mut exif = exif.clone();
         for (tag, value) in Self::default_exif(width, height, compression, predictor)?.into_iter() {
             exif.insert(tag, value);
         }
 
-        Self::new_with_raw_exif(writer, width, height, compression, predictor, &exif)
+        Self::new_with_raw_exif(
+            writer,
+            width,
+            height,
+            compression,
+            predictor,
+            exif.clone(),
+            gps.clone(),
+        )
     }
 
     /// Create a new [ImageEncoder] with unchecked EXIF block
@@ -295,7 +319,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         height: u32,
         compression: Compression,
         predictor: Predictor,
-        exif: &Directory<BufferedEntry>,
+        mut exif: Directory<BufferedEntry>,
+        exif_gps: Option<ImageFileDirectory<GpsTag, BufferedEntry>>,
     ) -> TiffResult<Self> {
         let mut encoder = DirectoryEncoder::new(writer)?;
 
@@ -321,7 +346,22 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
 
         let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
 
-        encoder.write_exif(exif)?;
+        if let Some(data) = exif_gps {
+            encoder.subdirectory_start();
+            encoder.write_exif(&data)?;
+            let gps_ifd_offset = encoder.subdirectory_close()?;
+
+            exif.insert(
+                Tag::GpsIfd,
+                ProcessedEntry::new(
+                    K::is_big()
+                        .then_some(Value::IfdBig(gps_ifd_offset))
+                        .unwrap_or(Value::Ifd(gps_ifd_offset as u32)),
+                ),
+            );
+        }
+
+        encoder.write_exif(&exif)?;
 
         Ok(ImageEncoder {
             encoder,
