@@ -204,9 +204,7 @@ impl Value {
                 Ok(new_vec)
             }
             Short(val) => Ok(vec![val]),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            val => Err(TiffError::FormatError(TiffFormatError::ShortExpected(val))),
         }
     }
 
