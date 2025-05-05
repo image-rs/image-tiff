@@ -193,9 +193,7 @@ impl Value {
             }
             Byte(val) => Ok(vec![val]),
 
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            val => Err(TiffError::FormatError(TiffFormatError::ByteExpected(val))),
         }
     }
 
