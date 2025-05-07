@@ -567,10 +567,10 @@ impl Entry {
                 Ok(SignedBig(i64::from(reader.read_i8()?)))
             }),
             Type::SHORT => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(UnsignedBig(u64::from(reader.read_u16()?)))
+                Ok(Short(reader.read_u16()?))
             }),
             Type::SSHORT => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(SignedBig(i64::from(reader.read_i16()?)))
+                Ok(SignedShort(reader.read_i16()?))
             }),
             Type::LONG => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 Ok(Unsigned(reader.read_u32()?))

@@ -50,9 +50,9 @@ fn encode_decode() {
                 (
                     Tag::BitsPerSample,
                     ifd::Value::List(vec![
-                        ifd::Value::UnsignedBig(8),
-                        ifd::Value::UnsignedBig(8),
-                        ifd::Value::UnsignedBig(8)
+                        ifd::Value::Short(8),
+                        ifd::Value::Short(8),
+                        ifd::Value::Short(8)
                     ])
                 ),
                 (Tag::Compression, ifd::Value::Short(1)),
@@ -69,9 +69,9 @@ fn encode_decode() {
                 (
                     Tag::SampleFormat,
                     ifd::Value::List(vec![
-                        ifd::Value::UnsignedBig(1),
-                        ifd::Value::UnsignedBig(1),
-                        ifd::Value::UnsignedBig(1)
+                        ifd::Value::Short(1),
+                        ifd::Value::Short(1),
+                        ifd::Value::Short(1)
                     ])
                 ),
             ]
