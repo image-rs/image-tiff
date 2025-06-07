@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use jpeg::UnsupportedFeature;
 
-use crate::decoder::{ifd::Value, ChunkType};
+use crate::decoder::ChunkType;
+use crate::ifd::Value;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
@@ -156,6 +157,7 @@ pub enum TiffUnsupportedError {
     InterpretationWithBits(PhotometricInterpretation, Vec<u8>),
     UnknownInterpretation,
     UnknownCompressionMethod,
+    UnsupportedPhotometricInterpretation(PhotometricInterpretation),
     UnsupportedCompressionMethod(CompressionMethod),
     UnsupportedSampleDepth(u8),
     UnsupportedSampleFormat(Vec<SampleFormat>),
@@ -210,6 +212,9 @@ impl fmt::Display for TiffUnsupportedError {
             UnsupportedBitsPerChannel(bits) => {
                 write!(fmt, "{} bits per channel not supported", bits)
             }
+            UnsupportedPhotometricInterpretation(pi) => {
+                write!(fmt, "Unsupported photometric interpretation: {}", pi)
+            }
             UnsupportedPlanarConfig(config) => {
                 write!(fmt, "Unsupported planar configuration “{:?}”.", config)
             }
@@ -239,12 +244,14 @@ pub enum UsageError {
     PredictorCompressionMismatch,
     PredictorIncompatible,
     PredictorUnavailable,
+    CloseNonExistentIfd,
 }
 
 impl fmt::Display for UsageError {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::UsageError::*;
         match *self {
+            CloseNonExistentIfd => write!(fmt, "Attempted to close a non-existent IFD"),
             InvalidChunkType(expected, actual) => {
                 write!(
                     fmt,

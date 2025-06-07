@@ -21,10 +21,14 @@ half = { version = "2.4.1" }
 weezl = "0.1.0"
 jpeg = { package = "jpeg-decoder", version = "0.3.0", default-features = false }
 flate2 = "1.0.20"
+image = "0.24.8"
+itertools = "0.13.0"
 zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
+clap = { version = "4.0.32", features = ["derive"] }
 criterion = "0.3.1"
+kamadak-exif = "0.5.5"
 
 [features]
 zstd = ["dep:zstd"]

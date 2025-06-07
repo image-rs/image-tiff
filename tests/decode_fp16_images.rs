@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::{Decoder, DecodingResult};
+use tiff::decoder::{DecodingResult, TiffDecoder};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -16,7 +16,7 @@ fn test_white_ieee_fp16() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
             (256, 256)
@@ -43,7 +43,7 @@ fn test_one_black_pixel_ieee_fp16() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
             (256, 256)
@@ -74,7 +74,7 @@ fn test_pattern_horizontal_differencing_ieee_fp16() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
             (256, 256)
@@ -107,7 +107,7 @@ fn test_pattern_predictor_ieee_fp16() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
             (256, 256)
@@ -175,7 +175,7 @@ fn test_predictor_ieee_fp16() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
             (16, 16)

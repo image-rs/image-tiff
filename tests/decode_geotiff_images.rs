@@ -1,8 +1,10 @@
 extern crate tiff;
 
-use tiff::decoder::{Decoder, DecodingResult};
-use tiff::tags::Tag;
-use tiff::ColorType;
+use tiff::{
+    decoder::{DecodingResult, TiffDecoder},
+    tags::Tag,
+    ColorType,
+};
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -15,7 +17,7 @@ fn test_geo_tiff() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
         decoder = decoder.with_limits(tiff::decoder::Limits::unlimited());
 
         assert_eq!(

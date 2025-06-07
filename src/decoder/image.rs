@@ -1,14 +1,21 @@
-use super::ifd::{Directory, Value};
-use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
-use super::tag_reader::TagReader;
-use super::{predict_f16, predict_f32, predict_f64, Limits};
-use super::{stream::SmartReader, ChunkType};
-use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
+use super::{
+    predict_f16, predict_f32, predict_f64,
+    stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader, SmartReader},
+    tag_reader::TagReader,
+    ChunkType, DecodedEntry, Limits,
 };
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
-use std::io::{self, Cursor, Read, Seek};
-use std::sync::Arc;
+use crate::{
+    ifd::{Directory, Value},
+    tags::{
+        CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
+        Tag,
+    },
+    ColorType, TiffError, TiffFormatError, TiffKind, TiffResult, TiffUnsupportedError, UsageError,
+};
+use std::{
+    io::{self, Cursor, Read, Seek},
+    sync::Arc,
+};
 
 #[derive(Debug)]
 pub(crate) struct StripDecodeState {
@@ -59,8 +66,8 @@ impl TileAttributes {
 }
 
 #[derive(Debug)]
-pub(crate) struct Image {
-    pub ifd: Option<Directory>,
+pub(crate) struct Image<K: TiffKind> {
+    pub ifd: Option<Directory<DecodedEntry<K>>>,
     pub width: u32,
     pub height: u32,
     pub bits_per_sample: u8,
@@ -78,18 +85,16 @@ pub(crate) struct Image {
     pub chunk_bytes: Vec<u64>,
 }
 
-impl Image {
+impl<K: TiffKind> Image<K> {
     pub fn from_reader<R: Read + Seek>(
         reader: &mut SmartReader<R>,
-        ifd: Directory,
+        ifd: Directory<DecodedEntry<K>>,
         limits: &Limits,
-        bigtiff: bool,
-    ) -> TiffResult<Image> {
-        let mut tag_reader = TagReader {
+    ) -> TiffResult<Image<K>> {
+        let mut tag_reader = TagReader::<_, K> {
             reader,
             limits,
             ifd: &ifd,
-            bigtiff,
         };
 
         let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
@@ -202,6 +207,7 @@ impl Image {
         let planes = match planar_config {
             PlanarConfiguration::Chunky => 1,
             PlanarConfiguration::Planar => samples,
+            PlanarConfiguration::Unknown(_) => unreachable!(),
         };
 
         let chunk_type;
@@ -284,10 +290,18 @@ impl Image {
                     ));
                 }
             }
+            (false, false, false, false) => {
+                // allow reading Tiff without image data
+                chunk_type = ChunkType::None; // the ChunkType will make sure an error is thrown later if trying to read image data
+                strip_decoder = None;
+                tile_attributes = None;
+                chunk_offsets = Vec::new();
+                chunk_bytes = Vec::new();
+            }
             (_, _, _, _) => {
                 return Err(TiffError::FormatError(
                     TiffFormatError::StripTileTagConflict,
-                ))
+                ));
             }
         };
 
@@ -362,6 +376,11 @@ impl Image {
                 TiffUnsupportedError::InterpretationWithBits(
                     self.photometric_interpretation,
                     vec![self.bits_per_sample; self.samples as usize],
+                ),
+            )),
+            PhotometricInterpretation::Unknown(_) => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::UnsupportedPhotometricInterpretation(
+                    self.photometric_interpretation,
                 ),
             )),
         }
@@ -452,7 +471,7 @@ impl Image {
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),
-                ))
+                ));
             }
         })
     }
@@ -468,6 +487,7 @@ impl Image {
         match self.planar_config {
             PlanarConfiguration::Chunky => self.samples.into(),
             PlanarConfiguration::Planar => 1,
+            PlanarConfiguration::Unknown(_) => unreachable!(),
         }
     }
 
@@ -476,6 +496,7 @@ impl Image {
         match self.planar_config {
             PlanarConfiguration::Chunky => 1,
             PlanarConfiguration::Planar => self.samples.into(),
+            PlanarConfiguration::Unknown(_) => unreachable!(),
         }
     }
 
@@ -510,6 +531,9 @@ impl Image {
                     u32::try_from(tile_attrs.tile_length)?,
                 ))
             }
+            ChunkType::None => Err(TiffError::FormatError(
+                TiffFormatError::StripTileTagConflict,
+            )),
         }
     }
 
@@ -542,6 +566,9 @@ impl Image {
 
                 Ok((u32::try_from(tile_width)?, u32::try_from(tile_length)?))
             }
+            ChunkType::None => Err(TiffError::FormatError(
+                TiffFormatError::StripTileTagConflict,
+            )),
         }
     }
 
@@ -581,6 +608,11 @@ impl Image {
                     return Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::FloatingPointPredictor(color_type),
                     ));
+                }
+                Predictor::Unknown(code) => {
+                    return Err(TiffError::FormatError(TiffFormatError::UnknownPredictor(
+                        code,
+                    )));
                 }
             },
             type_ => {
@@ -650,18 +682,18 @@ impl Image {
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
-        if output_row_stride == chunk_row_bytes as usize {
+        if output_row_stride == chunk_row_bytes {
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
-            for row in tile.chunks_mut(chunk_row_bytes as usize) {
+            for row in tile.chunks_mut(chunk_row_bytes) {
                 super::fix_endianness_and_predict(
                     row,
                     color_type.bit_depth(),
                     samples,
                     byte_order,
                     predictor,
-                );
+                )?;
             }
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(tile, color_type, self.sample_format);
@@ -685,11 +717,7 @@ impl Image {
                 }
             }
         } else {
-            for (i, row) in buf
-                .chunks_mut(output_row_stride)
-                .take(data_dims.1 as usize)
-                .enumerate()
-            {
+            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 
@@ -705,7 +733,7 @@ impl Image {
                     samples,
                     byte_order,
                     predictor,
-                );
+                )?;
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format);
                 }
