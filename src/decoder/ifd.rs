@@ -68,9 +68,7 @@ impl Value {
             SignedShort(val) => Ok(val),
             Signed(val) => Ok(i16::try_from(val)?),
             SignedBig(val) => Ok(i16::try_from(val)?),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -82,9 +80,7 @@ impl Value {
             UnsignedBig(val) => Ok(u32::try_from(val)?),
             Ifd(val) => Ok(val),
             IfdBig(val) => Ok(u32::try_from(val)?),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -94,9 +90,7 @@ impl Value {
             SignedShort(val) => Ok(val.into()),
             Signed(val) => Ok(val),
             SignedBig(val) => Ok(i32::try_from(val)?),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -108,9 +102,7 @@ impl Value {
             UnsignedBig(val) => Ok(val),
             Ifd(val) => Ok(val.into()),
             IfdBig(val) => Ok(val),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -120,36 +112,28 @@ impl Value {
             SignedShort(val) => Ok(val.into()),
             Signed(val) => Ok(val.into()),
             SignedBig(val) => Ok(val),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_f32(self) -> TiffResult<f32> {
         match self {
             Float(val) => Ok(val),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_f64(self) -> TiffResult<f64> {
         match self {
             Double(val) => Ok(val),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_string(self) -> TiffResult<String> {
         match self {
             Ascii(val) => Ok(val),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -173,9 +157,7 @@ impl Value {
             Ifd(val) => Ok(vec![val]),
             IfdBig(val) => Ok(vec![u32::try_from(val)?]),
             Ascii(val) => Ok(val.chars().map(u32::from).collect()),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -236,9 +218,7 @@ impl Value {
             SRationalBig(numerator, denominator) => {
                 Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?])
             }
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -252,9 +232,7 @@ impl Value {
                 Ok(new_vec)
             }
             Float(val) => Ok(vec![val]),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -268,9 +246,7 @@ impl Value {
                 Ok(new_vec)
             }
             Double(val) => Ok(vec![val]),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -292,9 +268,7 @@ impl Value {
             Ifd(val) => Ok(vec![val.into()]),
             IfdBig(val) => Ok(vec![val]),
             Ascii(val) => Ok(val.chars().map(u32::from).map(u64::from).collect()),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -323,9 +297,7 @@ impl Value {
             SignedBig(val) => Ok(vec![val]),
             SRational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
             SRationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
-            _ => Err(TiffError::FormatError(
-                TiffFormatError::InvalidTypeForTag,
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 }
