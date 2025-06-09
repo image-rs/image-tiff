@@ -1,14 +1,13 @@
 use std::error::Error;
 use std::fmt;
-use std::fmt::Display;
 use std::io;
 use std::str;
 use std::string;
-use std::sync::Arc;
 
 use jpeg::UnsupportedFeature;
+use quick_error::quick_error;
 
-use crate::decoder::{ifd::Value, ChunkType};
+use crate::decoder::ChunkType;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
@@ -39,104 +38,61 @@ pub enum TiffError {
     UsageError(UsageError),
 }
 
-/// The image is not formatted properly.
-///
-/// This indicates that the encoder producing the image might behave incorrectly or that the input
-/// file has been corrupted.
-///
-/// The list of variants may grow to incorporate errors of future features. Matching against this
-/// exhaustively is not covered by interface stability guarantees.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum TiffFormatError {
-    TiffSignatureNotFound,
-    TiffSignatureInvalid,
-    ImageFileDirectoryNotFound,
-    InconsistentSizesEncountered,
-    UnexpectedCompressedData {
-        actual_bytes: usize,
-        required_bytes: usize,
-    },
-    InconsistentStripSamples {
-        actual_samples: usize,
-        required_samples: usize,
-    },
-    InvalidDimensions(u32, u32),
-    InvalidTag,
-    InvalidTagValueType(Tag),
-    RequiredTagNotFound(Tag),
-    UnknownPredictor(u16),
-    UnknownPlanarConfiguration(u16),
-    ByteExpected(Value),
-    SignedByteExpected(Value),
-    ShortExpected(Value),
-    SignedShortExpected(Value),
-    UnsignedIntegerExpected(Value),
-    SignedIntegerExpected(Value),
-    Format(String),
-    RequiredTagEmpty(Tag),
-    StripTileTagConflict,
-    CycleInOffsets,
-    JpegDecoder(JpegDecoderError),
-    SamplesPerPixelIsZero,
-}
-
-impl fmt::Display for TiffFormatError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        use self::TiffFormatError::*;
-        match *self {
-            TiffSignatureNotFound => write!(fmt, "TIFF signature not found."),
-            TiffSignatureInvalid => write!(fmt, "TIFF signature invalid."),
-            ImageFileDirectoryNotFound => write!(fmt, "Image file directory not found."),
-            InconsistentSizesEncountered => write!(fmt, "Inconsistent sizes encountered."),
-            UnexpectedCompressedData {
-                actual_bytes,
-                required_bytes,
-            } => {
-                write!(
-                    fmt,
-                    "Decompression returned different amount of bytes than expected: got {}, expected {}.",
-                    actual_bytes, required_bytes
-                )
-            }
-            InconsistentStripSamples {
-                actual_samples,
-                required_samples,
-            } => {
-                write!(
-                    fmt,
-                    "Inconsistent elements in strip: got {}, expected {}.",
-                    actual_samples, required_samples
-                )
-            }
-            InvalidDimensions(width, height) => write!(fmt, "Invalid dimensions: {}x{}.", width, height),
-            InvalidTag => write!(fmt, "Image contains invalid tag."),
-            InvalidTagValueType(ref tag) => {
-                write!(fmt, "Tag `{:?}` did not have the expected value type.", tag)
-            }
-            RequiredTagNotFound(ref tag) => write!(fmt, "Required tag `{:?}` not found.", tag),
-            UnknownPredictor(ref predictor) => {
-                write!(fmt, "Unknown predictor “{}” encountered", predictor)
-            }
-            UnknownPlanarConfiguration(ref planar_config) =>  {
-                write!(fmt, "Unknown planar configuration “{}” encountered", planar_config)
-            }
-            ByteExpected(ref val) => write!(fmt, "Expected byte, {:?} found.", val),
-            SignedByteExpected(ref val) => write!(fmt, "Expected signed byte, {:?} found.", val),
-            ShortExpected(ref val) => write!(fmt, "Expected short, {:?} found.", val),
-            SignedShortExpected(ref val) => write!(fmt, "Expected signed short, {:?} found.", val),
-            UnsignedIntegerExpected(ref val) => {
-                write!(fmt, "Expected unsigned integer, {:?} found.", val)
-            }
-            SignedIntegerExpected(ref val) => {
-                write!(fmt, "Expected signed integer, {:?} found.", val)
-            }
-            Format(ref val) => write!(fmt, "Invalid format: {:?}.", val),
-            RequiredTagEmpty(ref val) => write!(fmt, "Required tag {:?} was empty.", val),
-            StripTileTagConflict => write!(fmt, "File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found."),
-            CycleInOffsets => write!(fmt, "File contained a cycle in the list of IFDs"),
-            JpegDecoder(ref error) => write!(fmt, "{}",  error),
-            SamplesPerPixelIsZero => write!(fmt, "Samples per pixel is zero"),
+quick_error! {
+    /// The image is not formatted properly.
+    ///
+    /// This indicates that the encoder producing the image might behave incorrectly or that the
+    /// input file has been corrupted.
+    ///
+    /// The list of variants may grow to incorporate errors of future features. Matching against
+    /// this exhaustively is not covered by interface stability guarantees.
+    #[derive(Debug, Clone, PartialEq)]
+    #[non_exhaustive]
+    pub enum TiffFormatError {
+        TiffSignatureNotFound {
+            display("TIFF signature not found.")
+        }
+        TiffSignatureInvalid {
+            display("TIFF signature invalid.")
+        }
+        ImageFileDirectoryNotFound {
+            display("Image file directory not found.")
+        }
+        InconsistentSizesEncountered {
+            display("Inconsistent sizes encountered.")
+        }
+        InvalidDimensions(width: u32, height: u32) {
+            display("Invalid dimensions: {width}x{height}.")
+        }
+        InvalidTag {
+            display("Image contains invalid tag.")
+        }
+        InvalidTagValueType(tag: Tag) {
+            display("Tag `{:?}` did not have the expected value type.", tag)
+        }
+        RequiredTagNotFound(tag: Tag) {
+            display("Required tag `{:?}` not found.", tag)
+        }
+        UnknownPredictor(pred: u16) {
+            display("Unknown predictor “{}” encountered", pred)
+        }
+        UnknownPlanarConfiguration(cfg: u16) {
+            display("Unknown planar configuration “{}” encountered", cfg)
+        }
+        InvalidTypeForTag {
+            display("Tag has invalid type.")
+        }
+        StripTileTagConflict {
+            display("File should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found.")
+        }
+        CycleInOffsets {
+            display("File contained a cycle in the list of IFDs")
+        }
+        SamplesPerPixelIsZero {
+            display("Samples per pixel is zero")
+        }
+        CompressedDataCorrupt(message: String) {
+            display("Compressed data is corrupt: {message}")
         }
     }
 }
@@ -350,48 +306,13 @@ impl From<std::num::TryFromIntError> for TiffError {
 
 impl From<LzwError> for TiffError {
     fn from(err: LzwError) -> TiffError {
-        match err {
-            LzwError::InvalidCode => TiffError::FormatError(TiffFormatError::Format(String::from(
-                "LZW compressed data corrupted",
-            ))),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct JpegDecoderError {
-    inner: Arc<jpeg::Error>,
-}
-
-impl JpegDecoderError {
-    fn new(error: jpeg::Error) -> Self {
-        Self {
-            inner: Arc::new(error),
-        }
-    }
-}
-
-impl PartialEq for JpegDecoderError {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
-}
-
-impl Display for JpegDecoderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.fmt(f)
-    }
-}
-
-impl From<JpegDecoderError> for TiffError {
-    fn from(error: JpegDecoderError) -> Self {
-        TiffError::FormatError(TiffFormatError::JpegDecoder(error))
+        TiffError::FormatError(TiffFormatError::CompressedDataCorrupt(err.to_string()))
     }
 }
 
 impl From<jpeg::Error> for TiffError {
-    fn from(error: jpeg::Error) -> Self {
-        JpegDecoderError::new(error).into()
+    fn from(err: jpeg::Error) -> Self {
+        TiffError::FormatError(TiffFormatError::CompressedDataCorrupt(err.to_string()))
     }
 }
 
