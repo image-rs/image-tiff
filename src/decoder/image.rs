@@ -448,6 +448,7 @@ impl Image {
                 decoder.set_options(options);
 
                 let data = decoder.decode()?;
+
                 Box::new(Cursor::new(data))
             }
             method => {
