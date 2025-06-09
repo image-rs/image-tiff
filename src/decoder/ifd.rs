@@ -56,6 +56,7 @@ impl Value {
 
     pub fn into_u16(self) -> TiffResult<u16> {
         match self {
+            Byte(val) => Ok(val.into()),
             Short(val) => Ok(val),
             Unsigned(val) => Ok(u16::try_from(val)?),
             UnsignedBig(val) => Ok(u16::try_from(val)?),
@@ -77,6 +78,7 @@ impl Value {
 
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
+            Byte(val) => Ok(val.into()),
             Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val),
             UnsignedBig(val) => Ok(u32::try_from(val)?),
@@ -102,6 +104,7 @@ impl Value {
 
     pub fn into_u64(self) -> TiffResult<u64> {
         match self {
+            Byte(val) => Ok(val.into()),
             Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val.into()),
             UnsignedBig(val) => Ok(val),
@@ -161,6 +164,7 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Byte(val) => Ok(vec![val.into()]),
             Short(val) => Ok(vec![val.into()]),
             Unsigned(val) => Ok(vec![val]),
             UnsignedBig(val) => Ok(vec![u32::try_from(val)?]),
@@ -188,9 +192,7 @@ impl Value {
             }
             Byte(val) => Ok(vec![val]),
 
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            val => Err(TiffError::FormatError(TiffFormatError::ByteExpected(val))),
         }
     }
 
@@ -203,6 +205,7 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Byte(val) => Ok(vec![val.into()]),
             Short(val) => Ok(vec![val]),
             val => Err(TiffError::FormatError(TiffFormatError::ShortExpected(val))),
         }
@@ -282,6 +285,7 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Byte(val) => Ok(vec![val.into()]),
             Short(val) => Ok(vec![val.into()]),
             Unsigned(val) => Ok(vec![val.into()]),
             UnsignedBig(val) => Ok(vec![val]),
@@ -428,8 +432,8 @@ impl Entry {
 
             // 2b: the value is at most 4 bytes or doesn't fit in the offset field.
             return Ok(match self.type_ {
-                Type::BYTE => Unsigned(u32::from(self.offset[0])),
-                Type::SBYTE => Signed(i32::from(self.offset[0] as i8)),
+                Type::BYTE => Byte(self.offset[0]),
+                Type::SBYTE => SignedByte(i8::from(self.offset[0] as i8)),
                 Type::UNDEFINED => Byte(self.offset[0]),
                 Type::SHORT => Short(self.r(bo).read_u16()?),
                 Type::SSHORT => SignedShort(self.r(bo).read_i16()?),
