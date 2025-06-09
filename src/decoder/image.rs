@@ -423,13 +423,16 @@ impl Image {
                 let mut options: zune_core::options::DecoderOptions = Default::default();
                 match photometric_interpretation {
                     PhotometricInterpretation::RGB => {
-                        options = options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB);
+                        options =
+                            options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB);
                     }
                     PhotometricInterpretation::CMYK => {
-                        options = options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::CMYK);
+                        options = options
+                            .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::CMYK);
                     }
                     PhotometricInterpretation::YCbCr => {
-                        options = options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::YCbCr);
+                        options = options
+                            .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::YCbCr);
                     }
                     PhotometricInterpretation::WhiteIsZero
                     | PhotometricInterpretation::BlackIsZero
