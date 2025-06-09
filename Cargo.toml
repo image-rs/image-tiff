@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 
 # note: when changed, also update test runner in `.github/workflows/rust.yml`
-rust-version = "1.70.0"
+rust-version = "1.74.0"
 
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
