@@ -19,7 +19,7 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 [dependencies]
 half = { version = "2.4.1" }
 weezl = "0.1.0"
-zune-jpeg = "0.4.11"
+zune-jpeg = "0.4.16"
 flate2 = "1.0.20"
 zstd = { version = "0.13", optional = true }
 
