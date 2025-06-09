@@ -50,28 +50,28 @@ fn encode_decode() {
                 (
                     Tag::BitsPerSample,
                     ifd::Value::List(vec![
-                        ifd::Value::UnsignedBig(8),
-                        ifd::Value::UnsignedBig(8),
-                        ifd::Value::UnsignedBig(8)
+                        ifd::Value::Short(8),
+                        ifd::Value::Short(8),
+                        ifd::Value::Short(8)
                     ])
                 ),
-                (Tag::Compression, ifd::Value::Unsigned(1)),
-                (Tag::PhotometricInterpretation, ifd::Value::Unsigned(2)),
+                (Tag::Compression, ifd::Value::Short(1)),
+                (Tag::PhotometricInterpretation, ifd::Value::Short(2)),
                 (Tag::StripOffsets, ifd::Value::Unsigned(8)),
-                (Tag::SamplesPerPixel, ifd::Value::Unsigned(3)),
+                (Tag::SamplesPerPixel, ifd::Value::Short(3)),
                 (Tag::RowsPerStrip, ifd::Value::Unsigned(3334)),
                 (Tag::StripByteCounts, ifd::Value::Unsigned(30000)),
                 (Tag::XResolution, ifd::Value::Rational(1, 1)),
                 (Tag::YResolution, ifd::Value::Rational(1, 1)),
-                (Tag::ResolutionUnit, ifd::Value::Unsigned(1)),
+                (Tag::ResolutionUnit, ifd::Value::Short(1)),
                 (Tag::Artist, ifd::Value::Ascii("Image-tiff".into())),
-                (Tag::Predictor, ifd::Value::Unsigned(1)),
+                (Tag::Predictor, ifd::Value::Short(1)),
                 (
                     Tag::SampleFormat,
                     ifd::Value::List(vec![
-                        ifd::Value::UnsignedBig(1),
-                        ifd::Value::UnsignedBig(1),
-                        ifd::Value::UnsignedBig(1)
+                        ifd::Value::Short(1),
+                        ifd::Value::Short(1),
+                        ifd::Value::Short(1)
                     ])
                 ),
             ]
@@ -135,17 +135,17 @@ fn encode_decode_big() {
                         ifd::Value::Short(8)
                     ])
                 ),
-                (Tag::Compression, ifd::Value::Unsigned(1)),
-                (Tag::PhotometricInterpretation, ifd::Value::Unsigned(2)),
+                (Tag::Compression, ifd::Value::Short(1)),
+                (Tag::PhotometricInterpretation, ifd::Value::Short(2)),
                 (Tag::StripOffsets, ifd::Value::UnsignedBig(16)),
-                (Tag::SamplesPerPixel, ifd::Value::Unsigned(3)),
+                (Tag::SamplesPerPixel, ifd::Value::Short(3)),
                 (Tag::RowsPerStrip, ifd::Value::Unsigned(3334)),
                 (Tag::StripByteCounts, ifd::Value::UnsignedBig(30000)),
                 (Tag::XResolution, ifd::Value::Rational(1, 1)),
                 (Tag::YResolution, ifd::Value::Rational(1, 1)),
-                (Tag::ResolutionUnit, ifd::Value::Unsigned(1)),
+                (Tag::ResolutionUnit, ifd::Value::Short(1)),
                 (Tag::Artist, ifd::Value::Ascii("Image-tiff".into())),
-                (Tag::Predictor, ifd::Value::Unsigned(1)),
+                (Tag::Predictor, ifd::Value::Short(1)),
                 (
                     Tag::SampleFormat,
                     ifd::Value::List(vec![
