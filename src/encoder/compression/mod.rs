@@ -1,13 +1,19 @@
 use crate::tags::CompressionMethod;
 use std::io::{self, Write};
 
+#[cfg(feature = "deflate")]
 mod deflate;
+#[cfg(feature = "lzw")]
 mod lzw;
 mod packbits;
 mod uncompressed;
 
+#[cfg(feature = "deflate")]
 pub use self::deflate::{Deflate, DeflateLevel};
+
+#[cfg(feature = "lzw")]
 pub use self::lzw::Lzw;
+
 pub use self::packbits::Packbits;
 pub use self::uncompressed::Uncompressed;
 
@@ -30,7 +36,9 @@ pub trait Compression: CompressionAlgorithm {
 /// An enum to store each compression algorithm.
 pub enum Compressor {
     Uncompressed(Uncompressed),
+    #[cfg(feature = "lzw")]
     Lzw(Lzw),
+    #[cfg(feature = "deflate")]
     Deflate(Deflate),
     Packbits(Packbits),
 }
@@ -46,7 +54,9 @@ impl CompressionAlgorithm for Compressor {
     fn write_to<W: Write>(&mut self, writer: &mut W, bytes: &[u8]) -> Result<u64, io::Error> {
         match self {
             Compressor::Uncompressed(algorithm) => algorithm.write_to(writer, bytes),
+            #[cfg(feature = "lzw")]
             Compressor::Lzw(algorithm) => algorithm.write_to(writer, bytes),
+            #[cfg(feature = "deflate")]
             Compressor::Deflate(algorithm) => algorithm.write_to(writer, bytes),
             Compressor::Packbits(algorithm) => algorithm.write_to(writer, bytes),
         }

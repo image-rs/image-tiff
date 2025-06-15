@@ -139,11 +139,13 @@ fn encode_decode_without_compression() {
 }
 
 #[test]
+#[cfg(feature = "lzw")]
 fn encode_decode_with_lzw() {
     encode_decode_with_compression(Compression::Lzw);
 }
 
 #[test]
+#[cfg(feature = "deflate")]
 fn encode_decode_with_deflate() {
     encode_decode_with_compression(Compression::Deflate(DeflateLevel::Fast));
     encode_decode_with_compression(Compression::Deflate(DeflateLevel::Balanced));

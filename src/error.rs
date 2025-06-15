@@ -3,7 +3,6 @@ use std::str;
 use std::string;
 
 use quick_error::quick_error;
-use weezl::LzwError;
 
 use crate::decoder::ChunkType;
 use crate::tags::{
@@ -206,12 +205,14 @@ impl From<std::num::TryFromIntError> for TiffError {
     }
 }
 
-impl From<LzwError> for TiffError {
-    fn from(err: LzwError) -> TiffError {
+#[cfg(feature = "lzw")]
+impl From<weezl::LzwError> for TiffError {
+    fn from(err: weezl::LzwError) -> TiffError {
         TiffError::FormatError(TiffFormatError::CompressedDataCorrupt(err.to_string()))
     }
 }
 
+#[cfg(feature = "jpeg")]
 impl From<zune_jpeg::errors::DecodeErrors> for TiffError {
     fn from(err: zune_jpeg::errors::DecodeErrors) -> Self {
         TiffError::FormatError(TiffFormatError::CompressedDataCorrupt(err.to_string()))

@@ -34,12 +34,15 @@ use self::writer::*;
 ///
 /// [Predictor::FloatingPoint] is currently not supported.
 pub type Predictor = crate::tags::Predictor;
+#[cfg(feature = "deflate")]
 pub type DeflateLevel = compression::DeflateLevel;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Compression {
     Uncompressed,
+    #[cfg(feature = "lzw")]
     Lzw,
+    #[cfg(feature = "deflate")]
     Deflate(DeflateLevel),
     Packbits,
 }
@@ -54,7 +57,9 @@ impl Compression {
     fn tag(&self) -> CompressionMethod {
         match self {
             Compression::Uncompressed => CompressionMethod::None,
+            #[cfg(feature = "lzw")]
             Compression::Lzw => CompressionMethod::LZW,
+            #[cfg(feature = "deflate")]
             Compression::Deflate(_) => CompressionMethod::Deflate,
             Compression::Packbits => CompressionMethod::PackBits,
         }
@@ -63,7 +68,9 @@ impl Compression {
     fn get_algorithm(&self) -> Compressor {
         match self {
             Compression::Uncompressed => compression::Uncompressed {}.get_algorithm(),
+            #[cfg(feature = "lzw")]
             Compression::Lzw => compression::Lzw {}.get_algorithm(),
+            #[cfg(feature = "deflate")]
             Compression::Deflate(level) => compression::Deflate::with_level(*level).get_algorithm(),
             Compression::Packbits => compression::Packbits {}.get_algorithm(),
         }
