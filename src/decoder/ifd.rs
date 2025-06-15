@@ -5,7 +5,7 @@ use std::io::{self, Read, Seek};
 use std::mem;
 use std::str;
 
-use super::stream::{ByteOrder, EndianReader, SmartReader};
+use super::stream::{ByteOrder, EndianReader};
 use crate::tags::{Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
@@ -42,24 +42,23 @@ impl Value {
     pub fn into_u8(self) -> TiffResult<u8> {
         match self {
             Byte(val) => Ok(val),
-            val => Err(TiffError::FormatError(TiffFormatError::ByteExpected(val))),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
     pub fn into_i8(self) -> TiffResult<i8> {
         match self {
             SignedByte(val) => Ok(val),
-            val => Err(TiffError::FormatError(TiffFormatError::SignedByteExpected(
-                val,
-            ))),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_u16(self) -> TiffResult<u16> {
         match self {
+            Byte(val) => Ok(val.into()),
             Short(val) => Ok(val),
             Unsigned(val) => Ok(u16::try_from(val)?),
             UnsignedBig(val) => Ok(u16::try_from(val)?),
-            val => Err(TiffError::FormatError(TiffFormatError::ShortExpected(val))),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -69,22 +68,19 @@ impl Value {
             SignedShort(val) => Ok(val),
             Signed(val) => Ok(i16::try_from(val)?),
             SignedBig(val) => Ok(i16::try_from(val)?),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedShortExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_u32(self) -> TiffResult<u32> {
         match self {
+            Byte(val) => Ok(val.into()),
             Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val),
             UnsignedBig(val) => Ok(u32::try_from(val)?),
             Ifd(val) => Ok(val),
             IfdBig(val) => Ok(u32::try_from(val)?),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -94,22 +90,19 @@ impl Value {
             SignedShort(val) => Ok(val.into()),
             Signed(val) => Ok(val),
             SignedBig(val) => Ok(i32::try_from(val)?),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_u64(self) -> TiffResult<u64> {
         match self {
+            Byte(val) => Ok(val.into()),
             Short(val) => Ok(val.into()),
             Unsigned(val) => Ok(val.into()),
             UnsignedBig(val) => Ok(val),
             Ifd(val) => Ok(val.into()),
             IfdBig(val) => Ok(val),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -119,36 +112,28 @@ impl Value {
             SignedShort(val) => Ok(val.into()),
             Signed(val) => Ok(val.into()),
             SignedBig(val) => Ok(val),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_f32(self) -> TiffResult<f32> {
         match self {
             Float(val) => Ok(val),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_f64(self) -> TiffResult<f64> {
         match self {
             Double(val) => Ok(val),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
     pub fn into_string(self) -> TiffResult<String> {
         match self {
             Ascii(val) => Ok(val),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -161,6 +146,7 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Byte(val) => Ok(vec![val.into()]),
             Short(val) => Ok(vec![val.into()]),
             Unsigned(val) => Ok(vec![val]),
             UnsignedBig(val) => Ok(vec![u32::try_from(val)?]),
@@ -171,9 +157,7 @@ impl Value {
             Ifd(val) => Ok(vec![val]),
             IfdBig(val) => Ok(vec![u32::try_from(val)?]),
             Ascii(val) => Ok(val.chars().map(u32::from).collect()),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -188,9 +172,7 @@ impl Value {
             }
             Byte(val) => Ok(vec![val]),
 
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -203,8 +185,9 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Byte(val) => Ok(vec![val.into()]),
             Short(val) => Ok(vec![val]),
-            val => Err(TiffError::FormatError(TiffFormatError::ShortExpected(val))),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -235,9 +218,7 @@ impl Value {
             SRationalBig(numerator, denominator) => {
                 Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?])
             }
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -251,9 +232,7 @@ impl Value {
                 Ok(new_vec)
             }
             Float(val) => Ok(vec![val]),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -267,9 +246,7 @@ impl Value {
                 Ok(new_vec)
             }
             Double(val) => Ok(vec![val]),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -282,6 +259,7 @@ impl Value {
                 }
                 Ok(new_vec)
             }
+            Byte(val) => Ok(vec![val.into()]),
             Short(val) => Ok(vec![val.into()]),
             Unsigned(val) => Ok(vec![val.into()]),
             UnsignedBig(val) => Ok(vec![val]),
@@ -290,9 +268,7 @@ impl Value {
             Ifd(val) => Ok(vec![val.into()]),
             IfdBig(val) => Ok(vec![val]),
             Ascii(val) => Ok(val.chars().map(u32::from).map(u64::from).collect()),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::UnsignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 
@@ -321,9 +297,7 @@ impl Value {
             SignedBig(val) => Ok(vec![val]),
             SRational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
             SRationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
-            val => Err(TiffError::FormatError(
-                TiffFormatError::SignedIntegerExpected(val),
-            )),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
 }
@@ -360,22 +334,22 @@ impl Entry {
     }
 
     /// Returns a mem_reader for the offset/value field
-    fn r(&self, byte_order: ByteOrder) -> SmartReader<io::Cursor<Vec<u8>>> {
-        SmartReader::wrap(io::Cursor::new(self.offset.to_vec()), byte_order)
+    fn r(&self, byte_order: ByteOrder) -> EndianReader<io::Cursor<Vec<u8>>> {
+        EndianReader::new(io::Cursor::new(self.offset.to_vec()), byte_order)
     }
 
-    pub fn val<R: Read + Seek>(
+    pub(crate) fn val<R: Read + Seek>(
         &self,
         limits: &super::Limits,
         bigtiff: bool,
-        reader: &mut SmartReader<R>,
+        reader: &mut EndianReader<R>,
     ) -> TiffResult<Value> {
         // Case 1: there are no values so we can return immediately.
         if self.count == 0 {
             return Ok(List(Vec::new()));
         }
 
-        let bo = reader.byte_order();
+        let bo = reader.byte_order;
 
         let tag_size = match self.type_ {
             Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
@@ -428,8 +402,8 @@ impl Entry {
 
             // 2b: the value is at most 4 bytes or doesn't fit in the offset field.
             return Ok(match self.type_ {
-                Type::BYTE => Unsigned(u32::from(self.offset[0])),
-                Type::SBYTE => Signed(i32::from(self.offset[0] as i8)),
+                Type::BYTE => Byte(self.offset[0]),
+                Type::SBYTE => SignedByte(i8::from(self.offset[0] as i8)),
                 Type::UNDEFINED => Byte(self.offset[0]),
                 Type::SHORT => Short(self.r(bo).read_u16()?),
                 Type::SSHORT => SignedShort(self.r(bo).read_i16()?),
@@ -478,7 +452,7 @@ impl Entry {
                 Type::SBYTE => return offset_to_sbytes(self.count as usize, self),
                 Type::ASCII => {
                     let mut buf = vec![0; self.count as usize];
-                    self.r(bo).read_exact(&mut buf)?;
+                    buf.copy_from_slice(&self.offset[..self.count as usize]);
                     if buf.is_ascii() && buf.ends_with(&[0]) {
                         let v = str::from_utf8(&buf)?;
                         let v = v.trim_matches(char::from(0));
@@ -560,7 +534,7 @@ impl Entry {
             // at a different endianess of file/computer.
             Type::BYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 let mut buf = [0; 1];
-                reader.read_exact(&mut buf)?;
+                reader.inner().read_exact(&mut buf)?;
                 Ok(UnsignedBig(u64::from(buf[0])))
             }),
             Type::SBYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
@@ -609,7 +583,7 @@ impl Entry {
             Type::UNDEFINED => {
                 self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                     let mut buf = [0; 1];
-                    reader.read_exact(&mut buf)?;
+                    reader.inner().read_exact(&mut buf)?;
                     Ok(Byte(buf[0]))
                 })
             }
@@ -626,7 +600,7 @@ impl Entry {
                 }
 
                 let mut out = vec![0; n];
-                reader.read_exact(&mut out)?;
+                reader.inner().read_exact(&mut out)?;
                 // Strings may be null-terminated, so we trim anything downstream of the null byte
                 if let Some(first) = out.iter().position(|&b| b == 0) {
                     out.truncate(first);
@@ -643,12 +617,12 @@ impl Entry {
         bo: ByteOrder,
         bigtiff: bool,
         limits: &super::Limits,
-        reader: &mut SmartReader<R>,
+        reader: &mut EndianReader<R>,
         decode_fn: F,
     ) -> TiffResult<Value>
     where
         R: Read + Seek,
-        F: Fn(&mut SmartReader<R>) -> TiffResult<Value>,
+        F: Fn(&mut EndianReader<R>) -> TiffResult<Value>,
     {
         let value_count = usize::try_from(value_count)?;
         if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
