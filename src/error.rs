@@ -2,16 +2,14 @@ use std::io;
 use std::str;
 use std::string;
 
-use jpeg::UnsupportedFeature;
 use quick_error::quick_error;
+use weezl::LzwError;
 
 use crate::decoder::ChunkType;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
 use crate::ColorType;
-
-use crate::weezl::LzwError;
 
 quick_error! {
     /// Tiff error kinds.
@@ -159,9 +157,6 @@ quick_error! {
         UnsupportedInterpretation(interpretation: PhotometricInterpretation) {
             display("unsupported photometric interpretation \"{interpretation:?}\"")
         }
-        UnsupportedJpegFeature(feature: UnsupportedFeature) {
-            display("unsupported JPEG feature {feature:?}")
-        }
         MisalignedTileBoundaries {
             display("tile rows are not aligned to byte boundaries")
         }
@@ -217,8 +212,8 @@ impl From<LzwError> for TiffError {
     }
 }
 
-impl From<jpeg::Error> for TiffError {
-    fn from(err: jpeg::Error) -> Self {
+impl From<zune_jpeg::errors::DecodeErrors> for TiffError {
+    fn from(err: zune_jpeg::errors::DecodeErrors) -> Self {
         TiffError::FormatError(TiffFormatError::CompressedDataCorrupt(err.to_string()))
     }
 }

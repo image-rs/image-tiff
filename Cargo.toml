@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 
 # note: when changed, also update test runner in `.github/workflows/rust.yml`
-rust-version = "1.70.0"
+rust-version = "1.74.0"
 
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
@@ -19,7 +19,7 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 [dependencies]
 half = { version = "2.4.1" }
 weezl = "0.1.0"
-jpeg = { package = "jpeg-decoder", version = "0.3.0", default-features = false }
+zune-jpeg = "0.4.17"
 flate2 = "1.0.20"
 zstd = { version = "0.13", optional = true }
 quick-error = "2.0.1"
