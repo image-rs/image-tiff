@@ -43,7 +43,7 @@ jobs:
       with:
         components: clippy
     - name: Cargo check
-      run: cargo check --features ${{ matrix.feature }} --no-default-features
+      run: cargo check --features "${{ matrix.feature }}" --no-default-features
 
   rustfmt:
     runs-on: ubuntu-latest
