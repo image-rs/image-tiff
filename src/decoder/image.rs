@@ -330,6 +330,7 @@ impl Image {
             },
             PhotometricInterpretation::CMYK => match self.samples {
                 4 => Ok(ColorType::CMYK(self.bits_per_sample)),
+                5 => Ok(ColorType::CMYKA(self.bits_per_sample)),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
@@ -567,6 +568,7 @@ impl Image {
             ColorType::RGB(n)
             | ColorType::RGBA(n)
             | ColorType::CMYK(n)
+            | ColorType::CMYKA(n)
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
             | ColorType::Multiband {

@@ -341,3 +341,13 @@ impl ColorType for YCbCr8 {
 
     integer_horizontal_predict!();
 }
+
+pub struct CMYKA8;
+impl ColorType for CMYKA8 {
+    type Inner = u8;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::CMYK;
+    const BITS_PER_SAMPLE: &'static [u16] = &[8, 8, 8, 8, 8];
+    const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint; 5];
+
+    integer_horizontal_predict!();
+}
