@@ -1,15 +1,15 @@
 use std::io;
 use std::str;
 use std::string;
+
 use quick_error::quick_error;
+use weezl::LzwError;
 
 use crate::decoder::ChunkType;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
 use crate::ColorType;
-
-use weezl::LzwError;
 
 quick_error! {
     /// Tiff error kinds.
