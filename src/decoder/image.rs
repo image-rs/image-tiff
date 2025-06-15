@@ -1,5 +1,5 @@
 use super::ifd::{Directory, Value};
-use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
+use super::stream::{ByteOrder, PackBitsReader};
 use super::tag_reader::TagReader;
 use super::{predict_f16, predict_f32, predict_f64, Limits};
 use super::{stream::EndianReader, ChunkType};
@@ -9,7 +9,6 @@ use crate::tags::{
 use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
-use zune_jpeg::zune_core;
 
 #[derive(Debug)]
 pub(crate) struct StripDecodeState {
@@ -370,23 +369,29 @@ impl Image {
 
     fn create_reader<'r, R: 'r + Read>(
         reader: R,
-        photometric_interpretation: PhotometricInterpretation,
+        #[allow(unused_variables)] photometric_interpretation: PhotometricInterpretation,
         compression_method: CompressionMethod,
         compressed_length: u64,
-        jpeg_tables: Option<&[u8]>,
+        #[allow(unused_variables)] jpeg_tables: Option<&[u8]>,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
-            CompressionMethod::LZW => {
-                Box::new(LZWReader::new(reader, usize::try_from(compressed_length)?))
-            }
+            #[cfg(feature = "lzw")]
+            CompressionMethod::LZW => Box::new(super::stream::LZWReader::new(
+                reader,
+                usize::try_from(compressed_length)?,
+            )),
             #[cfg(feature = "zstd")]
             CompressionMethod::ZSTD => Box::new(zstd::Decoder::new(reader)?),
             CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
+            #[cfg(feature = "deflate")]
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
-                Box::new(DeflateReader::new(reader))
+                Box::new(super::stream::DeflateReader::new(reader))
             }
+            #[cfg(feature = "jpeg")]
             CompressionMethod::ModernJPEG => {
+                use zune_jpeg::zune_core;
+
                 if jpeg_tables.is_some() && compressed_length < 2 {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InvalidTagValueType(Tag::JPEGTables),

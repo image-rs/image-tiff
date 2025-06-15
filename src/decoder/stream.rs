@@ -140,6 +140,7 @@ impl<R: Read + Seek> EndianReader<R> {
 /// ## Deflate Reader
 ///
 
+#[cfg(feature = "deflate")]
 pub type DeflateReader<R> = flate2::read::ZlibDecoder<R>;
 
 ///
@@ -147,11 +148,13 @@ pub type DeflateReader<R> = flate2::read::ZlibDecoder<R>;
 ///
 
 /// Reader that decompresses LZW streams
+#[cfg(feature = "lzw")]
 pub struct LZWReader<R: Read> {
     reader: BufReader<Take<R>>,
     decoder: weezl::decode::Decoder,
 }
 
+#[cfg(feature = "lzw")]
 impl<R: Read> LZWReader<R> {
     /// Wraps a reader
     pub fn new(reader: R, compressed_length: usize) -> LZWReader<R> {
@@ -165,6 +168,7 @@ impl<R: Read> LZWReader<R> {
     }
 }
 
+#[cfg(feature = "lzw")]
 impl<R: Read> Read for LZWReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         loop {

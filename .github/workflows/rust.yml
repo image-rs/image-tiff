@@ -32,6 +32,19 @@ jobs:
       if: ${{ matrix.rust != '1.74.0' }}
       run: cargo test -v && cargo doc -v
 
+  features:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        feature: ["", deflate, jpeg, lzw, zstd, default, "default,zstd"]
+    steps:
+    - uses: actions/checkout@v2
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - name: Cargo check
+      run: cargo check --features "${{ matrix.feature }}" --no-default-features
+
   rustfmt:
     runs-on: ubuntu-latest
     steps:

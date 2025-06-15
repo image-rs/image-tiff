@@ -18,16 +18,23 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 
 [dependencies]
 half = { version = "2.4.1" }
-weezl = "0.1.0"
-zune-jpeg = "0.4.17"
-flate2 = "1.0.20"
-zstd = { version = "0.13", optional = true }
 quick-error = "2.0.1"
+
+flate2 = { version = "1.0.20", optional = true }
+weezl = { version = "0.1.0", optional = true }
+zstd = { version = "0.13", optional = true }
+zune-jpeg = { version = "0.4.17", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.1"
 
 [features]
+default = ["deflate", "jpeg", "lzw"]
+
+# Compression algorithms
+deflate = ["dep:flate2"]
+jpeg = ["dep:zune-jpeg"]
+lzw = ["dep:weezl"]
 zstd = ["dep:zstd"]
 
 [[bench]]
