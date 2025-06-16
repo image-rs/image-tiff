@@ -34,6 +34,7 @@ pub trait Compression: CompressionAlgorithm {
 }
 
 /// An enum to store each compression algorithm.
+#[non_exhaustive]
 pub enum Compressor {
     Uncompressed(Uncompressed),
     #[cfg(feature = "lzw")]
