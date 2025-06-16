@@ -1,3 +1,25 @@
+# Version 0.10.0
+
+New features:
+- Added `ColorType::Multiband` and `ColorType::CMYKA`.
+- Added `Value::Byte` and `Value::SignedByte` to represent `u8` and `i8` tags.
+- Encoding can now use horizontal predictor.
+- The `Decoder::tag_iter` method allows iterating over all tags in the image.
+- Half precision floating point values are now supported during decoding.
+- ZStandard compression has been added as an additional compression method
+  during decoding, but requires the `zstd` feature flag.
+
+Changes:
+- Switched `u16` and `i16` values to be intepreted as `Value::Short` and
+  `Value::SignedShort` respectively.
+- Changed JPEG compression to use the `zune-jpeg` crate instead of
+  `jpeg-decoder`.
+- The `deflate`, `jpeg`, and `lzw` compression methods are now controlled by
+  (enabled by default) feature flags.
+
+Fixes:
+- Fixed a bug in 1 bit-per-pixel decoding.
+
 # Version 0.9.1
 
 New features:
