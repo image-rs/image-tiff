@@ -19,6 +19,7 @@ exclude = ["tests/images/*", "tests/fuzz_images/*"]
 [dependencies]
 half = { version = "2.4.1" }
 quick-error = "2.0.1"
+itertools = "0.14.0"
 
 flate2 = { version = "1.0.20", optional = true }
 weezl = { version = "0.1.0", optional = true }
@@ -26,7 +27,9 @@ zstd = { version = "0.13", optional = true }
 zune-jpeg = { version = "0.4.17", optional = true }
 
 [dev-dependencies]
+clap = { version = "4.0.32", features = ["derive"] }
 criterion = "0.3.1"
+kamadak-exif = "0.5.5"
 
 [features]
 default = ["deflate", "jpeg", "lzw"]

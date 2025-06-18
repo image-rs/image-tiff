@@ -1,25 +1,25 @@
+use crate::{
+    TiffError, TiffFormatError, TiffKind, TiffResult,
+    decoder::{Limits, decoded_entry::DecodedEntry, stream::EndianReader},
+    ifd::{Directory, Value},
+    tags::Tag,
+};
 use std::io::{Read, Seek};
 
-use crate::tags::Tag;
-use crate::{TiffError, TiffFormatError, TiffResult};
-
-use super::ifd::{Directory, Value};
-use super::stream::EndianReader;
-use super::Limits;
-
-pub(crate) struct TagReader<'a, R: Read + Seek> {
+pub(crate) struct TagReader<'a, R: Read + Seek, K: TiffKind> {
     pub reader: &'a mut EndianReader<R>,
-    pub ifd: &'a Directory,
+    pub ifd: &'a Directory<DecodedEntry<K>>,
     pub limits: &'a Limits,
-    pub bigtiff: bool,
 }
-impl<'a, R: Read + Seek> TagReader<'a, R> {
+
+impl<'a, R: Read + Seek, K: TiffKind> TagReader<'a, R, K> {
     pub(crate) fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
         Ok(match self.ifd.get(&tag) {
-            Some(entry) => Some(entry.clone().val(self.limits, self.bigtiff, self.reader)?),
+            Some(entry) => Some(entry.clone().val(self.limits, self.reader)?),
             None => None,
         })
     }
+
     pub(crate) fn require_tag(&mut self, tag: Tag) -> TiffResult<Value> {
         match self.find_tag(tag)? {
             Some(val) => Ok(val),
@@ -28,6 +28,7 @@ impl<'a, R: Read + Seek> TagReader<'a, R> {
             )),
         }
     }
+
     pub fn find_tag_uint_vec<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<Vec<T>>> {
         self.find_tag(tag)?
             .map(|v| v.into_u64_vec())

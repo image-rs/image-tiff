@@ -1,12 +1,16 @@
 extern crate tiff;
 
-use tiff::decoder::{ifd, Decoder, DecodingResult};
-use tiff::encoder::{colortype, Ifd, Ifd8, SRational, TiffEncoder};
+use tiff::decoder::DecodingResult;
+use tiff::encoder::{colortype, Ifd, Ifd8, SRational};
 use tiff::tags::Tag;
-use tiff::ColorType;
+use tiff::{
+    decoder::{BigTiffDecoder, TiffDecoder},
+    encoder::{BigTiffEncoder, TiffEncoder},
+    ifd, ColorType, TiffKindStandard,
+};
 
 use std::fs::File;
-use std::io::{Cursor, Seek, SeekFrom};
+use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 #[test]
@@ -33,7 +37,7 @@ fn encode_decode() {
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = TiffDecoder::new(&mut file).unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
 
@@ -102,7 +106,7 @@ fn encode_decode_big() {
     }
     let mut file = Cursor::new(Vec::new());
     {
-        let mut tiff = TiffEncoder::new_big(&mut file).unwrap();
+        let mut tiff = BigTiffEncoder::new(&mut file).unwrap();
 
         let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
         image
@@ -113,7 +117,7 @@ fn encode_decode_big() {
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = BigTiffDecoder::new(&mut file).unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
 
@@ -203,7 +207,7 @@ fn test_encode_ifd() {
     // Rewind the cursor for reading
     data.set_position(0);
     {
-        let mut decoder = Decoder::new(&mut data).unwrap();
+        let mut decoder = TiffDecoder::new(&mut data).unwrap();
 
         assert_eq!(decoder.assert_tag_u32(65000), 42);
         assert_eq!(decoder.assert_tag_u32_vec(65000), [42]);
@@ -241,7 +245,7 @@ macro_rules! test_roundtrip {
         ) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let img_file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+            let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
             assert_eq!(decoder.colortype().unwrap(), expected_type);
 
             let image_data = match decoder.read_image().unwrap() {
@@ -258,7 +262,7 @@ macro_rules! test_roundtrip {
             }
             file.seek(SeekFrom::Start(0)).unwrap();
             {
-                let mut decoder = Decoder::new(&mut file).unwrap();
+                let mut decoder = TiffDecoder::new(&mut file).unwrap();
                 if let DecodingResult::$buffer(img_res) = decoder.read_image().unwrap() {
                     assert_eq!(image_data, img_res);
                 } else {
@@ -379,7 +383,7 @@ trait AssertDecode {
     fn assert_tag_i64_vec(&mut self, tag: u16) -> Vec<i64>;
 }
 
-impl<R: std::io::Read + std::io::Seek> AssertDecode for Decoder<R> {
+impl<R: std::io::Read + std::io::Seek> AssertDecode for TiffDecoder<R> {
     fn assert_tag_u32(&mut self, tag: u16) -> u32 {
         self.get_tag(Tag::Unknown(tag)).unwrap().into_u32().unwrap()
     }
@@ -445,7 +449,7 @@ fn test_multiple_byte() {
 
     data.set_position(0);
     {
-        let mut decoder = Decoder::new(&mut data).unwrap();
+        let mut decoder = TiffDecoder::new(&mut data).unwrap();
 
         assert_eq!(decoder.assert_tag_u32_vec(65000), [1]);
         assert_eq!(decoder.assert_tag_u32_vec(65001), [1, 2]);
@@ -526,7 +530,7 @@ fn test_signed() {
     //Rewind the cursor for reading
     data.set_position(0);
     {
-        let mut decoder = Decoder::new(&mut data).unwrap();
+        let mut decoder = TiffDecoder::new(&mut data).unwrap();
 
         assert_eq!(decoder.assert_tag_i32(65000), -1);
         assert_eq!(decoder.assert_tag_i32_vec(65001), [-1]);
@@ -578,7 +582,7 @@ fn test_multipage_image() {
     img_file.seek(SeekFrom::Start(0)).unwrap();
 
     {
-        let mut img_decoder = Decoder::new(&mut img_file).unwrap();
+        let mut img_decoder = TiffDecoder::new(&mut img_file).unwrap();
 
         // check the dimensions of the image in the first page
         assert_eq!(img_decoder.dimensions().unwrap(), (2, 2));
@@ -613,7 +617,7 @@ fn test_rows_per_strip() {
 
     file.seek(SeekFrom::Start(0)).unwrap();
     {
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = TiffDecoder::new(&mut file).unwrap();
         assert_eq!(decoder.get_tag_u64(Tag::RowsPerStrip).unwrap(), 2);
         assert_eq!(decoder.strip_count().unwrap(), 50);
 
@@ -624,5 +628,37 @@ fn test_rows_per_strip() {
                 other => panic!("Incorrect strip type {:?}", other),
             }
         }
+    }
+}
+
+#[test]
+fn test_recode_exif_data() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("exif.tif");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = TiffDecoder::new(img_file).expect("Cannot create decoder");
+    let raw_exif = decoder
+        .read_exif::<TiffKindStandard>()
+        .expect("Unable to read Exif data");
+    let image_data = decoder.read_image().expect("Unable to decode");
+
+    let mut output = Cursor::new(Vec::new());
+    let mut tiff = TiffEncoder::new(&mut output).expect("Unable to create TIFF");
+    let (width, heigth) = decoder.dimensions().expect("Unable to read dimension");
+    let mut image = tiff
+        .new_image::<colortype::RGB8>(width, heigth)
+        .expect("Unable to create encoder");
+    image
+        .set_raw_exif_tags::<TiffKindStandard>(raw_exif)
+        .expect("Unable to write Exif data");
+    if let DecodingResult::U8(vec) = image_data {
+        image
+            .write_data(vec.as_slice())
+            .expect("Unable to write image data");
+        output.flush().expect("Unable to flush output");
+        output.set_position(0);
+        let sum: u64 = output.into_inner().into_iter().map(u64::from).sum();
+        assert_eq!(sum, 64565);
+    } else {
+        panic!("Wrong data type");
     }
 }
