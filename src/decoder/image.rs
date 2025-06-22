@@ -370,7 +370,6 @@ impl Image {
 
     fn create_reader<'r, R: 'r + Read>(
         reader: R,
-        #[allow(unused_variables)] photometric_interpretation: PhotometricInterpretation,
         compression_method: CompressionMethod,
         compressed_length: u64,
         #[allow(unused_variables)] jpeg_tables: Option<&[u8]>,
@@ -427,30 +426,14 @@ impl Image {
 
                 let mut decoder = zune_jpeg::JpegDecoder::new(jpeg_data);
                 let mut options: zune_core::options::DecoderOptions = Default::default();
-                match photometric_interpretation {
-                    PhotometricInterpretation::RGB => {
-                        options =
-                            options.jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB);
-                    }
-                    PhotometricInterpretation::CMYK => {
-                        options = options
-                            .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::CMYK);
-                    }
-                    PhotometricInterpretation::YCbCr => {
-                        options = options
-                            .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::YCbCr);
-                    }
-                    PhotometricInterpretation::WhiteIsZero
-                    | PhotometricInterpretation::BlackIsZero
-                    | PhotometricInterpretation::TransparencyMask => {}
-                    PhotometricInterpretation::RGBPalette | PhotometricInterpretation::CIELab => {
-                        return Err(TiffError::UnsupportedError(
-                            TiffUnsupportedError::UnsupportedInterpretation(
-                                photometric_interpretation,
-                            ),
-                        ));
-                    }
+
+                // Disable color conversion by setting the output colorspace to the input
+                // colorspace.
+                decoder.decode_headers()?;
+                if let Some(colorspace) = decoder.get_input_colorspace() {
+                    options = options.jpeg_set_out_colorspace(colorspace);
                 }
+
                 decoder.set_options(options);
 
                 let data = decoder.decode()?;
@@ -653,7 +636,6 @@ impl Image {
 
         let mut reader = Self::create_reader(
             reader,
-            photometric_interpretation,
             compression_method,
             *compressed_bytes,
             self.jpeg_tables.as_deref().map(|a| &**a),
