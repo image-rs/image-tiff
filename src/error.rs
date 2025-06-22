@@ -1,14 +1,11 @@
-use std::io;
-use std::str;
-use std::string;
-
-use quick_error::quick_error;
-
-use crate::decoder::ChunkType;
-use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
+use crate::{
+    ColorType,
+    decoder::ChunkType,
+    ifd::Value,
+    tags::{CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag},
 };
-use crate::ColorType;
+use quick_error::quick_error;
+use std::{io, str, string};
 
 quick_error! {
     /// Tiff error kinds.
@@ -102,6 +99,24 @@ quick_error! {
         CompressedDataCorrupt(message: String) {
             display("compressed data is corrupt: {message}")
         }
+        UnsignedIntegerExpected(val: Value) {
+            display("Expected unsigned integer, got: {val}")
+        }
+        SignedIntegerExpected(val: Value) {
+            display("Expected signed integer, got: {val}")
+        }
+        UnsignedShortExpected(val: Value) {
+            display("Expected unsigned short, got: {val}")
+        }
+        SignedShortExpected(val: Value) {
+            display("Expected signed short, got: {val}")
+        }
+        ByteExpected(val: Value) {
+            display("Expected unsigned byte, got: {val}")
+        }
+        SignedByteExpected(val: Value) {
+            display("Expected signed byte, got: {val}")
+        }
     }
 }
 
@@ -183,6 +198,9 @@ quick_error! {
         }
         PredictorUnavailable {
             display("the requested predictor is not available")
+        }
+        CloseNonExistentIfd {
+            display("Attempted to close a non-existent IFD")
         }
     }
 }
