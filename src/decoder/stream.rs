@@ -158,12 +158,15 @@ pub struct LZWReader<R: Read> {
 impl<R: Read> LZWReader<R> {
     /// Wraps a reader
     pub fn new(reader: R, compressed_length: usize) -> LZWReader<R> {
+        let configuration =
+            weezl::decode::Configuration::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+                .with_yield_on_full_buffer(true);
         Self {
             reader: BufReader::with_capacity(
                 (32 * 1024).min(compressed_length),
                 reader.take(u64::try_from(compressed_length).unwrap()),
             ),
-            decoder: weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8),
+            decoder: configuration.build(),
         }
     }
 }

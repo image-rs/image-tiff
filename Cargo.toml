@@ -21,7 +21,7 @@ half = { version = "2.4.1" }
 quick-error = "2.0.1"
 
 flate2 = { version = "1.0.20", optional = true }
-weezl = { version = "0.1.0", optional = true }
+weezl = { version = "0.1.10", optional = true }
 zstd = { version = "0.13", optional = true }
 zune-jpeg = { version = "0.4.17", optional = true }
 
