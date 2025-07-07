@@ -668,4 +668,6 @@ fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
 }
 
 /// Type representing an Image File Directory
+#[doc(hidden)]
+#[deprecated = "Use struct `tiff::Directory` instead which contains all fields relevant to an Image File Directory, including the offset to the next directory"]
 pub type Directory = HashMap<Tag, Entry>;

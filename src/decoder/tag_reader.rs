@@ -1,9 +1,9 @@
 use std::io::{Read, Seek};
 
-use crate::tags::Tag;
+use crate::{Directory, tags::Tag};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
-use super::ifd::{Directory, Value};
+use super::ifd::Value;
 use super::stream::EndianReader;
 use super::Limits;
 
@@ -15,7 +15,7 @@ pub(crate) struct TagReader<'a, R: Read + Seek> {
 }
 impl<'a, R: Read + Seek> TagReader<'a, R> {
     pub(crate) fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
-        Ok(match self.ifd.get(&tag) {
+        Ok(match self.ifd.get(tag) {
             Some(entry) => Some(entry.clone().val(self.limits, self.bigtiff, self.reader)?),
             None => None,
         })
