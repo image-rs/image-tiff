@@ -333,6 +333,10 @@ impl Entry {
         }
     }
 
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
     /// Returns a mem_reader for the offset/value field
     fn r(&self, byte_order: ByteOrder) -> EndianReader<io::Cursor<Vec<u8>>> {
         EndianReader::new(io::Cursor::new(self.offset.to_vec()), byte_order)

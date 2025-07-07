@@ -1,6 +1,6 @@
 use std::io::{Read, Seek};
 
-use crate::{Directory, tags::Tag};
+use crate::{tags::Tag, Directory};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
 use super::ifd::Value;

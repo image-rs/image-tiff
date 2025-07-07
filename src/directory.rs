@@ -17,6 +17,13 @@ pub struct Directory {
 }
 
 impl Directory {
+    pub fn empty(next: IfdPointer) -> Self {
+        Directory {
+            entries: BTreeMap::new(),
+            next_ifd: NonZeroU64::new(next.0),
+        }
+    }
+
     /// Retrieve the value associated with a tag.
     pub fn get(&self, tag: Tag) -> Option<&Entry> {
         self.entries.get(&tag.to_u16())
@@ -35,11 +42,27 @@ impl Directory {
     }
 
     /// Insert additional entries into the directory.
+    ///
+    /// Note that a directory can contain at most `u16::MAX` values. There may be one entry that
+    /// does not fit into the directory. This entry is silently ignored (please check [`Self::len`]
+    /// to detect the condition). Providing a tag multiple times or a tag that already exists
+    /// within this directory overwrites the entry.
     pub fn extend(&mut self, iter: impl IntoIterator<Item = (Tag, Entry)>) {
         // Code size conscious extension, avoid monomorphic extensions with the assumption of these
         // not being performance sensitive in practice. (Maybe we have a polymorphic interface for
         // the crate usage in the future.
         self.extend_inner(iter.into_iter().by_ref())
+    }
+
+    /// Get the length as a 2-byte integer.
+    ///
+    /// This is *almost* naturally bounded by the tag type being a `u16` itself. The
+    /// bounds are upheld when extending the iteration, i.e. this always corresponds to the
+    /// underlying data.
+    pub fn len(&self) -> u16 {
+        // The keys are `u16`. Since IFDs are required to have at least one entry this would have
+        // been a trivial thing to do in the specification by storing it minus one but alas.
+        self.entries.len() as u16
     }
 
     /// Get the pointer to the next IFD, if it was defined.
@@ -48,8 +71,25 @@ impl Directory {
     }
 
     fn extend_inner(&mut self, iter: &mut dyn Iterator<Item = (Tag, Entry)>) {
-        self.entries
-            .extend(iter.map(|(ty, entry)| (ty.to_u16(), entry)));
+        for (tag, entry) in iter {
+            let is_full = self.entries.len() == u16::MAX as usize;
+            // If the tag is already present, it will be overwritten.
+            let map_entry = self.entries.entry(tag.to_u16());
+
+            if is_full {
+                // Only allowed to modify if the entry is already present.
+                map_entry.and_modify(|place| *place = entry);
+            } else {
+                match map_entry {
+                    std::collections::btree_map::Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(entry);
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut occupied_entry) => {
+                        occupied_entry.insert(entry);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -62,5 +102,60 @@ impl fmt::Debug for Directory {
             )
             .field("next_ifd", &self.next_ifd)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Directory, IfdPointer};
+    use crate::{decoder::ifd::Entry, tags::Tag};
+
+    #[test]
+    fn directory_upholds_len_invariant() {
+        let mut dir = Directory::empty(IfdPointer(0));
+        assert_eq!(dir.len(), 0);
+
+        let bogus_entry = Entry::new_u64(crate::tags::Type::BYTE, 0x0, [0; 8]);
+        dir.extend((0..=u16::MAX).map(|i| {
+            let tag = Tag::Unknown(i);
+            let entry = bogus_entry.clone();
+            (tag, entry)
+        }));
+
+        assert_eq!(dir.len(), u16::MAX);
+
+        // Ensure the other tags are still writable.
+        dir.extend([(
+            Tag::Unknown(0),
+            Entry::new_u64(crate::tags::Type::BYTE, 0x42, [0; 8]),
+        )]);
+
+        assert_eq!(
+            dir.get(Tag::Unknown(0))
+                .expect("tag 0 should be present after overwriting")
+                .count(),
+            0x42
+        );
+    }
+
+    #[test]
+    fn directory_multiple_entries() {
+        let mut dir = Directory::empty(IfdPointer(0));
+        assert_eq!(dir.len(), 0);
+
+        dir.extend((0..=u16::MAX).map(|i| {
+            let tag = Tag::Unknown(1);
+            let entry = Entry::new_u64(crate::tags::Type::BYTE, i.into(), [0; 8]);
+            (tag, entry)
+        }));
+
+        assert_eq!(dir.len(), 1, "Only one tag was ever modified");
+
+        assert_eq!(
+            dir.get(Tag::Unknown(1))
+                .expect("tag 1 should be present after this chain")
+                .count(),
+            u16::MAX.into()
+        );
     }
 }
