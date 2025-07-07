@@ -18,7 +18,7 @@ pub struct EndianReader<R> {
     pub(crate) byte_order: ByteOrder,
 }
 
-impl<R: Read + Seek> EndianReader<R> {
+impl<R: Read> EndianReader<R> {
     pub fn new(reader: R, byte_order: ByteOrder) -> Self {
         Self { reader, byte_order }
     }
@@ -27,7 +27,10 @@ impl<R: Read + Seek> EndianReader<R> {
         &mut self.reader
     }
 
-    pub fn goto_offset(&mut self, offset: u64) -> io::Result<()> {
+    pub fn goto_offset(&mut self, offset: u64) -> io::Result<()>
+    where
+        R: Seek,
+    {
         self.reader.seek(io::SeekFrom::Start(offset))?;
         Ok(())
     }

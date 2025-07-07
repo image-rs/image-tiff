@@ -1,8 +1,8 @@
 use super::ifd::Value;
-use super::stream::{ByteOrder, PackBitsReader};
+use super::stream::PackBitsReader;
 use super::tag_reader::TagReader;
-use super::{predict_f16, predict_f32, predict_f64, Limits};
-use super::{stream::EndianReader, ChunkType};
+use super::ChunkType;
+use super::{predict_f16, predict_f32, predict_f64, ValueReader};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
 };
@@ -82,16 +82,20 @@ pub(crate) struct Image {
 
 impl Image {
     pub fn from_reader<R: Read + Seek>(
-        reader: &mut EndianReader<R>,
+        reader: &mut ValueReader<R>,
         ifd: Directory,
-        limits: &Limits,
-        bigtiff: bool,
     ) -> TiffResult<Image> {
+        let ValueReader {
+            reader,
+            bigtiff,
+            limits,
+        } = reader;
+
         let mut tag_reader = TagReader {
             reader,
             limits,
             ifd: &ifd,
-            bigtiff,
+            bigtiff: *bigtiff,
         };
 
         let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
@@ -540,13 +544,20 @@ impl Image {
 
     pub(crate) fn expand_chunk(
         &self,
-        reader: impl Read,
+        reader: &mut ValueReader<impl Read>,
         buf: &mut [u8],
         output_row_stride: usize,
-        byte_order: ByteOrder,
         chunk_index: u32,
-        limits: &Limits,
     ) -> TiffResult<()> {
+        let ValueReader {
+            reader,
+            bigtiff: _,
+            limits,
+        } = reader;
+
+        let byte_order = reader.byte_order;
+        let reader = reader.inner();
+
         // Validate that the color type is supported.
         let color_type = self.colortype()?;
         match color_type {
