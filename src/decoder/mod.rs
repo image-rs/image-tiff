@@ -765,6 +765,13 @@ impl<R: Read + Seek> Decoder<R> {
         self.value_reader.reader.goto_offset(offset)
     }
 
+    /// Read a directory from a known offset.
+    ///
+    /// This may always modify the position of the reader.
+    pub fn read_directory(&mut self, ptr: IfdPointer) -> TiffResult<Directory> {
+        self.value_reader.read_directory(ptr)
+    }
+
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
         if expected != self.image().chunk_type {
             return Err(TiffError::UsageError(UsageError::InvalidChunkType(
@@ -982,6 +989,37 @@ impl<R: Read + Seek> Decoder<R> {
         IfdDecoder {
             decoder: &mut self.value_reader,
             ifd: self.image.ifd.as_ref().unwrap(),
+        }
+    }
+
+    /// Prepare reading tag values for some externally given directory.
+    ///
+    /// # Examples
+    ///
+    /// This method may be used to read the values of tags in directories that have been previously
+    /// read with [`Decoder::read_directory`].
+    ///
+    /// ```no_run
+    /// use tiff::decoder::Decoder;
+    /// use tiff::tags::Tag;
+    ///
+    /// # use std::io::Cursor;
+    /// # let mut data = Cursor::new(vec![0]);
+    /// let mut decoder = Decoder::new(&mut data).unwrap();
+    /// let sub_ifds = decoder.get_tag(Tag::SubIfd)?.into_ifd_vec()?;
+    ///
+    /// for ifd in sub_ifds {
+    ///     let subdir = decoder.read_directory(ifd)?;
+    ///     let subfile = decoder.with_ifd(&subdir).find_tag(Tag::SubfileType)?;
+    ///     // todo: handle the subfiles, e.g. thumbnails
+    /// }
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
+    /// ```
+    pub fn with_ifd<'ifd>(&'ifd mut self, ifd: &'ifd Directory) -> IfdDecoder<'ifd> {
+        IfdDecoder {
+            decoder: &mut self.value_reader,
+            ifd,
         }
     }
 
