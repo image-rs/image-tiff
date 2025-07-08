@@ -113,6 +113,7 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     TileLength = 323,
     TileOffsets = 324,
     TileByteCounts = 325,
+    SubIfd = 330,
     // Data Sample Format
     SampleFormat = 339,
     SMinSampleValue = 340, // TODO add support
