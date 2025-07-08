@@ -8,10 +8,12 @@
 
 mod bytecast;
 pub mod decoder;
+mod directory;
 pub mod encoder;
 mod error;
 pub mod tags;
 
+pub use self::directory::Directory;
 pub use self::error::{TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
 
 /// An enumeration over supported color types and their bit depths

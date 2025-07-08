@@ -78,7 +78,6 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     // palette-color images (PhotometricInterpretation 3)
     ColorMap = 320, // TODO add support
     Compression = 259, // TODO add support for 2 and 32773
-    Copyright = 33_432,
     DateTime = 306,
     ExtraSamples = 338, // TODO add support
     FillOrder = 266, // TODO add support
@@ -124,12 +123,32 @@ pub enum Tag(u16) unknown("A private or extension tag") {
     ModelPixelScaleTag = 33550, // (SoftDesk)
     ModelTransformationTag = 34264, // (JPL Carto Group)
     ModelTiepointTag = 33922, // (Intergraph)
+    // <https://web.archive.org/web/20131111073619/http://www.exif.org/Exif2-1.PDF>
+    // *Do note its typo in the Decimal id*
+    Copyright = 33_432,
+    // <https://web.archive.org/web/20131111073619/http://www.exif.org/Exif2-1.PDF>
+    ExifDirectory = 0x8769,
+    // <https://web.archive.org/web/20131111073619/http://www.exif.org/Exif2-1.PDF>
+    GpsDirectory = 0x8825,
     GeoKeyDirectoryTag = 34735, // (SPOT)
     GeoDoubleParamsTag = 34736, // (SPOT)
     GeoAsciiParamsTag = 34737, // (SPOT)
+    ExifVersion = 0x9000,
     GdalNodata = 42113, // Contains areas with missing data
 }
 }
+
+/// Identifies the offset of an IFD.
+///
+/// This is represented as a 64-bit integer but only BigTIFF can utilize the bits. It is encoded
+/// as 32-bit unsigned value ([`Type::LONG`]) in regular TIFF files and as 64-bit unsigned value
+/// ([`Type::IFD8`]) in BigTIFF files.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+// We could be using `NonZeroU64` here but I find that this complicates semantics. This type
+// represents the integer value stored as a value in a tag. The semantics of treating `0` as an end
+// marker are imposed by the IFD. (It's unclear if Pointer tags such as Exif would allow `0` but in
+// practice it just returns garbage and the validity does not matter greatly to us).
+pub struct IfdPointer(pub u64);
 
 tags! {
 /// The type of an IFD entry (a 2 byte field).

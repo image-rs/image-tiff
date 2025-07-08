@@ -1,4 +1,4 @@
-use super::ifd::{Directory, Value};
+use super::ifd::Value;
 use super::stream::{ByteOrder, PackBitsReader};
 use super::tag_reader::TagReader;
 use super::{predict_f16, predict_f32, predict_f64, Limits};
@@ -6,7 +6,9 @@ use super::{stream::EndianReader, ChunkType};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
 };
-use crate::{ColorType, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError};
+use crate::{
+    ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
+};
 use std::io::{self, Cursor, Read, Seek};
 use std::sync::Arc;
 
@@ -115,7 +117,7 @@ impl Image {
         };
 
         let jpeg_tables = if compression_method == CompressionMethod::ModernJPEG
-            && ifd.contains_key(&Tag::JPEGTables)
+            && ifd.contains(Tag::JPEGTables)
         {
             let vec = tag_reader
                 .find_tag(Tag::JPEGTables)?
@@ -210,10 +212,10 @@ impl Image {
         let strip_decoder;
         let tile_attributes;
         match (
-            ifd.contains_key(&Tag::StripByteCounts),
-            ifd.contains_key(&Tag::StripOffsets),
-            ifd.contains_key(&Tag::TileByteCounts),
-            ifd.contains_key(&Tag::TileOffsets),
+            ifd.contains(Tag::StripByteCounts),
+            ifd.contains(Tag::StripOffsets),
+            ifd.contains(Tag::TileByteCounts),
+            ifd.contains(Tag::TileOffsets),
         ) {
             (true, true, false, false) => {
                 chunk_type = ChunkType::Strip;
@@ -676,7 +678,7 @@ impl Image {
                 }
             }
         } else {
-            for (i, row) in buf
+            for (_i, row) in buf
                 .chunks_mut(output_row_stride)
                 .take(data_dims.1 as usize)
                 .enumerate()

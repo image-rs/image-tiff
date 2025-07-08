@@ -333,6 +333,10 @@ impl Entry {
         }
     }
 
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
     /// Returns a mem_reader for the offset/value field
     fn r(&self, byte_order: ByteOrder) -> EndianReader<io::Cursor<Vec<u8>>> {
         EndianReader::new(io::Cursor::new(self.offset.to_vec()), byte_order)
@@ -668,4 +672,6 @@ fn offset_to_sbytes(n: usize, entry: &Entry) -> TiffResult<Value> {
 }
 
 /// Type representing an Image File Directory
+#[doc(hidden)]
+#[deprecated = "Use struct `tiff::Directory` instead which contains all fields relevant to an Image File Directory, including the offset to the next directory"]
 pub type Directory = HashMap<Tag, Entry>;
