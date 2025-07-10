@@ -29,7 +29,8 @@ fn decode_seek_chain() {
     assert!(!decoder.more_images());
 
     // Ensure we can seek, to do this again.
-    decoder.seek_to_image(0)
+    decoder
+        .seek_to_image(0)
         .expect("Failed to seek to first image");
     assert_eq!(Some(offset0), decoder.ifd_pointer());
     decoder.next_image().unwrap();
