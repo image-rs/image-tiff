@@ -693,6 +693,27 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
+    /// Start the chain of IFDs from a new location.
+    ///
+    /// This enters a new chain of image file descriptors with the indicated IFD as the new root
+    /// (similar to the file having its initial offset at the given IFD). After this call,
+    /// [`Self::seek_to_image`] works relative to the new root.
+    ///
+    /// Note that this is not atomic. If the function returns an error, the decoder is left in an
+    /// intermediate state where it does not point to any image. A valid state can be recovered by
+    /// calling [`Self::restart_ifds`] with a valid offset and a successful seek. Explicit reads
+    /// will still work.
+    pub fn restart_ifds(&mut self, offset: IfdPointer) -> TiffResult<()> {
+        self.ifd_offsets.clear();
+        self.ifd_offsets.push(offset);
+
+        self.next_ifd = Some(offset);
+        self.current_ifd = None;
+
+        self.next_ifd()?;
+        Ok(())
+    }
+
     fn next_ifd(&mut self) -> TiffResult<Directory> {
         let Some(next_ifd) = self.next_ifd.take() else {
             return Err(TiffError::FormatError(

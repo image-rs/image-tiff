@@ -1,4 +1,4 @@
-use tiff::decoder::Decoder;
+use tiff::{decoder::Decoder, tags::IfdPointer};
 
 // This file has the following IFD structure:
 //
@@ -38,4 +38,30 @@ fn decode_seek_chain() {
     decoder.next_image().unwrap();
     assert_eq!(Some(offset2), decoder.ifd_pointer());
     assert!(!decoder.more_images());
+}
+
+#[test]
+fn decode_seek_recover() {
+    let file = File::open(TEST_IMAGE_SUBIFD).expect("Cannot open test image");
+    let mut decoder = Decoder::new(file).expect("Invalid format to create decoder");
+
+    // Remember the offsets in the first iteration.
+    let offset0 = decoder.ifd_pointer().expect("First IFD pointer not found");
+    decoder.next_image().unwrap();
+    let offset1 = decoder.ifd_pointer().expect("Second IFD pointer not found");
+    decoder.next_image().unwrap();
+    let offset2 = decoder.ifd_pointer().expect("Third IFD pointer not found");
+
+    // oops!
+    let fails = decoder.restart_ifds(IfdPointer(0xdead_beef));
+    assert!(fails.is_err());
+
+    // However we can recover by restarting our seek.
+    decoder.restart_ifds(offset0)
+        .expect("Failed to restart IFDs from first image");
+    assert_eq!(Some(offset0), decoder.ifd_pointer());
+    decoder.next_image().unwrap();
+    assert_eq!(Some(offset1), decoder.ifd_pointer());
+    decoder.next_image().unwrap();
+    assert_eq!(Some(offset2), decoder.ifd_pointer());
 }
