@@ -1010,13 +1010,13 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// for ifd in sub_ifds {
     ///     let subdir = decoder.read_directory(ifd)?;
-    ///     let subfile = decoder.with_ifd(&subdir).find_tag(Tag::SubfileType)?;
-    ///     // todo: handle the subfiles, e.g. thumbnails
+    ///     let subfile = decoder.read_directory_tags(&subdir).find_tag(Tag::SubfileType)?;
+    ///     // omitted: handle the subfiles, e.g. thumbnails
     /// }
     ///
     /// # Ok::<_, tiff::TiffError>(())
     /// ```
-    pub fn with_ifd<'ifd>(&'ifd mut self, ifd: &'ifd Directory) -> IfdDecoder<'ifd> {
+    pub fn read_directory_tags<'ifd>(&'ifd mut self, ifd: &'ifd Directory) -> IfdDecoder<'ifd> {
         IfdDecoder {
             decoder: &mut self.value_reader,
             ifd,
