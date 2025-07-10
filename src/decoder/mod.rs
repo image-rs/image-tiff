@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::io::{self, Read, Seek};
 
 use crate::tags::{
@@ -14,6 +14,7 @@ use half::f16;
 use self::image::Image;
 use self::stream::{ByteOrder, EndianReader};
 
+mod cycles;
 pub mod ifd;
 mod image;
 mod stream;
@@ -263,9 +264,12 @@ where
     reader: EndianReader<R>,
     bigtiff: bool,
     limits: Limits,
+    current_ifd: Option<IfdPointer>,
     next_ifd: Option<IfdPointer>,
+    /// The IFDs we visited already in this chain of IFDs.
     ifd_offsets: Vec<IfdPointer>,
-    seen_ifds: HashSet<IfdPointer>,
+    /// Map from the ifd into the `ifd_offsets` ordered list.
+    seen_ifds: cycles::IfdCycles,
     image: Image,
 }
 
@@ -495,9 +499,8 @@ impl<R: Read + Seek> Decoder<R> {
         }
         .map(IfdPointer);
 
-        let mut seen_ifds = HashSet::new();
-        seen_ifds.insert(*next_ifd.as_ref().unwrap());
-        let ifd_offsets = vec![*next_ifd.as_ref().unwrap()];
+        let current_ifd = *next_ifd.as_ref().unwrap();
+        let ifd_offsets = vec![current_ifd];
 
         let mut decoder = Decoder {
             reader,
@@ -505,7 +508,8 @@ impl<R: Read + Seek> Decoder<R> {
             limits: Default::default(),
             next_ifd,
             ifd_offsets,
-            seen_ifds,
+            current_ifd: None,
+            seen_ifds: cycles::IfdCycles::new(),
             image: Image {
                 ifd: None,
                 width: 0,
@@ -542,6 +546,11 @@ impl<R: Read + Seek> Decoder<R> {
         self.image().colortype()
     }
 
+    /// The offset of the directory representing the current image.
+    pub fn ifd_pointer(&mut self) -> Option<IfdPointer> {
+        self.current_ifd
+    }
+
     fn image(&self) -> &Image {
         &self.image
     }
@@ -552,6 +561,8 @@ impl<R: Read + Seek> Decoder<R> {
         if ifd_index >= self.ifd_offsets.len() {
             // We possibly need to load in the next IFD
             if self.next_ifd.is_none() {
+                self.current_ifd = None;
+
                 return Err(TiffError::FormatError(
                     TiffFormatError::ImageFileDirectoryNotFound,
                 ));
@@ -574,6 +585,8 @@ impl<R: Read + Seek> Decoder<R> {
         // If the index is within the list of ifds then we can load the selected image/IFD
         if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
             let ifd = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset)?;
+            self.next_ifd = ifd.next();
+            self.current_ifd = Some(*ifd_offset);
             self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
 
             Ok(())
@@ -591,19 +604,19 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let ifd = Self::read_ifd(
-            &mut self.reader,
-            self.bigtiff,
-            self.next_ifd.take().unwrap(),
-        )?;
+        let ifd_offset = self.next_ifd.take().unwrap();
+        let ifd = Self::read_ifd(&mut self.reader, self.bigtiff, ifd_offset)?;
 
-        if let Some(next) = ifd.next() {
-            if !self.seen_ifds.insert(next) {
-                return Err(TiffError::FormatError(TiffFormatError::CycleInOffsets));
-            }
-            self.next_ifd = Some(next);
-            self.ifd_offsets.push(next);
+        // Ensure this walk does not get us into a cycle.
+        self.seen_ifds.insert_next(ifd_offset, ifd.next())?;
+
+        // Extend the list of known IFD offsets in this chain, if needed.
+        if self.ifd_offsets.last().copied() == self.current_ifd {
+            self.ifd_offsets.push(ifd_offset);
         }
+
+        self.current_ifd = Some(ifd_offset);
+        self.next_ifd = ifd.next();
 
         Ok(ifd)
     }
@@ -622,7 +635,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.next_ifd.is_some()
     }
 
-    /// Returns the byte_order
+    /// Returns the byte_order of the file.
     pub fn byte_order(&self) -> ByteOrder {
         self.reader.byte_order
     }
