@@ -3,23 +3,35 @@ use std::io::{Read, Seek};
 use crate::{tags::Tag, Directory};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
-use super::ifd::Value;
-use super::stream::EndianReader;
-use super::Limits;
+use super::ifd::{Entry, Value};
+use super::ValueReader;
 
-pub(crate) struct TagReader<'a, R: Read + Seek> {
-    pub reader: &'a mut EndianReader<R>,
-    pub ifd: &'a Directory,
-    pub limits: &'a Limits,
-    pub bigtiff: bool,
+pub(crate) struct TagReader<'lt, R: EntryDecoder + ?Sized> {
+    pub(crate) decoder: &'lt mut R,
+    pub(crate) ifd: &'lt Directory,
 }
-impl<'a, R: Read + Seek> TagReader<'a, R> {
-    pub(crate) fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
-        Ok(match self.ifd.get(tag) {
-            Some(entry) => Some(entry.clone().val(self.limits, self.bigtiff, self.reader)?),
-            None => None,
-        })
+
+pub(crate) trait EntryDecoder {
+    /// Turn an entry into a value by fetching the required bytes in the stream.
+    fn entry_val(&mut self, entry: &Entry) -> TiffResult<Value>;
+}
+
+impl<R: Seek + Read> EntryDecoder for ValueReader<R> {
+    fn entry_val(&mut self, entry: &Entry) -> TiffResult<Value> {
+        entry.val(&self.limits, self.bigtiff, &mut self.reader)
     }
+}
+
+impl<'a, R: EntryDecoder + ?Sized> TagReader<'a, R> {
+    pub(crate) fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<Value>> {
+        let entry = match self.ifd.get(tag) {
+            None => return Ok(None),
+            Some(entry) => entry.clone(),
+        };
+
+        self.decoder.entry_val(&entry).map(Some)
+    }
+
     pub(crate) fn require_tag(&mut self, tag: Tag) -> TiffResult<Value> {
         match self.find_tag(tag)? {
             Some(val) => Ok(val),
@@ -28,6 +40,7 @@ impl<'a, R: Read + Seek> TagReader<'a, R> {
             )),
         }
     }
+
     pub fn find_tag_uint_vec<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<Vec<T>>> {
         self.find_tag(tag)?
             .map(|v| v.into_u64_vec())

@@ -10,7 +10,6 @@ use crate::{
     UsageError,
 };
 use half::f16;
-use ifd::Entry;
 
 use self::image::Image;
 use self::stream::{ByteOrder, EndianReader};
@@ -286,8 +285,7 @@ struct ValueReader<R> {
 
 /// Reads a directory's tag values from an underlying stream.
 pub struct IfdDecoder<'lt> {
-    decoder: &'lt mut dyn EntryDecoder,
-    ifd: &'lt Directory,
+    inner: tag_reader::TagReader<'lt, dyn tag_reader::EntryDecoder + 'lt>,
 }
 
 fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
@@ -987,8 +985,10 @@ impl<R: Read + Seek> Decoder<R> {
     /// Get the IFD decoder for our current image IFD.
     fn image_ifd(&mut self) -> IfdDecoder<'_> {
         IfdDecoder {
-            decoder: &mut self.value_reader,
-            ifd: self.image.ifd.as_ref().unwrap(),
+            inner: tag_reader::TagReader {
+                decoder: &mut self.value_reader,
+                ifd: self.image.ifd.as_ref().unwrap(),
+            },
         }
     }
 
@@ -1018,8 +1018,10 @@ impl<R: Read + Seek> Decoder<R> {
     /// ```
     pub fn read_directory_tags<'ifd>(&'ifd mut self, ifd: &'ifd Directory) -> IfdDecoder<'ifd> {
         IfdDecoder {
-            decoder: &mut self.value_reader,
-            ifd,
+            inner: tag_reader::TagReader {
+                decoder: &mut self.value_reader,
+                ifd,
+            },
         }
     }
 
@@ -1184,27 +1186,11 @@ impl<R: Seek + Read> ValueReader<R> {
     }
 }
 
-trait EntryDecoder {
-    /// Turn an entry into a value by fetching the required bytes in the stream.
-    fn entry_val(&mut self, entry: &Entry) -> TiffResult<ifd::Value>;
-}
-
-impl<R: Seek + Read> EntryDecoder for ValueReader<R> {
-    fn entry_val(&mut self, entry: &Entry) -> TiffResult<ifd::Value> {
-        entry.val(&self.limits, self.bigtiff, &mut self.reader)
-    }
-}
-
 impl IfdDecoder<'_> {
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        let entry = match self.ifd.get(tag) {
-            None => return Ok(None),
-            Some(entry) => entry.clone(),
-        };
-
-        self.decoder.entry_val(&entry).map(Some)
+        self.inner.find_tag(tag)
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
@@ -1311,9 +1297,10 @@ impl IfdDecoder<'_> {
 impl<'l> IfdDecoder<'l> {
     /// Returns an iterator over all tags in the current image, along with their values.
     pub fn tag_iter(self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + 'l {
-        self.ifd
+        self.inner
+            .ifd
             .iter()
-            .map(|(tag, entry)| match self.decoder.entry_val(entry) {
+            .map(|(tag, entry)| match self.inner.decoder.entry_val(entry) {
                 Ok(value) => Ok((tag, value)),
                 Err(err) => Err(err),
             })

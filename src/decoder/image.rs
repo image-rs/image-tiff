@@ -82,21 +82,10 @@ pub(crate) struct Image {
 
 impl Image {
     pub fn from_reader<R: Read + Seek>(
-        reader: &mut ValueReader<R>,
+        decoder: &mut ValueReader<R>,
         ifd: Directory,
     ) -> TiffResult<Image> {
-        let ValueReader {
-            reader,
-            bigtiff,
-            limits,
-        } = reader;
-
-        let mut tag_reader = TagReader {
-            reader,
-            limits,
-            ifd: &ifd,
-            bigtiff: *bigtiff,
-        };
+        let mut tag_reader = TagReader { decoder, ifd: &ifd };
 
         let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
         let height = tag_reader.require_tag(Tag::ImageLength)?.into_u32()?;
