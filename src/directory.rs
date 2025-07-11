@@ -158,4 +158,24 @@ mod tests {
             u16::MAX.into()
         );
     }
+
+    #[test]
+    fn iteration_order() {
+        let mut dir = Directory::empty(IfdPointer(0));
+        assert_eq!(dir.len(), 0);
+
+        let fake_entry = Entry::new_u64(crate::tags::Type::BYTE, 0, [0; 8]);
+        dir.extend((0..32).map(|i| {
+            let tag = Tag::Unknown(i);
+            let entry = fake_entry.clone();
+            (tag, entry)
+        }));
+
+        let iter_order: Vec<u16> = dir.iter().map(|(tag, _e)| tag.to_u16()).collect();
+        assert_eq!(
+            iter_order,
+            (0..32).collect::<Vec<_>>(),
+            "Tags must be in ascending order according to the specification"
+        );
+    }
 }
