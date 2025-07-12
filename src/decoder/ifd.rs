@@ -350,9 +350,9 @@ impl ::std::fmt::Debug for Entry {
 
 impl Entry {
     pub fn new(type_: Type, count: u32, offset: [u8; 4]) -> Entry {
-        let mut offset = offset.to_vec();
-        offset.append(&mut vec![0; 4]);
-        Entry::new_u64(type_, count.into(), offset[..].try_into().unwrap())
+        let mut entry_off = [0u8; 8];
+        entry_off[..4].copy_from_slice(&offset);
+        Entry::new_u64(type_, count.into(), entry_off)
     }
 
     pub fn new_u64(type_: Type, count: u64, offset: [u8; 8]) -> Entry {
@@ -361,6 +361,10 @@ impl Entry {
             count,
             offset,
         }
+    }
+
+    pub fn field_type(&self) -> Type {
+        self.type_
     }
 
     pub fn count(&self) -> u64 {
