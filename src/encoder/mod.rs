@@ -6,7 +6,7 @@ use std::{
     io::{self, Seek, Write},
     marker::PhantomData,
     mem,
-    num::TryFromIntError,
+    num::{NonZeroU64, TryFromIntError},
 };
 
 use crate::{
@@ -107,6 +107,8 @@ pub struct TiffEncoder<W, K: TiffKind = TiffKindStandard> {
     kind: PhantomData<K>,
     predictor: Predictor,
     compression: Compression,
+    /// The offset of the last main image directory's `next` field.
+    last_ifd_chain: NonZeroU64,
 }
 
 /// Constructor functions to create standard Tiff files.
@@ -135,16 +137,19 @@ impl<W: Write + Seek> TiffEncoder<W, TiffKindBig> {
 impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     /// Creates a new Tiff or BigTiff encoder, inferred from the return type.
     pub fn new_generic(writer: W) -> TiffResult<Self> {
-        let mut encoder = TiffEncoder {
-            writer: TiffWriter::new(writer),
+        let mut writer = TiffWriter::new(writer);
+        K::write_header(&mut writer)?;
+
+        let last_ifd_chain = NonZeroU64::new(writer.previous_ifd_pointer::<K>())
+            .expect("Header is at a non-zero offset");
+
+        Ok(TiffEncoder {
+            writer,
             kind: PhantomData,
             predictor: Predictor::None,
             compression: Compression::Uncompressed,
-        };
-
-        K::write_header(&mut encoder.writer)?;
-
-        Ok(encoder)
+            last_ifd_chain,
+        })
     }
 
     /// Set the predictor to use
@@ -165,8 +170,8 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     }
 
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.
-    pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<W, K>> {
-        DirectoryEncoder::new(&mut self.writer)
+    pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<'_, W, K>> {
+        Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)
     }
 
     /// Create an [`ImageEncoder`] to encode an image one slice at a time.
@@ -175,7 +180,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         width: u32,
         height: u32,
     ) -> TiffResult<ImageEncoder<W, C, K>> {
-        let encoder = DirectoryEncoder::new(&mut self.writer)?;
+        let encoder = Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)?;
         ImageEncoder::new(encoder, width, height, self.compression, self.predictor)
     }
 
@@ -189,10 +194,18 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     where
         [C::Inner]: TiffValue,
     {
-        let encoder = DirectoryEncoder::new(&mut self.writer)?;
+        let encoder = Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)?;
         let image: ImageEncoder<W, C, K> =
             ImageEncoder::new(encoder, width, height, self.compression, self.predictor)?;
         image.write_data(data)
+    }
+
+    fn chain_directory<'lt>(
+        writer: &'lt mut TiffWriter<W>,
+        last_ifd_chain: &'lt mut NonZeroU64,
+    ) -> TiffResult<DirectoryEncoder<'lt, W, K>> {
+        let last_ifd = *last_ifd_chain;
+        DirectoryEncoder::new(writer, Some(last_ifd), Some(last_ifd_chain))
     }
 }
 
@@ -202,22 +215,30 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
 /// Encoding can silently fail while this is dropping.
 pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     writer: &'a mut TiffWriter<W>,
-    dropped: bool,
+    /// The position of the previous directory's `next` field, if any.
+    chained_ifd_pos: Option<NonZeroU64>,
+    /// An output to write the `next` field offset on completion.
+    write_chain: Option<&'a mut NonZeroU64>,
     // We use BTreeMap to make sure tags are written in correct order
-    ifd_pointer_pos: u64,
     ifd: BTreeMap<u16, DirectoryEntry<K::OffsetType>>,
+    dropped: bool,
 }
 
 impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
-    fn new(writer: &'a mut TiffWriter<W>) -> TiffResult<Self> {
-        // the previous word is the IFD offset position
-        let ifd_pointer_pos = writer.offset() - mem::size_of::<K::OffsetType>() as u64;
+    /// Construct a directory writer appending to data, assuming the writer is currently positioned
+    /// immediately after a previously written IFD to which to append.
+    fn new(
+        writer: &'a mut TiffWriter<W>,
+        chained_ifd_pos: Option<NonZeroU64>,
+        chain_into: Option<&'a mut NonZeroU64>,
+    ) -> TiffResult<Self> {
         writer.pad_word_boundary()?; // TODO: Do we need to adjust this for BigTiff?
         Ok(DirectoryEncoder {
             writer,
-            dropped: false,
-            ifd_pointer_pos,
+            chained_ifd_pos,
+            write_chain: chain_into,
             ifd: BTreeMap::new(),
+            dropped: false,
         })
     }
 
@@ -300,12 +321,22 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
     fn finish_internal(&mut self) -> TiffResult<()> {
         let ifd_pointer = self.write_directory()?;
-        let curr_pos = self.writer.offset();
 
-        self.writer.goto_offset(self.ifd_pointer_pos)?;
-        K::write_offset(self.writer, ifd_pointer)?;
-        self.writer.goto_offset(curr_pos)?;
+        if let Some(prior) = self.chained_ifd_pos {
+            let curr_pos = self.writer.offset();
+
+            self.writer.goto_offset(prior.get())?;
+            K::write_offset(self.writer, ifd_pointer)?;
+
+            self.writer.goto_offset(curr_pos)?;
+        }
+
         K::write_offset(self.writer, 0)?;
+
+        if let Some(prior) = self.write_chain.take() {
+            *prior = NonZeroU64::new(self.writer.previous_ifd_pointer::<K>())
+                .expect("IFD chain field is at a non-zero offset");
+        }
 
         self.dropped = true;
 
