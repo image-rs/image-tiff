@@ -371,6 +371,10 @@ impl Entry {
         self.count
     }
 
+    pub(crate) fn offset(&self) -> &[u8] {
+        &self.offset
+    }
+
     /// Returns a mem_reader for the offset/value field
     fn r(&self, byte_order: ByteOrder) -> EndianReader<io::Cursor<Vec<u8>>> {
         EndianReader::new(io::Cursor::new(self.offset.to_vec()), byte_order)

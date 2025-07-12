@@ -10,9 +10,10 @@ use std::{
 };
 
 use crate::{
+    decoder::ifd::Entry,
     error::{TiffResult, UsageError},
-    tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag},
-    TiffError, TiffFormatError,
+    tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag, Type},
+    Directory, TiffError, TiffFormatError,
 };
 
 pub mod colortype;
@@ -220,6 +221,7 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     /// An output to write the `next` field offset on completion.
     write_chain: Option<&'a mut NonZeroU64>,
     // We use BTreeMap to make sure tags are written in correct order
+    directory: Directory,
     ifd: BTreeMap<u16, DirectoryEntry<K::OffsetType>>,
     dropped: bool,
 }
@@ -237,6 +239,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             writer,
             chained_ifd_pos,
             write_chain: chain_into,
+            directory: Directory::empty(),
             ifd: BTreeMap::new(),
             dropped: false,
         })
@@ -253,7 +256,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         self.ifd.insert(
             tag.to_u16(),
             DirectoryEntry {
-                data_type: <T>::FIELD_TYPE.to_u16(),
+                data_type: <T>::FIELD_TYPE,
                 count: value.count().try_into()?,
                 data: bytes,
             },
@@ -263,46 +266,67 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
-        // Start by writing out all values
-        for &mut DirectoryEntry {
-            data: ref mut bytes,
-            ..
-        } in self.ifd.values_mut()
-        {
-            let data_bytes = mem::size_of::<K::OffsetType>();
-
-            if bytes.len() > data_bytes {
-                let offset = self.writer.offset();
-                self.writer.write_bytes(bytes)?;
-                *bytes = vec![0; data_bytes];
-                let mut writer = TiffWriter::new(bytes as &mut [u8]);
-                K::write_offset(&mut writer, offset)?;
-            } else {
-                while bytes.len() < data_bytes {
-                    bytes.push(0);
-                }
-            }
+        // Start by turning all buffered unwritten values into entries.
+        for (&tag, value) in &self.ifd {
+            let entry = Self::write_value(&mut self.writer, value)?;
+            self.directory.extend([(Tag::Unknown(tag), entry)]);
         }
 
         let offset = self.writer.offset();
+        K::write_entry_count(self.writer, self.directory.len())?;
 
-        K::write_entry_count(self.writer, self.ifd.len())?;
-        for (
-            tag,
-            DirectoryEntry {
-                data_type: field_type,
-                count,
-                data: offset,
-            },
-        ) in self.ifd.iter()
-        {
-            self.writer.write_u16(*tag)?;
-            self.writer.write_u16(*field_type)?;
-            (*count).write(self.writer)?;
-            self.writer.write_bytes(offset)?;
+        let offset_bytes = mem::size_of::<K::OffsetType>();
+        for (tag, entry) in self.directory.iter() {
+            self.writer.write_u16(tag.to_u16())?;
+            self.writer.write_u16(entry.field_type().to_u16())?;
+            let count = K::convert_offset(entry.count())?;
+            count.write(self.writer)?;
+            self.writer.write_bytes(&entry.offset()[..offset_bytes])?;
         }
 
         Ok(offset)
+    }
+
+    fn write_value(
+        writer: &mut TiffWriter<W>,
+        value: &DirectoryEntry<K::OffsetType>,
+    ) -> TiffResult<Entry> {
+        let &DirectoryEntry {
+            data: ref bytes,
+            ref count,
+            data_type,
+        } = value;
+
+        let in_entry_bytes = mem::size_of::<K::OffsetType>();
+        let mut offset_bytes = [0; 8];
+
+        if bytes.len() > in_entry_bytes {
+            let offset = writer.offset();
+            writer.write_bytes(&bytes)?;
+
+            let offset = K::convert_offset(offset)?;
+            offset_bytes[..offset.bytes()].copy_from_slice(&offset.data());
+        } else {
+            // Note: we have indicated our native byte order in the header, hence this
+            // corresponds to our byte order no matter the value type.
+            offset_bytes[..bytes.len()].copy_from_slice(&bytes);
+        }
+
+        // Undoing some hidden type. Offset is either u32 or u64. Due to the trait API being public
+        // and some oversight, we can not clone the `count: K::OffsetType` and thus not convert it.
+        // Instead, write it to a buffer...
+        let mut count_bytes = [0; 8];
+        // Nominally Cow but we only expect `Cow::Borrowed`.
+        count_bytes[..count.bytes()].copy_from_slice(&count.data());
+
+        Ok(if in_entry_bytes == 4 {
+            let count = u32::from_ne_bytes(count_bytes[..4].try_into().unwrap());
+            Entry::new(data_type, count, offset_bytes[..4].try_into().unwrap())
+        } else {
+            debug_assert_eq!(in_entry_bytes, 8);
+            let count = u64::from_ne_bytes(count_bytes);
+            Entry::new_u64(data_type, count, offset_bytes)
+        })
     }
 
     /// Write some data to the tiff file, the offset of the data is returned.
@@ -653,7 +677,7 @@ impl<'a, W: Write + Seek, C: ColorType, K: TiffKind> Drop for ImageEncoder<'a, W
 }
 
 struct DirectoryEntry<S> {
-    data_type: u16,
+    data_type: Type,
     count: S,
     data: Vec<u8>,
 }
