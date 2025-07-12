@@ -6,7 +6,7 @@ use std::mem;
 use std::str;
 
 use super::stream::{ByteOrder, EndianReader};
-use crate::tags::{Tag, Type};
+use crate::tags::{IfdPointer, Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
 use self::Value::{
@@ -126,6 +126,25 @@ impl Value {
     pub fn into_f64(self) -> TiffResult<f64> {
         match self {
             Double(val) => Ok(val),
+            _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
+        }
+    }
+
+    /// Turn this value into an `IfdPointer`.
+    ///
+    /// Notice that this does not take an argument, a 64-bit IFD is always allowed. If the
+    /// difference is crucial and you do not want to be permissive you're expected to filter this
+    /// out before.
+    ///
+    /// For compatibility the smaller sized tags should always be allowed i.e. you might use a
+    /// non-bigtiff's directory and its tag types and move it straight to a bigtiff. For instance
+    /// the SubIFD tag is defined as `LONG or IFD`:
+    ///
+    /// <https://web.archive.org/web/20181105221012/https://www.awaresystems.be/imaging/tiff/tifftags/subifds.html>
+    pub fn into_ifd_pointer(self) -> TiffResult<IfdPointer> {
+        match self {
+            Unsigned(val) | Ifd(val) => Ok(IfdPointer(val.into())),
+            IfdBig(val) => Ok(IfdPointer(val)),
             _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
@@ -299,6 +318,17 @@ impl Value {
             SRationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
             _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
+    }
+
+    pub fn into_ifd_vec(self) -> TiffResult<Vec<IfdPointer>> {
+        let vec = match self {
+            Unsigned(val) | Ifd(val) => return Ok(vec![IfdPointer(val.into())]),
+            IfdBig(val) => return Ok(vec![IfdPointer(val)]),
+            List(vec) => vec,
+            _ => return Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
+        };
+
+        vec.into_iter().map(Self::into_ifd_pointer).collect()
     }
 }
 

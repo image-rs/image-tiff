@@ -261,9 +261,9 @@ pub struct Decoder<R>
 where
     R: Read + Seek,
 {
-    reader: EndianReader<R>,
-    bigtiff: bool,
-    limits: Limits,
+    /// There are grouped for borrow checker reasons. This allows us to implement methods that
+    /// borrow the stream access and the other fields mutably at the same time.
+    value_reader: ValueReader<R>,
     current_ifd: Option<IfdPointer>,
     next_ifd: Option<IfdPointer>,
     /// The IFDs we visited already in this chain of IFDs.
@@ -271,6 +271,21 @@ where
     /// Map from the ifd into the `ifd_offsets` ordered list.
     seen_ifds: cycles::IfdCycles,
     image: Image,
+}
+
+/// All the information needed to read and interpret byte slices from the underlying file, i.e. to
+/// turn an entry of a tag into an `ifd::Value` or otherwise fetch arrays of similar types. Used
+/// only as the type of the field [`Decoder::value_reader`] and passed to submodules.
+#[derive(Debug)]
+struct ValueReader<R> {
+    reader: EndianReader<R>,
+    bigtiff: bool,
+    limits: Limits,
+}
+
+/// Reads a directory's tag values from an underlying stream.
+pub struct IfdDecoder<'lt> {
+    inner: tag_reader::TagReader<'lt, dyn tag_reader::EntryDecoder + 'lt>,
 }
 
 fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
@@ -503,9 +518,11 @@ impl<R: Read + Seek> Decoder<R> {
         let ifd_offsets = vec![current_ifd];
 
         let mut decoder = Decoder {
-            reader,
-            bigtiff,
-            limits: Default::default(),
+            value_reader: ValueReader {
+                reader,
+                bigtiff,
+                limits: Default::default(),
+            },
             next_ifd,
             ifd_offsets,
             current_ifd: None,
@@ -534,7 +551,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
-        self.limits = limits;
+        self.value_reader.limits = limits;
         self
     }
 
@@ -584,10 +601,10 @@ impl<R: Read + Seek> Decoder<R> {
 
         // If the index is within the list of ifds then we can load the selected image/IFD
         if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            let ifd = Self::read_ifd(&mut self.reader, self.bigtiff, *ifd_offset)?;
+            let ifd = self.value_reader.read_directory(*ifd_offset)?;
             self.next_ifd = ifd.next();
             self.current_ifd = Some(*ifd_offset);
-            self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+            self.image = Image::from_reader(&mut self.value_reader, ifd)?;
 
             Ok(())
         } else {
@@ -598,24 +615,23 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn next_ifd(&mut self) -> TiffResult<Directory> {
-        if self.next_ifd.is_none() {
+        let Some(next_ifd) = self.next_ifd.take() else {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
-        }
+        };
 
-        let ifd_offset = self.next_ifd.take().unwrap();
-        let ifd = Self::read_ifd(&mut self.reader, self.bigtiff, ifd_offset)?;
+        let ifd = self.value_reader.read_directory(next_ifd)?;
 
         // Ensure this walk does not get us into a cycle.
-        self.seen_ifds.insert_next(ifd_offset, ifd.next())?;
+        self.seen_ifds.insert_next(next_ifd, ifd.next())?;
 
         // Extend the list of known IFD offsets in this chain, if needed.
         if self.ifd_offsets.last().copied() == self.current_ifd {
-            self.ifd_offsets.push(ifd_offset);
+            self.ifd_offsets.push(next_ifd);
         }
 
-        self.current_ifd = Some(ifd_offset);
+        self.current_ifd = Some(next_ifd);
         self.next_ifd = ifd.next();
 
         Ok(ifd)
@@ -626,7 +642,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
         let ifd = self.next_ifd()?;
-        self.image = Image::from_reader(&mut self.reader, ifd, &self.limits, self.bigtiff)?;
+        self.image = Image::from_reader(&mut self.value_reader, ifd)?;
         Ok(())
     }
 
@@ -637,12 +653,12 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns the byte_order of the file.
     pub fn byte_order(&self) -> ByteOrder {
-        self.reader.byte_order
+        self.value_reader.reader.byte_order
     }
 
     #[inline]
     pub fn read_ifd_offset(&mut self) -> Result<u64, io::Error> {
-        if self.bigtiff {
+        if self.value_reader.bigtiff {
             self.read_long8()
         } else {
             self.read_long().map(u64::from)
@@ -653,61 +669,61 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_byte(&mut self) -> Result<u8, io::Error> {
         let mut buf = [0; 1];
-        self.reader.inner().read_exact(&mut buf)?;
+        self.value_reader.reader.inner().read_exact(&mut buf)?;
         Ok(buf[0])
     }
 
     /// Reads a TIFF short value
     #[inline]
     pub fn read_short(&mut self) -> Result<u16, io::Error> {
-        self.reader.read_u16()
+        self.value_reader.reader.read_u16()
     }
 
     /// Reads a TIFF sshort value
     #[inline]
     pub fn read_sshort(&mut self) -> Result<i16, io::Error> {
-        self.reader.read_i16()
+        self.value_reader.reader.read_i16()
     }
 
     /// Reads a TIFF long value
     #[inline]
     pub fn read_long(&mut self) -> Result<u32, io::Error> {
-        self.reader.read_u32()
+        self.value_reader.reader.read_u32()
     }
 
     /// Reads a TIFF slong value
     #[inline]
     pub fn read_slong(&mut self) -> Result<i32, io::Error> {
-        self.reader.read_i32()
+        self.value_reader.reader.read_i32()
     }
 
     /// Reads a TIFF float value
     #[inline]
     pub fn read_float(&mut self) -> Result<f32, io::Error> {
-        self.reader.read_f32()
+        self.value_reader.reader.read_f32()
     }
 
     /// Reads a TIFF double value
     #[inline]
     pub fn read_double(&mut self) -> Result<f64, io::Error> {
-        self.reader.read_f64()
+        self.value_reader.reader.read_f64()
     }
 
     #[inline]
     pub fn read_long8(&mut self) -> Result<u64, io::Error> {
-        self.reader.read_u64()
+        self.value_reader.reader.read_u64()
     }
 
     #[inline]
     pub fn read_slong8(&mut self) -> Result<i64, io::Error> {
-        self.reader.read_i64()
+        self.value_reader.reader.read_i64()
     }
 
     /// Reads a string
     #[inline]
     pub fn read_string(&mut self, length: usize) -> TiffResult<String> {
         let mut out = vec![0; length];
-        self.reader.inner().read_exact(&mut out)?;
+        self.value_reader.reader.inner().read_exact(&mut out)?;
         // Strings may be null-terminated, so we trim anything downstream of the null byte
         if let Some(first) = out.iter().position(|&b| b == 0) {
             out.truncate(first);
@@ -718,13 +734,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Reads a TIFF IFA offset/value field
     #[inline]
     pub fn read_offset(&mut self) -> TiffResult<[u8; 4]> {
-        if self.bigtiff {
+        if self.value_reader.bigtiff {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
         }
         let mut val = [0; 4];
-        self.reader.inner().read_exact(&mut val)?;
+        self.value_reader.reader.inner().read_exact(&mut val)?;
         Ok(val)
     }
 
@@ -732,7 +748,7 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_offset_u64(&mut self) -> Result<[u8; 8], io::Error> {
         let mut val = [0; 8];
-        self.reader.inner().read_exact(&mut val)?;
+        self.value_reader.reader.inner().read_exact(&mut val)?;
         Ok(val)
     }
 
@@ -744,211 +760,30 @@ impl<R: Read + Seek> Decoder<R> {
 
     #[inline]
     pub fn goto_offset_u64(&mut self, offset: u64) -> io::Result<()> {
-        self.reader.goto_offset(offset)
+        self.value_reader.reader.goto_offset(offset)
     }
 
-    /// Read a directory from a known offset.
+    /// Read a tag-entry map from a known offset.
     ///
-    /// This may always modify the position of the reader.
+    /// A TIFF [`Directory`], aka. image file directory aka. IFD, refers to a map from
+    /// tags–identified by a `u16`–to a typed vector of elements. It is encoded as a list
+    /// of ascending tag values with the offset and type of their corresponding values. The
+    /// semantic interpretations of a tag and its type requirements depend on the context of the
+    /// directory. The main image directories, those iterated over by the `Decoder` after
+    /// construction, are represented by [`Tag`] and [`ifd::Value`]. Other forms are EXIF and GPS
+    /// data as well as thumbnail Sub-IFD representations associated with each image file.
+    ///
+    /// This method allows the decoding of a directory from an arbitrary offset in the image file
+    /// with no specific semantic interpretation. Such an offset is usually found as the value of
+    /// a tag, e.g. [`Tag::SubIfd`], [`Tag::ExifDirectory`], [`Tag::GpsDirectory`] and recovered
+    /// from the associated value by [`ifd::Value::into_ifd_pointer`].
+    ///
+    /// The library will not verify whether the offset overlaps any other directory or would form a
+    /// cycle with any other directory when calling this method. This will modify the position of
+    /// the reader, i.e. continuing with direct reads at a later point will require going back with
+    /// [`Self::goto_offset`].
     pub fn read_directory(&mut self, ptr: IfdPointer) -> TiffResult<Directory> {
-        Self::read_ifd(&mut self.reader, self.bigtiff, ptr)
-    }
-
-    /// Reads a IFD entry.
-    // An IFD entry has four fields:
-    //
-    // Tag   2 bytes
-    // Type  2 bytes
-    // Count 4 bytes
-    // Value 4 bytes either a pointer the value itself
-    fn read_entry(
-        reader: &mut EndianReader<R>,
-        bigtiff: bool,
-    ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
-        let tag = Tag::from_u16_exhaustive(reader.read_u16()?);
-        let type_ = match Type::from_u16(reader.read_u16()?) {
-            Some(t) => t,
-            None => {
-                // Unknown type. Skip this entry according to spec.
-                reader.read_u32()?;
-                reader.read_u32()?;
-                return Ok(None);
-            }
-        };
-        let entry = if bigtiff {
-            let mut offset = [0; 8];
-
-            let count = reader.read_u64()?;
-            reader.inner().read_exact(&mut offset)?;
-            ifd::Entry::new_u64(type_, count, offset)
-        } else {
-            let mut offset = [0; 4];
-
-            let count = reader.read_u32()?;
-            reader.inner().read_exact(&mut offset)?;
-            ifd::Entry::new(type_, count, offset)
-        };
-        Ok(Some((tag, entry)))
-    }
-
-    /// Reads the IFD starting at the indicated location.
-    fn read_ifd(
-        reader: &mut EndianReader<R>,
-        bigtiff: bool,
-        ifd_location: IfdPointer,
-    ) -> TiffResult<Directory> {
-        reader.goto_offset(ifd_location.0)?;
-
-        let mut entries: BTreeMap<_, _> = BTreeMap::new();
-
-        let num_tags = if bigtiff {
-            reader.read_u64()?
-        } else {
-            reader.read_u16()?.into()
-        };
-
-        for _ in 0..num_tags {
-            let (tag, entry) = match Self::read_entry(reader, bigtiff)? {
-                Some(val) => val,
-                None => {
-                    continue;
-                } // Unknown data type in tag, skip
-            };
-
-            entries.insert(tag.to_u16(), entry);
-        }
-
-        let next_ifd = if bigtiff {
-            reader.read_u64()?
-        } else {
-            reader.read_u32()?.into()
-        };
-
-        let next_ifd = core::num::NonZeroU64::new(next_ifd);
-
-        Ok(Directory { entries, next_ifd })
-    }
-
-    /// Tries to retrieve a tag.
-    /// Return `Ok(None)` if the tag is not present.
-    pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        let entry = match self.image().ifd.as_ref().unwrap().get(tag) {
-            None => return Ok(None),
-            Some(entry) => entry.clone(),
-        };
-
-        Ok(Some(entry.val(
-            &self.limits,
-            self.bigtiff,
-            &mut self.reader,
-        )?))
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired unsigned type.
-    pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
-        self.find_tag(tag)?
-            .map(|v| v.into_u64())
-            .transpose()?
-            .map(|value| {
-                T::try_from(value).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into())
-            })
-            .transpose()
-    }
-
-    /// Tries to retrieve a vector of all a tag's values and convert them to
-    /// the desired unsigned type.
-    pub fn find_tag_unsigned_vec<T: TryFrom<u64>>(
-        &mut self,
-        tag: Tag,
-    ) -> TiffResult<Option<Vec<T>>> {
-        self.find_tag(tag)?
-            .map(|v| v.into_u64_vec())
-            .transpose()?
-            .map(|v| {
-                v.into_iter()
-                    .map(|u| {
-                        T::try_from(u).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into())
-                    })
-                    .collect()
-            })
-            .transpose()
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired unsigned type.
-    /// Returns an error if the tag is not present.
-    pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
-        self.find_tag_unsigned(tag)?
-            .ok_or_else(|| TiffFormatError::RequiredTagNotFound(tag).into())
-    }
-
-    /// Tries to retrieve a tag.
-    /// Returns an error if the tag is not present
-    pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
-        match self.find_tag(tag)? {
-            Some(val) => Ok(val),
-            None => Err(TiffError::FormatError(
-                TiffFormatError::RequiredTagNotFound(tag),
-            )),
-        }
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
-        self.get_tag(tag)?.into_u32()
-    }
-    pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
-        self.get_tag(tag)?.into_u64()
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
-        self.get_tag(tag)?.into_f32()
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
-        self.get_tag(tag)?.into_f64()
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
-        self.get_tag(tag)?.into_u32_vec()
-    }
-
-    pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
-        self.get_tag(tag)?.into_u16_vec()
-    }
-    pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
-        self.get_tag(tag)?.into_u64_vec()
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
-        self.get_tag(tag)?.into_f32_vec()
-    }
-
-    /// Tries to retrieve a tag and convert it to the desired type.
-    pub fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
-        self.get_tag(tag)?.into_f64_vec()
-    }
-
-    /// Tries to retrieve a tag and convert it to a 8bit vector.
-    pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
-        self.get_tag(tag)?.into_u8_vec()
-    }
-
-    /// Tries to retrieve a tag and convert it to a ascii vector.
-    pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
-        self.get_tag(tag)?.into_string()
-    }
-
-    /// Returns an iterator over all tags in the current image, along with their values.
-    pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
-        self.image.ifd.as_ref().unwrap().iter().map(|(tag, entry)| {
-            entry
-                .val(&self.limits, self.bigtiff, &mut self.reader)
-                .map(|value| (tag, value))
-        })
+        self.value_reader.read_directory(ptr)
     }
 
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
@@ -1003,9 +838,7 @@ impl<R: Read + Seek> Decoder<R> {
         output_width: usize,
     ) -> TiffResult<()> {
         let offset = self.image.chunk_file_range(chunk_index)?.0;
-        self.reader.goto_offset(offset)?;
-
-        let byte_order = self.reader.byte_order;
+        self.goto_offset_u64(offset)?;
 
         let output_row_stride = (output_width as u64)
             .saturating_mul(self.image.samples_per_pixel() as u64)
@@ -1013,12 +846,10 @@ impl<R: Read + Seek> Decoder<R> {
             / 8;
 
         self.image.expand_chunk(
-            self.reader.inner(),
+            &mut self.value_reader,
             buffer.as_bytes_mut(),
             output_row_stride.try_into()?,
-            byte_order,
             chunk_index,
-            &self.limits,
         )?;
 
         Ok(())
@@ -1041,29 +872,31 @@ impl<R: Read + Seek> Decoder<R> {
             .ok_or(TiffError::LimitsExceeded)?;
 
         let max_sample_bits = self.image().bits_per_sample;
+        let limits = &self.value_reader.limits;
+
         match self.image().sample_format {
             SampleFormat::Uint => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_u8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_u16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_u32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_u64(buffer_size, &self.limits),
+                n if n <= 8 => DecodingResult::new_u8(buffer_size, limits),
+                n if n <= 16 => DecodingResult::new_u16(buffer_size, limits),
+                n if n <= 32 => DecodingResult::new_u32(buffer_size, limits),
+                n if n <= 64 => DecodingResult::new_u64(buffer_size, limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
             },
             SampleFormat::IEEEFP => match max_sample_bits {
-                16 => DecodingResult::new_f16(buffer_size, &self.limits),
-                32 => DecodingResult::new_f32(buffer_size, &self.limits),
-                64 => DecodingResult::new_f64(buffer_size, &self.limits),
+                16 => DecodingResult::new_f16(buffer_size, limits),
+                32 => DecodingResult::new_f32(buffer_size, limits),
+                64 => DecodingResult::new_f64(buffer_size, limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
             },
             SampleFormat::Int => match max_sample_bits {
-                n if n <= 8 => DecodingResult::new_i8(buffer_size, &self.limits),
-                n if n <= 16 => DecodingResult::new_i16(buffer_size, &self.limits),
-                n if n <= 32 => DecodingResult::new_i32(buffer_size, &self.limits),
-                n if n <= 64 => DecodingResult::new_i64(buffer_size, &self.limits),
+                n if n <= 8 => DecodingResult::new_i8(buffer_size, limits),
+                n if n <= 16 => DecodingResult::new_i16(buffer_size, limits),
+                n if n <= 32 => DecodingResult::new_i32(buffer_size, limits),
+                n if n <= 64 => DecodingResult::new_i64(buffer_size, limits),
                 n => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedBitsPerChannel(n),
                 )),
@@ -1148,23 +981,344 @@ impl<R: Read + Seek> Decoder<R> {
         // * pass requested band as parameter
         // * collect bands to a RGB encoding result in case of RGB bands
         for chunk in 0..image_chunks {
-            self.reader.goto_offset(self.image().chunk_offsets[chunk])?;
+            self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
 
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
             let buffer_offset =
                 y * output_row_stride * chunk_dimensions.1 as usize + x * chunk_row_bytes;
-            let byte_order = self.reader.byte_order;
             self.image.expand_chunk(
-                self.reader.inner(),
+                &mut self.value_reader,
                 &mut result.as_buffer(0).as_bytes_mut()[buffer_offset..],
                 output_row_stride,
-                byte_order,
                 chunk as u32,
-                &self.limits,
             )?;
         }
 
         Ok(result)
+    }
+
+    /// Get the IFD decoder for our current image IFD.
+    fn image_ifd(&mut self) -> IfdDecoder<'_> {
+        IfdDecoder {
+            inner: tag_reader::TagReader {
+                decoder: &mut self.value_reader,
+                ifd: self.image.ifd.as_ref().unwrap(),
+            },
+        }
+    }
+
+    /// Prepare reading values for tags of a given directory.
+    ///
+    /// # Examples
+    ///
+    /// This method may be used to read the values of tags in directories that have been previously
+    /// read with [`Decoder::read_directory`].
+    ///
+    /// ```no_run
+    /// use tiff::decoder::Decoder;
+    /// use tiff::tags::Tag;
+    ///
+    /// # use std::io::Cursor;
+    /// # let mut data = Cursor::new(vec![0]);
+    /// let mut decoder = Decoder::new(&mut data).unwrap();
+    /// let sub_ifds = decoder.get_tag(Tag::SubIfd)?.into_ifd_vec()?;
+    ///
+    /// for ifd in sub_ifds {
+    ///     let subdir = decoder.read_directory(ifd)?;
+    ///     let subfile = decoder.read_directory_tags(&subdir).find_tag(Tag::SubfileType)?;
+    ///     // omitted: handle the subfiles, e.g. thumbnails
+    /// }
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
+    /// ```
+    pub fn read_directory_tags<'ifd>(&'ifd mut self, ifd: &'ifd Directory) -> IfdDecoder<'ifd> {
+        IfdDecoder {
+            inner: tag_reader::TagReader {
+                decoder: &mut self.value_reader,
+                ifd,
+            },
+        }
+    }
+
+    /// Tries to retrieve a tag from the current image directory.
+    /// Return `Ok(None)` if the tag is not present.
+    pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
+        self.image_ifd().find_tag(tag)
+    }
+
+    /// Tries to retrieve a tag in the current image directory and convert it to the desired
+    /// unsigned type.
+    pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
+        self.image_ifd().find_tag_unsigned(tag)
+    }
+
+    /// Tries to retrieve a tag from the current image directory and convert it to the desired
+    /// unsigned type. Returns an error if the tag is not present.
+    pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
+        self.image_ifd().get_tag_unsigned(tag)
+    }
+
+    /// Tries to retrieve a tag from the current image directory.
+    /// Returns an error if the tag is not present
+    pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
+        self.image_ifd().get_tag(tag)
+    }
+
+    pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
+        self.get_tag(tag)?.into_u32()
+    }
+
+    pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
+        self.get_tag(tag)?.into_u64()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
+        self.get_tag(tag)?.into_f32()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
+        self.get_tag(tag)?.into_f64()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
+        self.get_tag(tag)?.into_u32_vec()
+    }
+
+    pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
+        self.get_tag(tag)?.into_u16_vec()
+    }
+
+    pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
+        self.get_tag(tag)?.into_u64_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
+        self.get_tag(tag)?.into_f32_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
+        self.get_tag(tag)?.into_f64_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to a 8bit vector.
+    pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
+        self.get_tag(tag)?.into_u8_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to a ascii vector.
+    pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
+        self.get_tag(tag)?.into_string()
+    }
+
+    pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
+        self.image_ifd().tag_iter()
+    }
+}
+
+impl<R: Seek + Read> ValueReader<R> {
+    pub(crate) fn read_directory(&mut self, ptr: IfdPointer) -> Result<Directory, TiffError> {
+        Self::read_ifd(&mut self.reader, self.bigtiff, ptr)
+    }
+
+    /// Reads a IFD entry.
+    // An IFD entry has four fields:
+    //
+    // Tag   2 bytes
+    // Type  2 bytes
+    // Count 4 bytes
+    // Value 4 bytes either a pointer the value itself
+    fn read_entry(
+        reader: &mut EndianReader<R>,
+        bigtiff: bool,
+    ) -> TiffResult<Option<(Tag, ifd::Entry)>> {
+        let tag = Tag::from_u16_exhaustive(reader.read_u16()?);
+        let type_ = match Type::from_u16(reader.read_u16()?) {
+            Some(t) => t,
+            None => {
+                // Unknown type. Skip this entry according to spec.
+                reader.read_u32()?;
+                reader.read_u32()?;
+                return Ok(None);
+            }
+        };
+        let entry = if bigtiff {
+            let mut offset = [0; 8];
+
+            let count = reader.read_u64()?;
+            reader.inner().read_exact(&mut offset)?;
+            ifd::Entry::new_u64(type_, count, offset)
+        } else {
+            let mut offset = [0; 4];
+
+            let count = reader.read_u32()?;
+            reader.inner().read_exact(&mut offset)?;
+            ifd::Entry::new(type_, count, offset)
+        };
+        Ok(Some((tag, entry)))
+    }
+
+    /// Reads the IFD starting at the indicated location.
+    fn read_ifd(
+        reader: &mut EndianReader<R>,
+        bigtiff: bool,
+        ifd_location: IfdPointer,
+    ) -> TiffResult<Directory> {
+        reader.goto_offset(ifd_location.0)?;
+
+        let mut entries: BTreeMap<_, _> = BTreeMap::new();
+
+        let num_tags = if bigtiff {
+            reader.read_u64()?
+        } else {
+            reader.read_u16()?.into()
+        };
+
+        for _ in 0..num_tags {
+            let (tag, entry) = match Self::read_entry(reader, bigtiff)? {
+                Some(val) => val,
+                None => {
+                    continue;
+                } // Unknown data type in tag, skip
+            };
+
+            entries.insert(tag.to_u16(), entry);
+        }
+
+        let next_ifd = if bigtiff {
+            reader.read_u64()?
+        } else {
+            reader.read_u32()?.into()
+        };
+
+        let next_ifd = core::num::NonZeroU64::new(next_ifd);
+
+        Ok(Directory { entries, next_ifd })
+    }
+}
+
+impl IfdDecoder<'_> {
+    /// Tries to retrieve a tag.
+    /// Return `Ok(None)` if the tag is not present.
+    pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
+        self.inner.find_tag(tag)
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired unsigned type.
+    pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
+        self.find_tag(tag)?
+            .map(|v| v.into_u64())
+            .transpose()?
+            .map(|value| {
+                T::try_from(value).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into())
+            })
+            .transpose()
+    }
+
+    /// Tries to retrieve a vector of all a tag's values and convert them to
+    /// the desired unsigned type.
+    pub fn find_tag_unsigned_vec<T: TryFrom<u64>>(
+        &mut self,
+        tag: Tag,
+    ) -> TiffResult<Option<Vec<T>>> {
+        self.find_tag(tag)?
+            .map(|v| v.into_u64_vec())
+            .transpose()?
+            .map(|v| {
+                v.into_iter()
+                    .map(|u| {
+                        T::try_from(u).map_err(|_| TiffFormatError::InvalidTagValueType(tag).into())
+                    })
+                    .collect()
+            })
+            .transpose()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired unsigned type.
+    /// Returns an error if the tag is not present.
+    pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
+        self.find_tag_unsigned(tag)?
+            .ok_or_else(|| TiffFormatError::RequiredTagNotFound(tag).into())
+    }
+
+    /// Tries to retrieve a tag.
+    /// Returns an error if the tag is not present
+    pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
+        match self.find_tag(tag)? {
+            Some(val) => Ok(val),
+            None => Err(TiffError::FormatError(
+                TiffFormatError::RequiredTagNotFound(tag),
+            )),
+        }
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
+        self.get_tag(tag)?.into_u32()
+    }
+
+    pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
+        self.get_tag(tag)?.into_u64()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
+        self.get_tag(tag)?.into_f32()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
+        self.get_tag(tag)?.into_f64()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
+        self.get_tag(tag)?.into_u32_vec()
+    }
+
+    pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
+        self.get_tag(tag)?.into_u16_vec()
+    }
+
+    pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
+        self.get_tag(tag)?.into_u64_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
+        self.get_tag(tag)?.into_f32_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to the desired type.
+    pub fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
+        self.get_tag(tag)?.into_f64_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to a 8bit vector.
+    pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
+        self.get_tag(tag)?.into_u8_vec()
+    }
+
+    /// Tries to retrieve a tag and convert it to a ascii vector.
+    pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
+        self.get_tag(tag)?.into_string()
+    }
+}
+
+impl<'l> IfdDecoder<'l> {
+    /// Returns an iterator over all tags in the current image, along with their values.
+    pub fn tag_iter(self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + 'l {
+        self.inner
+            .ifd
+            .iter()
+            .map(|(tag, entry)| match self.inner.decoder.entry_val(entry) {
+                Ok(value) => Ok((tag, value)),
+                Err(err) => Err(err),
+            })
     }
 }
