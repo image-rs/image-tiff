@@ -763,9 +763,25 @@ impl<R: Read + Seek> Decoder<R> {
         self.value_reader.reader.goto_offset(offset)
     }
 
-    /// Read a directory from a known offset.
+    /// Read a tag-entry map from a known offset.
     ///
-    /// This may always modify the position of the reader.
+    /// A TIFF [`Directory`], aka. image file directory aka. IFD, refers to a map from
+    /// tags–identified by a `u16`–to a typed vector of elements. It is encoded as a list
+    /// of ascending tag values with the offset and type of their corresponding values. The
+    /// semantic interpretations of a tag and its type requirements depend on the context of the
+    /// directory. The main image directories, those iterated over by the `Decoder` after
+    /// construction, are represented by [`Tag`] and [`ifd::Value`]. Other forms are EXIF and GPS
+    /// data as well as thumbnail Sub-IFD representations associated with each image file.
+    ///
+    /// This method allows the decoding of a directory from an arbitrary offset in the image file
+    /// with no specific semantic interpretation. Such an offset is usually found as the value of
+    /// a tag, e.g. [`Tag::SubIfd`], [`Tag::ExifDirectory`], [`Tag::GpsDirectory`] and recovered
+    /// from the associated value by [`ifd::Value::into_ifd_pointer`].
+    ///
+    /// The library will not verify whether the offset overlaps any other directory or would form a
+    /// cycle with any other directory when calling this method. This will modify the position of
+    /// the reader, i.e. continuing with direct reads at a later point will require going back with
+    /// [`Self::goto_offset`].
     pub fn read_directory(&mut self, ptr: IfdPointer) -> TiffResult<Directory> {
         self.value_reader.read_directory(ptr)
     }
@@ -992,7 +1008,7 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
-    /// Prepare reading tag values for some externally given directory.
+    /// Prepare reading values for tags of a given directory.
     ///
     /// # Examples
     ///

@@ -7,6 +7,16 @@ use crate::{
 };
 
 /// An Image File Directory (IFD).
+///
+/// A directory is a map of [`Tag`]s to [`Value`](crate::decoder::ifd::Value)s. The values are
+/// stored anywhere in the file, with the directory containing the offsets and length of the
+/// associated values for each tag present in the directory.
+///
+/// A directory can be created with with
+/// [`Decoder::read_directory`](crate::decoder::Decoder::read_directory) or as an empty directory
+/// to be extended with entries. A directory may be used with
+/// [`Decoder::read_directory_tags`](crate::decoder::Decoder::read_directory_tags) to read the
+/// values associated with tags from an underlying file.
 #[doc(alias = "IFD")]
 pub struct Directory {
     /// There are at most `u16::MAX` entries in any single directory, the count is stored as a
