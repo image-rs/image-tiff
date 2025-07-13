@@ -11,7 +11,7 @@ use std::{
 use crate::{
     decoder::ifd::Entry,
     error::{TiffResult, UsageError},
-    tags::{CompressionMethod, ResolutionUnit, SampleFormat, Tag, Type},
+    tags::{CompressionMethod, IfdPointer, ResolutionUnit, SampleFormat, Tag, Type},
     Directory, TiffError, TiffFormatError,
 };
 
@@ -170,8 +170,27 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     }
 
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    #[deprecated = "`image_directory` replaced the old behavior and clarifies the intent"]
+    #[doc(hidden)]
     pub fn new_directory(&mut self) -> TiffResult<DirectoryEncoder<'_, W, K>> {
         Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)
+    }
+
+    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    ///
+    /// The caller is responsible for ensuring that the directory is a valid image in the main TIFF
+    /// IFD sequence. To encode additional directories that are not linked into the sequence, use
+    /// [`Self::extra_directory`][TiffEncoder::extra_directory].
+    pub fn image_directory(&mut self) -> TiffResult<DirectoryEncoder<'_, W, K>> {
+        Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)
+    }
+
+    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    ///
+    /// The directory is not linked into the sequence of directories. For instance, encode Exif
+    /// directories or SubIfd directories with this method.
+    pub fn extra_directory(&mut self) -> TiffResult<DirectoryEncoder<'_, W, K>> {
+        Self::unchained_directory(&mut self.writer)
     }
 
     /// Create an [`ImageEncoder`] to encode an image one slice at a time.
@@ -207,6 +226,10 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         let last_ifd = *last_ifd_chain;
         DirectoryEncoder::new(writer, Some(last_ifd), Some(last_ifd_chain))
     }
+
+    fn unchained_directory(writer: &mut TiffWriter<W>) -> TiffResult<DirectoryEncoder<'_, W, K>> {
+        DirectoryEncoder::new(writer, None, None)
+    }
 }
 
 /// Low level interface to encode ifd directories.
@@ -223,6 +246,15 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     // We use BTreeMap to make sure tags are written in correct order
     directory: Directory,
     dropped: bool,
+}
+
+/// The offset of an encoded directory in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DirectoryOffset {
+    /// The start of the directory, as a Tiff value.
+    pub offset: IfdPointer,
+    /// The offset of its sequence link field, in our private representation.
+    ifd_chain: NonZeroU64,
 }
 
 impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
@@ -266,6 +298,35 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         self.directory.extend([(tag, entry)]);
 
         Ok(())
+    }
+
+    /// Write some data to the tiff file, the offset of the data is returned.
+    ///
+    /// This could be used to write tiff strips.
+    pub fn write_data<T: TiffValue>(&mut self, value: T) -> TiffResult<u64> {
+        let offset = self.writer.offset();
+        value.write(self.writer)?;
+        Ok(offset)
+    }
+
+    /// Define the parent directory.
+    ///
+    /// Each directory has an offset based link to its successor, forming a linked list in the
+    /// file. The encoder writes its own offset into the parent's field when [`Self::finish`] is
+    /// called or it is dropped. This redefines the parent. An offset representation of the parent
+    /// must be acquired by finishing it with [`Self::finish_with_offsets`].
+    pub fn set_parent(&mut self, offset: &DirectoryOffset) {
+        self.chained_ifd_pos = Some(offset.ifd_chain);
+    }
+
+    /// Write out the ifd directory itself.
+    pub fn finish(mut self) -> TiffResult<()> {
+        self.finish_internal()?;
+        Ok(())
+    }
+
+    pub fn finish_with_offsets(mut self) -> TiffResult<DirectoryOffset> {
+        self.finish_internal()
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
@@ -327,21 +388,12 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         })
     }
 
-    /// Write some data to the tiff file, the offset of the data is returned.
-    ///
-    /// This could be used to write tiff strips.
-    pub fn write_data<T: TiffValue>(&mut self, value: T) -> TiffResult<u64> {
-        let offset = self.writer.offset();
-        value.write(self.writer)?;
-        Ok(offset)
-    }
-
     /// Provides the number of bytes written by the underlying TiffWriter during the last call.
     fn last_written(&self) -> u64 {
         self.writer.last_written()
     }
 
-    fn finish_internal(&mut self) -> TiffResult<()> {
+    fn finish_internal(&mut self) -> TiffResult<DirectoryOffset> {
         let ifd_pointer = self.write_directory()?;
 
         if let Some(prior) = self.chained_ifd_pos {
@@ -355,19 +407,19 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
         K::write_offset(self.writer, 0)?;
 
+        let ifd_chain = NonZeroU64::new(self.writer.previous_ifd_pointer::<K>())
+            .expect("IFD chain field is at a non-zero offset");
+
         if let Some(prior) = self.write_chain.take() {
-            *prior = NonZeroU64::new(self.writer.previous_ifd_pointer::<K>())
-                .expect("IFD chain field is at a non-zero offset");
+            *prior = ifd_chain;
         }
 
         self.dropped = true;
 
-        Ok(())
-    }
-
-    /// Write out the ifd directory.
-    pub fn finish(mut self) -> TiffResult<()> {
-        self.finish_internal()
+        Ok(DirectoryOffset {
+            offset: IfdPointer(ifd_pointer),
+            ifd_chain,
+        })
     }
 }
 
@@ -643,7 +695,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         Ok(())
     }
 
-    fn finish_internal(&mut self) -> TiffResult<()> {
+    fn finish_internal(&mut self) -> TiffResult<DirectoryOffset> {
         self.encoder
             .write_tag(Tag::StripOffsets, K::convert_slice(&self.strip_offsets))?;
         self.encoder.write_tag(
@@ -662,7 +714,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
 
     /// Write out image and ifd directory.
     pub fn finish(mut self) -> TiffResult<()> {
-        self.finish_internal()
+        self.finish_internal()?;
+        Ok(())
     }
 }
 
