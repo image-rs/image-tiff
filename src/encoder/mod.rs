@@ -2,7 +2,6 @@ pub use tiff_value::*;
 
 use std::{
     cmp,
-    collections::BTreeMap,
     io::{self, Seek, Write},
     marker::PhantomData,
     mem,
@@ -220,9 +219,9 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
     chained_ifd_pos: Option<NonZeroU64>,
     /// An output to write the `next` field offset on completion.
     write_chain: Option<&'a mut NonZeroU64>,
+    kind: PhantomData<K>,
     // We use BTreeMap to make sure tags are written in correct order
     directory: Directory,
-    ifd: BTreeMap<u16, DirectoryEntry<K::OffsetType>>,
     dropped: bool,
 }
 
@@ -235,43 +234,42 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         chain_into: Option<&'a mut NonZeroU64>,
     ) -> TiffResult<Self> {
         writer.pad_word_boundary()?; // TODO: Do we need to adjust this for BigTiff?
-        Ok(DirectoryEncoder {
+        Ok(Self {
             writer,
             chained_ifd_pos,
             write_chain: chain_into,
+            kind: PhantomData,
             directory: Directory::empty(),
-            ifd: BTreeMap::new(),
             dropped: false,
         })
     }
 
     /// Write a single ifd tag.
     pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
+        // Encodes the value if necessary. In the current bytes all integers are taken as native
+        // endian and thus transparent but this keeps the interface generic.
         let mut bytes = Vec::with_capacity(value.bytes());
         {
             let mut writer = TiffWriter::new(&mut bytes);
             value.write(&mut writer)?;
         }
 
-        self.ifd.insert(
-            tag.to_u16(),
-            DirectoryEntry {
+        let entry = Self::write_value(
+            &mut self.writer,
+            &DirectoryEntry {
                 data_type: <T>::FIELD_TYPE,
                 count: value.count().try_into()?,
                 data: bytes,
             },
-        );
+        )?;
+
+        self.directory.extend([(tag, entry)]);
 
         Ok(())
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
         // Start by turning all buffered unwritten values into entries.
-        for (&tag, value) in &self.ifd {
-            let entry = Self::write_value(&mut self.writer, value)?;
-            self.directory.extend([(Tag::Unknown(tag), entry)]);
-        }
-
         let offset = self.writer.offset();
         K::write_entry_count(self.writer, self.directory.len())?;
 
