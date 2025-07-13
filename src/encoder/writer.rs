@@ -69,6 +69,10 @@ impl<W: Write> TiffWriter<W> {
         self.offset
     }
 
+    pub(crate) fn previous_ifd_pointer<K: super::TiffKind>(&self) -> u64 {
+        self.offset() - core::mem::size_of::<K::OffsetType>() as u64
+    }
+
     pub fn last_written(&self) -> u64 {
         self.byte_count
     }
