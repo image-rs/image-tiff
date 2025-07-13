@@ -626,3 +626,59 @@ fn test_rows_per_strip() {
         }
     }
 }
+
+#[test]
+fn test_auxiliary_directory() {
+    const ARTIST: &str = "Auxiliary-tiff";
+
+    let mut data = Cursor::new(Vec::new());
+    let mut tiff = TiffEncoder::new(&mut data).unwrap();
+
+    {
+        let mut image_encoder = tiff.new_image::<colortype::Gray8>(1, 1).unwrap();
+        image_encoder.write_strip(&[1]).unwrap();
+    }
+
+    let exif = {
+        let mut extra = tiff.extra_directory().unwrap();
+        extra.write_tag(Tag::Artist, ARTIST).unwrap();
+        extra.finish_with_offsets().unwrap()
+    };
+
+    {
+        let mut image_encoder = tiff.new_image::<colortype::Gray8>(2, 1).unwrap();
+        image_encoder.write_strip(&[1, 2]).unwrap();
+        let encoder = image_encoder.encoder();
+        encoder.write_tag(Tag::ExifDirectory, exif.offset).unwrap();
+    }
+
+    drop(tiff);
+
+    data.set_position(0);
+    let mut decoder = Decoder::new(&mut data).unwrap();
+
+    {
+        assert_eq!(decoder.dimensions().unwrap(), (1, 1));
+        let _ = decoder.read_image().unwrap();
+    }
+
+    {
+        decoder.next_image().unwrap();
+        assert_eq!(decoder.dimensions().unwrap(), (2, 1));
+        let _ = decoder.read_image().unwrap();
+
+        let exif_location = decoder
+            .get_tag(Tag::ExifDirectory)
+            .expect("second directory missing Exif")
+            .into_ifd_pointer()
+            .expect("exif directory is not an IFD pointer");
+
+        let exif = decoder.read_directory(exif_location).unwrap();
+
+        let artist = decoder
+            .read_directory_tags(&exif)
+            .get_tag_ascii_string(Tag::Artist)
+            .expect("EXIF directory missing artist tag");
+        assert_eq!(artist, ARTIST);
+    }
+}

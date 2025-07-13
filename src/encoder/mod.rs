@@ -250,11 +250,20 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
 
 /// The offset of an encoded directory in the file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct DirectoryOffset {
-    /// The start of the directory, as a Tiff value.
-    pub offset: IfdPointer,
+pub struct DirectoryOffset<K: TiffKind> {
+    /// The start of the directory as a Tiff value.
+    ///
+    /// This is a bit of a wart in the strongly typed design of the encoder. The value _type_ must
+    /// itself know how to be represented in the Tiff file but that may differ based on endianess
+    /// as well as the offset size (`u32` or BigTIFF's `u64`). Thankfully we're allowed to
+    /// represent offsets with `LONG` or `IFD` in the usual case.
+    pub offset: K::OffsetType,
+    /// The start of the directory as a pure offset.
+    pub pointer: IfdPointer,
     /// The offset of its sequence link field, in our private representation.
     ifd_chain: NonZeroU64,
+    /// The kind of Tiff file the offset is for.
+    kind: PhantomData<K>,
 }
 
 impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
@@ -315,7 +324,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     /// file. The encoder writes its own offset into the parent's field when [`Self::finish`] is
     /// called or it is dropped. This redefines the parent. An offset representation of the parent
     /// must be acquired by finishing it with [`Self::finish_with_offsets`].
-    pub fn set_parent(&mut self, offset: &DirectoryOffset) {
+    pub fn set_parent(&mut self, offset: &DirectoryOffset<K>) {
         self.chained_ifd_pos = Some(offset.ifd_chain);
     }
 
@@ -325,7 +334,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(())
     }
 
-    pub fn finish_with_offsets(mut self) -> TiffResult<DirectoryOffset> {
+    pub fn finish_with_offsets(mut self) -> TiffResult<DirectoryOffset<K>> {
         self.finish_internal()
     }
 
@@ -393,13 +402,18 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         self.writer.last_written()
     }
 
-    fn finish_internal(&mut self) -> TiffResult<DirectoryOffset> {
+    fn finish_internal(&mut self) -> TiffResult<DirectoryOffset<K>> {
         let ifd_pointer = self.write_directory()?;
+        let offset = K::convert_offset(ifd_pointer)?;
 
         if let Some(prior) = self.chained_ifd_pos {
             let curr_pos = self.writer.offset();
 
             self.writer.goto_offset(prior.get())?;
+            // Note how we are not writing the `offset` type itself here as doing so would need to
+            // go through the `TiffValue` trait—the type is not constrained by much. But for the
+            // trait we need a `TiffWriter` which comes with a bunch of additional state such as
+            // compressor etc. that we have no need for.
             K::write_offset(self.writer, ifd_pointer)?;
 
             self.writer.goto_offset(curr_pos)?;
@@ -417,8 +431,10 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         self.dropped = true;
 
         Ok(DirectoryOffset {
-            offset: IfdPointer(ifd_pointer),
+            pointer: IfdPointer(ifd_pointer),
+            offset,
             ifd_chain,
+            kind: PhantomData,
         })
     }
 }
@@ -695,7 +711,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         Ok(())
     }
 
-    fn finish_internal(&mut self) -> TiffResult<DirectoryOffset> {
+    fn finish_internal(&mut self) -> TiffResult<DirectoryOffset<K>> {
         self.encoder
             .write_tag(Tag::StripOffsets, K::convert_slice(&self.strip_offsets))?;
         self.encoder.write_tag(
