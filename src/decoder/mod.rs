@@ -1001,6 +1001,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns the layout without being specific as to the underlying type for forward
     /// compatibility. Note that, in general, a TIFF may contain an almost arbitrary number of
     /// channels of individual *bit* length and format each.
+    ///
+    /// See [`Self::colortype`] to describe the sample types.
     pub fn image_chunk_buffer_layout(&mut self, chunk_index: u32) -> TiffResult<Layout> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
         self.result_extent(data_dims.0 as usize, data_dims.1 as usize)?
@@ -1052,6 +1054,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns the layout without being specific as to the underlying type for forward
     /// compatibility. Note that, in general, a TIFF may contain an almost arbitrary number of
     /// channels of individual *bit* length and format each.
+    ///
+    /// See [`Self::colortype`] to describe the sample types.
     pub fn image_buffer_layout(&mut self) -> TiffResult<Layout> {
         let width = self.image().width;
         let height = self.image().height;
