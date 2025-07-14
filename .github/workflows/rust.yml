@@ -45,6 +45,10 @@ jobs:
     - name: Cargo check
       run: cargo check --features "${{ matrix.feature }}" --no-default-features
 
+    - name: Cargo clippy
+      if: ${{ matrix.feature != '' }}
+      run: cargo clippy --no-deps --all-features --all-targets -- -D warnings
+
   other_archs:
     # github actions does not support 32-bit or big endian systems directly, but
     # it does support QEMU. so we install qemu, then build and run the tests on
