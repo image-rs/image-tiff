@@ -296,7 +296,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         }
 
         let entry = Self::write_value(
-            &mut self.writer,
+            self.writer,
             &DirectoryEntry {
                 data_type: <T>::FIELD_TYPE,
                 count: value.count().try_into()?,
@@ -370,14 +370,14 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
         if bytes.len() > in_entry_bytes {
             let offset = writer.offset();
-            writer.write_bytes(&bytes)?;
+            writer.write_bytes(bytes)?;
 
             let offset = K::convert_offset(offset)?;
             offset_bytes[..offset.bytes()].copy_from_slice(&offset.data());
         } else {
             // Note: we have indicated our native byte order in the header, hence this
             // corresponds to our byte order no matter the value type.
-            offset_bytes[..bytes.len()].copy_from_slice(&bytes);
+            offset_bytes[..bytes.len()].copy_from_slice(bytes);
         }
 
         // Undoing some hidden type. Offset is either u32 or u64. Due to the trait API being public

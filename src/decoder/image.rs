@@ -643,11 +643,11 @@ impl Image {
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
-        if output_row_stride == chunk_row_bytes as usize {
+        if output_row_stride == chunk_row_bytes {
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
-            for row in tile.chunks_mut(chunk_row_bytes as usize) {
+            for row in tile.chunks_mut(chunk_row_bytes) {
                 super::fix_endianness_and_predict(
                     row,
                     color_type.bit_depth(),
@@ -678,11 +678,7 @@ impl Image {
                 }
             }
         } else {
-            for (_i, row) in buf
-                .chunks_mut(output_row_stride)
-                .take(data_dims.1 as usize)
-                .enumerate()
-            {
+            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 
