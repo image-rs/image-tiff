@@ -123,10 +123,7 @@ fn decode_subifds() {
         loop {
             len += 1;
 
-            let position = decoder.ifd_pointer().unwrap();
-            let ifd = decoder.read_directory(position).unwrap();
-
-            if let Ok(subifd) = decoder.read_directory_tags(&ifd).get_tag(Tag::SubIfd) {
+            if let Ok(subifd) = decoder.get_tag(Tag::SubIfd) {
                 let prelen = subifds.len();
                 subifds.extend(subifd.into_ifd_vec().expect("Failed to decode SubIfd tag"));
                 eprintln!("New roots: {:?}", &subifds[prelen..]);
