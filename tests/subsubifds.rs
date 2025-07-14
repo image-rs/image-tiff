@@ -1,4 +1,7 @@
-use tiff::{decoder::Decoder, tags::IfdPointer};
+use tiff::{
+    decoder::Decoder,
+    tags::{IfdPointer, Tag},
+};
 
 // This file has the following IFD structure:
 //
@@ -53,15 +56,61 @@ fn decode_seek_recover() {
     let offset2 = decoder.ifd_pointer().expect("Third IFD pointer not found");
 
     // oops!
-    let fails = decoder.restart_ifds(IfdPointer(0xdead_beef));
+    let fails = decoder.restart_at_image(IfdPointer(0xdead_beef));
     assert!(fails.is_err());
 
     // However we can recover by restarting our seek.
-    decoder.restart_ifds(offset0)
+    decoder
+        .restart_at_image(offset0)
         .expect("Failed to restart IFDs from first image");
     assert_eq!(Some(offset0), decoder.ifd_pointer());
     decoder.next_image().unwrap();
     assert_eq!(Some(offset1), decoder.ifd_pointer());
     decoder.next_image().unwrap();
     assert_eq!(Some(offset2), decoder.ifd_pointer());
+}
+
+#[test]
+fn decode_seek_directory() {
+    let file = File::open(TEST_IMAGE_SUBIFD).expect("Cannot open test image");
+    let mut decoder = Decoder::new(file).expect("Invalid format to create decoder");
+
+    let offset = decoder.ifd_pointer().expect("First IFD pointer not found");
+    let img0 = decoder.read_image().unwrap();
+
+    decoder.next_image().unwrap();
+    let img1 = decoder.read_image().unwrap();
+    assert_ne!(img0, img1);
+
+    {
+        // Due to the special test file structure.
+        let subifd = decoder
+            .get_tag(Tag::SubIfd)
+            .unwrap()
+            .into_ifd_vec()
+            .unwrap()[0];
+
+        // Let's try to manually interpret this as an image.
+        decoder
+            .restart_at_directory(subifd)
+            .expect("Failed to restart IFDs at SubIfd");
+        decoder
+            .current_directory_as_image()
+            .expect("Failed to read SubIfd image");
+
+        assert_eq!(decoder.dimensions().unwrap(), (32, 32));
+        let subimage = decoder.read_image().unwrap();
+        // Verify we did not accidentally read another image.
+        assert_ne!(img0, subimage);
+        assert_ne!(img1, subimage);
+    }
+
+    // And finally, seek back to the first image.
+    decoder
+        .restart_at_image(offset)
+        .expect("First IFD no longer readable");
+    assert_eq!(Some(offset), decoder.ifd_pointer());
+
+    let img0_try2 = decoder.read_image().unwrap();
+    assert_eq!(img0, img0_try2);
 }
