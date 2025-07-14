@@ -45,12 +45,12 @@ fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
     let img_file = File::open(path).expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
     assert_eq!(decoder.colortype().unwrap(), expected_type);
-    assert!(match decoder.read_image() {
+    assert!(matches!(
+        decoder.read_image(),
         Err(tiff::TiffError::UnsupportedError(
             tiff::TiffUnsupportedError::UnsupportedColorType(_),
-        )) => true,
-        _ => false,
-    });
+        ))
+    ));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn test_string_tags() {
                 &s,
                 "GraphicsMagick 1.2 unreleased Q16 http://www.GraphicsMagick.org/"
             ),
-            _ => assert!(false),
+            other => unreachable!("Expected Ascii tag from file, got {other:?}"),
         };
     }
 }

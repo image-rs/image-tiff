@@ -652,8 +652,6 @@ fn test_auxiliary_directory() {
         encoder.write_tag(Tag::ExifDirectory, exif.offset).unwrap();
     }
 
-    drop(tiff);
-
     data.set_position(0);
     let mut decoder = Decoder::new(&mut data).unwrap();
 
