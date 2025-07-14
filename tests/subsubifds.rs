@@ -114,3 +114,59 @@ fn decode_seek_directory() {
     let img0_try2 = decoder.read_image().unwrap();
     assert_eq!(img0, img0_try2);
 }
+
+#[test]
+fn decode_subifds() {
+    let explore_chain = |decoder: &mut Decoder<_>, subifds: &mut Vec<_>| {
+        let mut len = 0usize;
+
+        loop {
+            len += 1;
+
+            let position = decoder.ifd_pointer().unwrap();
+            let ifd = decoder.read_directory(position).unwrap();
+
+            if let Ok(subifd) = decoder.read_directory_tags(&ifd).get_tag(Tag::SubIfd) {
+                let prelen = subifds.len();
+                subifds.extend(subifd.into_ifd_vec().expect("Failed to decode SubIfd tag"));
+                eprintln!("New roots: {:?}", &subifds[prelen..]);
+            } else {
+                eprintln!("No roots");
+            }
+
+            if !decoder.more_images() {
+                break;
+            }
+
+            decoder.next_image().unwrap();
+        }
+
+        len
+    };
+
+    let file = File::open(TEST_IMAGE_SUBIFD).expect("Cannot open test image");
+    let mut decoder = Decoder::new(file).expect("Invalid format to create decoder");
+
+    let mut subifds = vec![];
+    let mut chain_lengths = vec![];
+    chain_lengths.push(explore_chain(&mut decoder, &mut subifds));
+
+    while !subifds.is_empty() {
+        let root = subifds.remove(0);
+        let manual_directory = decoder.read_directory(root).unwrap();
+        eprintln!("Manual directory: {:?}", manual_directory);
+
+        decoder.restart_at_directory(root).unwrap();
+        let prelen = subifds.len();
+        chain_lengths.push(explore_chain(&mut decoder, &mut subifds));
+        eprintln!("Chains roots: {:?}", &subifds[prelen..]);
+    }
+
+    // Traversal Order in this graph:
+    // Image 0 -> Image 1 -> Image 2
+    //            |-> Image 3
+    //            |-> Image 4 -> Image 5
+    //            |              \-> Image 7 -> Image 8
+    //            \-> Image 6
+    assert_eq!(chain_lengths, [3, 1, 2, 1, 2]);
+}
