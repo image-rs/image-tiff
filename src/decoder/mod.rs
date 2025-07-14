@@ -206,6 +206,7 @@ pub enum ChunkType {
 
 /// Decoding limits
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// The maximum size of any `DecodingResult` in bytes, the default is
     /// 256MiB. If the entire image is decoded at once, then this will
@@ -218,10 +219,6 @@ pub struct Limits {
     /// Maximum size for intermediate buffer which may be used to limit the amount of data read per
     /// segment even if the entire image is decoded at once.
     pub intermediate_buffer_size: usize,
-    /// The purpose of this is to prevent all the fields of the struct from
-    /// being public, as this would make adding new fields a major version
-    /// bump.
-    _non_exhaustive: (),
 }
 
 impl Limits {
@@ -234,10 +231,9 @@ impl Limits {
     /// naturally, the machine running the program does not have infinite memory.
     pub fn unlimited() -> Limits {
         Limits {
-            decoding_buffer_size: usize::max_value(),
-            ifd_value_size: usize::max_value(),
-            intermediate_buffer_size: usize::max_value(),
-            _non_exhaustive: (),
+            decoding_buffer_size: usize::MAX,
+            ifd_value_size: usize::MAX,
+            intermediate_buffer_size: usize::MAX,
         }
     }
 }
@@ -248,7 +244,6 @@ impl Default for Limits {
             decoding_buffer_size: 256 * 1024 * 1024,
             intermediate_buffer_size: 128 * 1024 * 1024,
             ifd_value_size: 1024 * 1024,
-            _non_exhaustive: (),
         }
     }
 }
