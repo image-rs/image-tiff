@@ -856,7 +856,8 @@ impl<R: Read + Seek> Decoder<R> {
         let row_samples = if bits_per_sample >= 8 {
             width
         } else {
-            ((((width as u64) * bits_per_sample as u64) + 7) / 8)
+            ((width as u64) * bits_per_sample as u64)
+                .div_ceil(8)
                 .try_into()
                 .map_err(|_| TiffError::LimitsExceeded)?
         };
@@ -955,12 +956,12 @@ impl<R: Read + Seek> Decoder<R> {
         let output_row_bits = (width as u64 * self.image.bits_per_sample as u64)
             .checked_mul(samples as u64)
             .ok_or(TiffError::LimitsExceeded)?;
-        let output_row_stride: usize = ((output_row_bits + 7) / 8).try_into()?;
+        let output_row_stride: usize = output_row_bits.div_ceil(8).try_into()?;
 
         let chunk_row_bits = (chunk_dimensions.0 as u64 * self.image.bits_per_sample as u64)
             .checked_mul(samples as u64)
             .ok_or(TiffError::LimitsExceeded)?;
-        let chunk_row_bytes: usize = ((chunk_row_bits + 7) / 8).try_into()?;
+        let chunk_row_bytes: usize = chunk_row_bits.div_ceil(8).try_into()?;
 
         let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
 

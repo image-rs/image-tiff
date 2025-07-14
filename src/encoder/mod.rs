@@ -532,11 +532,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         let rows_per_strip = {
             match compression.tag() {
                 CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
-                _ => (1_000_000 + row_bytes - 1) / row_bytes,
+                _ => 1_000_000_u64.div_ceil(row_bytes),
             }
         };
 
-        let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
+        let strip_count = u64::from(height).div_ceil(rows_per_strip);
 
         encoder.write_tag(Tag::ImageWidth, width)?;
         encoder.write_tag(Tag::ImageLength, height)?;
@@ -705,7 +705,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         self.encoder.write_tag(Tag::RowsPerStrip, value)?;
 
         let value: u64 = value as u64;
-        self.strip_count = (self.height as u64 + value - 1) / value;
+        self.strip_count = (self.height as u64).div_ceil(value);
         self.rows_per_strip = value;
 
         Ok(())
