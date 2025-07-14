@@ -251,6 +251,20 @@ impl DecodingExtent {
         }
         .map_err(overflow)
     }
+
+    fn assert_layout(self, buffer: usize) -> TiffResult<()> {
+        let needed_bytes = self.preferred_layout()?.size();
+        if buffer < needed_bytes {
+            Err(TiffError::UsageError(
+                UsageError::InsufficientOutputBufferSize {
+                    needed: needed_bytes,
+                    provided: buffer,
+                },
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -893,6 +907,15 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
+        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, output_width)
+    }
+
+    fn read_chunk_to_bytes(
+        &mut self,
+        buffer: &mut [u8],
+        chunk_index: u32,
+        output_width: usize,
+    ) -> TiffResult<()> {
         let offset = self.image.chunk_file_range(chunk_index)?.0;
         self.goto_offset_u64(offset)?;
 
@@ -903,7 +926,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         self.image.expand_chunk(
             &mut self.value_reader,
-            buffer.as_bytes_mut(),
+            buffer,
             output_row_stride.try_into()?,
             chunk_index,
         )?;
@@ -973,6 +996,17 @@ impl<R: Read + Seek> Decoder<R> {
         })
     }
 
+    /// Returns the layout required to read the specified chunk with [`Self::read_chunk_bytes`].
+    ///
+    /// Returns the layout without being specific as to the underlying type for forward
+    /// compatibility. Note that, in general, a TIFF may contain an almost arbitrary number of
+    /// channels of individual *bit* length and format each.
+    pub fn image_chunk_buffer_layout(&mut self, chunk_index: u32) -> TiffResult<Layout> {
+        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+        self.result_extent(data_dims.0 as usize, data_dims.1 as usize)?
+            .preferred_layout()
+    }
+
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
@@ -982,6 +1016,21 @@ impl<R: Read + Seek> Decoder<R> {
         self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
 
         Ok(result)
+    }
+
+    /// Read the specified chunk (at index `chunk_index`) into an allocated buffer.
+    ///
+    /// Returns a [`TiffError::UsageError`] if the chunk is smaller than the size indicated with a
+    /// call to [`Self::image_chunk_buffer_layout`]. Note that the alignment may be arbitrary, but
+    /// an alignment smaller than the preferred alignment may perform worse.
+    pub fn read_chunk_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
+        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+
+        let extent = self.result_extent(data_dims.0 as usize, data_dims.1 as usize)?;
+        extent.assert_layout(buffer.len())?;
+        self.read_chunk_to_bytes(buffer, chunk_index, data_dims.0 as usize)?;
+
+        Ok(())
     }
 
     /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
@@ -998,6 +1047,19 @@ impl<R: Read + Seek> Decoder<R> {
             .expect("invalid chunk_index")
     }
 
+    /// Returns the preferred buffer required to read the whole image with [`Self::read_image_bytes`].
+    ///
+    /// Returns the layout without being specific as to the underlying type for forward
+    /// compatibility. Note that, in general, a TIFF may contain an almost arbitrary number of
+    /// channels of individual *bit* length and format each.
+    pub fn image_buffer_layout(&mut self) -> TiffResult<Layout> {
+        let width = self.image().width;
+        let height = self.image().height;
+
+        self.result_extent(width as usize, height as usize)?
+            .preferred_layout()
+    }
+
     /// Decodes the entire image and return it as a Vector
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
@@ -1009,21 +1071,17 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(result)
     }
 
+    /// Decodes the entire image into a provided buffer.
+    ///
+    /// Returns a [`TiffError::UsageError`] if the chunk is smaller than the size indicated with a
+    /// call to [`Self::image_buffer_layout`]. Note that the alignment may be arbitrary, but an
+    /// alignment smaller than the preferred alignment may perform worse.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
         let width = self.image().width;
         let height = self.image().height;
 
         let extent = self.result_extent(width as usize, height as usize)?;
-        let needed_bytes = extent.preferred_layout()?.size();
-
-        if buffer.len() < needed_bytes {
-            return Err(TiffError::UsageError(
-                UsageError::InsufficientOutputBufferSize {
-                    needed: needed_bytes,
-                    provided: buffer.len(),
-                },
-            ));
-        }
+        extent.assert_layout(buffer.len())?;
 
         if width == 0 || height == 0 {
             return Ok(());
