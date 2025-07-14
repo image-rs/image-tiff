@@ -348,7 +348,7 @@ fn test_div_zero() {
 
     match err {
         TiffError::FormatError(TiffFormatError::StripTileTagConflict) => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
+        unexpected => panic!("Unexpected error {unexpected}"),
     }
 }
 
@@ -366,7 +366,7 @@ fn test_too_many_value_bytes() {
 
     match error {
         tiff::TiffError::LimitsExceeded => {}
-        unexpected => panic!("Unexpected error {}", unexpected),
+        unexpected => panic!("Unexpected error {unexpected}"),
     }
 }
 
@@ -497,7 +497,7 @@ fn timeout() {
 
     match error {
         TiffError::FormatError(TiffFormatError::CycleInOffsets) => {}
-        e => panic!("Unexpected error {:?}", e),
+        e => panic!("Unexpected error {e:?}"),
     }
 }
 
