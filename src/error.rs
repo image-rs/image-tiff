@@ -184,6 +184,9 @@ quick_error! {
         PredictorUnavailable {
             display("the requested predictor is not available")
         }
+        InsufficientOutputBufferSize { needed: usize, provided: usize } {
+            display("the borrowed output buffer is not large enough for the decoded data, needed {needed} but have {provided}")
+        }
     }
 }
 
