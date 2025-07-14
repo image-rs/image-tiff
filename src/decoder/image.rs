@@ -85,6 +85,18 @@ impl Image {
         decoder: &mut ValueReader<R>,
         ifd: Directory,
     ) -> TiffResult<Image> {
+        let img = Self::from_ref(decoder, &ifd)?;
+
+        Ok(Image {
+            ifd: Some(ifd),
+            ..img
+        })
+    }
+
+    pub(crate) fn from_ref<R: Read + Seek>(
+        decoder: &mut ValueReader<R>,
+        ifd: &Directory,
+    ) -> TiffResult<Image> {
         let mut tag_reader = TagReader { decoder, ifd: &ifd };
 
         let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
@@ -287,7 +299,7 @@ impl Image {
         };
 
         Ok(Image {
-            ifd: Some(ifd),
+            ifd: None,
             width,
             height,
             bits_per_sample: bits_per_sample[0],

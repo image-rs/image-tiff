@@ -27,7 +27,7 @@ pub struct Directory {
 }
 
 impl Directory {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Directory {
             entries: BTreeMap::new(),
             next_ifd: None,
