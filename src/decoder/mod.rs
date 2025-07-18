@@ -907,22 +907,22 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
-        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, output_width)
+        let output_row_stride = (output_width as u64)
+            .saturating_mul(self.image.samples_per_pixel() as u64)
+            .saturating_mul(self.image.bits_per_sample as u64)
+            .div_ceil(8);
+
+        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, output_row_stride)
     }
 
     fn read_chunk_to_bytes(
         &mut self,
         buffer: &mut [u8],
         chunk_index: u32,
-        output_width: usize,
+        output_row_stride: u64,
     ) -> TiffResult<()> {
         let offset = self.image.chunk_file_range(chunk_index)?.0;
         self.goto_offset_u64(offset)?;
-
-        let output_row_stride = (output_width as u64)
-            .saturating_mul(self.image.samples_per_pixel() as u64)
-            .saturating_mul(self.image.bits_per_sample as u64)
-            / 8;
 
         self.image.expand_chunk(
             &mut self.value_reader,
@@ -1030,7 +1030,13 @@ impl<R: Read + Seek> Decoder<R> {
 
         let extent = self.result_extent(data_dims.0 as usize, data_dims.1 as usize)?;
         extent.assert_layout(buffer.len())?;
-        self.read_chunk_to_bytes(buffer, chunk_index, data_dims.0 as usize)?;
+
+        let output_row_stride = u64::from(data_dims.0)
+            .saturating_mul(self.image.samples_per_pixel() as u64)
+            .saturating_mul(self.image.bits_per_sample as u64)
+            .div_ceil(8);
+
+        self.read_chunk_to_bytes(buffer, chunk_index, output_row_stride)?;
 
         Ok(())
     }
