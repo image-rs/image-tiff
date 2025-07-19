@@ -10,6 +10,7 @@ use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 use std::io::{self, Cursor, Read, Seek};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -361,6 +362,22 @@ impl Image {
                 ),
             )),
         }
+    }
+
+    pub(crate) fn minimum_row_stride(&self, dims: (u32, u32)) -> Option<NonZeroUsize> {
+        let (width, height) = dims;
+
+        let row_stride = u64::from(width)
+            .saturating_mul(self.samples_per_pixel() as u64)
+            .saturating_mul(self.bits_per_sample as u64)
+            .div_ceil(8);
+
+        // Note: row stride should be smaller than the len if we have an actual buffer. If there
+        // are no pixels in the buffer (height _or_ width is 0) then the stride is not well defined
+        // and we return `None`.
+        (height > 0)
+            .then_some(row_stride as usize)
+            .and_then(NonZeroUsize::new)
     }
 
     fn create_reader<'r, R: 'r + Read>(
