@@ -450,7 +450,7 @@ impl TiffValue for str {
     }
 }
 
-impl<'a, T: TiffValue + ?Sized> TiffValue for &'a T {
+impl<T: TiffValue + ?Sized> TiffValue for &'_ T {
     const BYTE_LEN: u8 = T::BYTE_LEN;
     const FIELD_TYPE: Type = T::FIELD_TYPE;
 

@@ -29,10 +29,10 @@ pub(crate) struct TileAttributes {
 
 impl TileAttributes {
     pub fn tiles_across(&self) -> usize {
-        (self.image_width + self.tile_width - 1) / self.tile_width
+        self.image_width.div_ceil(self.tile_width)
     }
     pub fn tiles_down(&self) -> usize {
-        (self.image_height + self.tile_length - 1) / self.tile_length
+        self.image_height.div_ceil(self.tile_length)
     }
     fn padding_right(&self) -> usize {
         (self.tile_width - self.image_width % self.tile_width) % self.tile_width
@@ -625,12 +625,12 @@ impl Image {
         let chunk_row_bits = (u64::from(chunk_dims.0) * u64::from(self.bits_per_sample))
             .checked_mul(samples as u64)
             .ok_or(TiffError::LimitsExceeded)?;
-        let chunk_row_bytes: usize = ((chunk_row_bits + 7) / 8).try_into()?;
+        let chunk_row_bytes: usize = chunk_row_bits.div_ceil(8).try_into()?;
 
         let data_row_bits = (u64::from(data_dims.0) * u64::from(self.bits_per_sample))
             .checked_mul(samples as u64)
             .ok_or(TiffError::LimitsExceeded)?;
-        let data_row_bytes: usize = ((data_row_bits + 7) / 8).try_into()?;
+        let data_row_bytes: usize = data_row_bits.div_ceil(8).try_into()?;
 
         // TODO: Should these return errors instead?
         assert!(output_row_stride >= data_row_bytes);
@@ -643,11 +643,11 @@ impl Image {
             self.jpeg_tables.as_deref().map(|a| &**a),
         )?;
 
-        if output_row_stride == chunk_row_bytes as usize {
+        if output_row_stride == chunk_row_bytes {
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
-            for row in tile.chunks_mut(chunk_row_bytes as usize) {
+            for row in tile.chunks_mut(chunk_row_bytes) {
                 super::fix_endianness_and_predict(
                     row,
                     color_type.bit_depth(),
@@ -678,11 +678,7 @@ impl Image {
                 }
             }
         } else {
-            for (_i, row) in buf
-                .chunks_mut(output_row_stride)
-                .take(data_dims.1 as usize)
-                .enumerate()
-            {
+            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
 

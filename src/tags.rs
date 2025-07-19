@@ -2,7 +2,7 @@ macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
         $( #[$enum_attr:meta] )*
-        $vis:vis enum $name:ident($ty:tt) $(unknown($unknown_doc:literal))* {
+        $vis:vis enum $name:ident($ty:tt) $(unknown(#[$unknown_meta:meta] $unknown_doc:ident))* {
             // Each of the `Name = Val,` permitting documentation.
             $($(#[$ident_attr:meta])* $tag:ident = $val:expr,)*
         }
@@ -13,7 +13,7 @@ macro_rules! tags {
         pub enum $name {
             $($(#[$ident_attr])* $tag,)*
             $(
-                #[doc = $unknown_doc]
+                #[$unknown_meta]
                 Unknown($ty),
             )*
         }
@@ -31,7 +31,7 @@ macro_rules! tags {
             fn __to_inner_type(&self) -> $ty {
                 match *self {
                     $( $name::$tag => $val, )*
-                    $( $name::Unknown(n) => { $unknown_doc; n }, )*
+                    $( $name::Unknown($unknown_doc) => { $unknown_doc }, )*
                 }
             }
         }
@@ -39,7 +39,7 @@ macro_rules! tags {
         tags!($name, $ty, $($unknown_doc)*);
     };
     // For u16 tags, provide direct inherent primitive conversion methods.
-    ($name:tt, u16, $($unknown_doc:literal)*) => {
+    ($name:tt, u16, $($unknown_doc:ident)*) => {
         impl $name {
             #[inline(always)]
             pub fn from_u16(val: u16) -> Option<Self> {
@@ -48,9 +48,8 @@ macro_rules! tags {
 
             $(
             #[inline(always)]
-            pub fn from_u16_exhaustive(val: u16) -> Self {
-                $unknown_doc;
-                Self::__from_inner_type(val).unwrap_or_else(|_| $name::Unknown(val))
+            pub fn from_u16_exhaustive($unknown_doc: u16) -> Self {
+                Self::__from_inner_type($unknown_doc).unwrap_or_else(|_| $name::Unknown($unknown_doc))
             }
             )*
 
@@ -68,7 +67,10 @@ macro_rules! tags {
 // Note: These tags appear in the order they are mentioned in the TIFF reference
 tags! {
 /// TIFF tags
-pub enum Tag(u16) unknown("A private or extension tag") {
+pub enum Tag(u16) unknown(
+    /// A private or extension tag
+    unknown
+) {
     // Baseline tags:
     Artist = 315,
     // grayscale images PhotometricInterpretation 1 or 3
@@ -192,7 +194,10 @@ pub enum Type(u16) {
 tags! {
 /// See [TIFF compression tags](https://www.awaresystems.be/imaging/tiff/tifftags/compression.html)
 /// for reference.
-pub enum CompressionMethod(u16) unknown("A custom compression method") {
+pub enum CompressionMethod(u16) unknown(
+    /// A custom compression method
+    unknown
+) {
     None = 1,
     Huffman = 2,
     Fax3 = 3,
@@ -254,7 +259,10 @@ pub enum ResolutionUnit(u16) {
 }
 
 tags! {
-pub enum SampleFormat(u16) unknown("An unknown extension sample format") {
+pub enum SampleFormat(u16) unknown(
+    /// An unknown extension sample format
+    unknown
+) {
     Uint = 1,
     Int = 2,
     IEEEFP = 3,

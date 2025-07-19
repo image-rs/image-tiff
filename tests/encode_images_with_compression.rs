@@ -116,7 +116,7 @@ fn encode_decode_with_compression(compression: Compression) {
         assert_eq!(
             match decoder.read_image() {
                 Ok(DecodingResult::U16(image_data)) => image_data,
-                unexpected => panic!("Descoding RGB failed: {:?}", unexpected),
+                unexpected => panic!("Descoding RGB failed: {unexpected:?}"),
             },
             image_rgb.reference_data()
         );
@@ -126,7 +126,7 @@ fn encode_decode_with_compression(compression: Compression) {
         assert_eq!(
             match decoder.read_image() {
                 Ok(DecodingResult::U8(image_data)) => image_data,
-                unexpected => panic!("Decoding grayscale failed: {:?}", unexpected),
+                unexpected => panic!("Decoding grayscale failed: {unexpected:?}"),
             },
             image_grayscale.reference_data()
         );

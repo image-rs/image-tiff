@@ -296,7 +296,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         }
 
         let entry = Self::write_value(
-            &mut self.writer,
+            self.writer,
             &DirectoryEntry {
                 data_type: <T>::FIELD_TYPE,
                 count: value.count().try_into()?,
@@ -370,14 +370,14 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
         if bytes.len() > in_entry_bytes {
             let offset = writer.offset();
-            writer.write_bytes(&bytes)?;
+            writer.write_bytes(bytes)?;
 
             let offset = K::convert_offset(offset)?;
             offset_bytes[..offset.bytes()].copy_from_slice(&offset.data());
         } else {
             // Note: we have indicated our native byte order in the header, hence this
             // corresponds to our byte order no matter the value type.
-            offset_bytes[..bytes.len()].copy_from_slice(&bytes);
+            offset_bytes[..bytes.len()].copy_from_slice(bytes);
         }
 
         // Undoing some hidden type. Offset is either u32 or u64. Due to the trait API being public
@@ -532,11 +532,11 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         let rows_per_strip = {
             match compression.tag() {
                 CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
-                _ => (1_000_000 + row_bytes - 1) / row_bytes,
+                _ => 1_000_000_u64.div_ceil(row_bytes),
             }
         };
 
-        let strip_count = (u64::from(height) + rows_per_strip - 1) / rows_per_strip;
+        let strip_count = u64::from(height).div_ceil(rows_per_strip);
 
         encoder.write_tag(Tag::ImageWidth, width)?;
         encoder.write_tag(Tag::ImageLength, height)?;
@@ -705,7 +705,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         self.encoder.write_tag(Tag::RowsPerStrip, value)?;
 
         let value: u64 = value as u64;
-        self.strip_count = (self.height as u64 + value - 1) / value;
+        self.strip_count = (self.height as u64).div_ceil(value);
         self.rows_per_strip = value;
 
         Ok(())

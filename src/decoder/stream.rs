@@ -135,20 +135,17 @@ impl<R: Read> EndianReader<R> {
     }
 }
 
-///
-/// # READERS
-///
+//
+// # READERS
+//
 
-///
-/// ## Deflate Reader
-///
-
+/// Type alias for the deflate Reader
 #[cfg(feature = "deflate")]
 pub type DeflateReader<R> = flate2::read::ZlibDecoder<R>;
 
-///
-/// ## LZW Reader
-///
+//
+// ## LZW Reader
+//
 
 /// Reader that decompresses LZW streams
 #[cfg(feature = "lzw")]
@@ -207,10 +204,11 @@ impl<R: Read> Read for LZWReader<R> {
     }
 }
 
-///
-/// ## PackBits Reader
-///
+//
+// ## PackBits Reader
+//
 
+/// Internal state machine for the PackBitsReader.
 enum PackBitsReaderState {
     Header,
     Literal,

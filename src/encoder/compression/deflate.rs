@@ -11,19 +11,15 @@ pub struct Deflate {
 /// It allows trading compression ratio for compression speed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
+#[derive(Default)]
 pub enum DeflateLevel {
     /// The fastest possible compression mode.
     Fast = 1,
     /// The conserative choice between speed and ratio.
+    #[default]
     Balanced = 6,
     /// The best compression available with Deflate.
     Best = 9,
-}
-
-impl Default for DeflateLevel {
-    fn default() -> Self {
-        DeflateLevel::Balanced
-    }
 }
 
 impl Deflate {

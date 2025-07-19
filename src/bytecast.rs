@@ -10,6 +10,9 @@
 //! the unsafe code guidelines).
 //!
 //! TODO: Would like to use std-lib here.
+// Until we implement predictors for f16, we don't need f16_as_ne_bytes. (Due to the macro we do
+// not apply this directly to the functions). And rust-version is not new enough for `expect`.
+#![allow(dead_code)]
 use std::{mem, slice};
 
 use half::f16;

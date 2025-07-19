@@ -445,7 +445,7 @@ impl Entry {
             // 2b: the value is at most 4 bytes or doesn't fit in the offset field.
             return Ok(match self.type_ {
                 Type::BYTE => Byte(self.offset[0]),
-                Type::SBYTE => SignedByte(i8::from(self.offset[0] as i8)),
+                Type::SBYTE => SignedByte(self.offset[0] as i8),
                 Type::UNDEFINED => Byte(self.offset[0]),
                 Type::SHORT => Short(self.r(bo).read_u16()?),
                 Type::SSHORT => SignedShort(self.r(bo).read_i16()?),

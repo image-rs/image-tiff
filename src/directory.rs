@@ -27,6 +27,8 @@ pub struct Directory {
 }
 
 impl Directory {
+    /// Create a directory in an initial state without entries. Note that an empty directory can
+    /// not be encoded in a file, it must contain at least one entry.
     pub fn empty() -> Self {
         Directory {
             entries: BTreeMap::new(),
@@ -70,6 +72,12 @@ impl Directory {
         // been a trivial thing to do in the specification by storing it minus one but alas. In
         // BigTIFF the count is stored as 8-bit anyways.
         self.entries.len()
+    }
+
+    /// Check if there are any entries in this directory. Note that an empty directory can not be
+    /// encoded in the file, it must contain at least one entry.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     /// Get the pointer to the next IFD, if it was defined.

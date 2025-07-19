@@ -621,7 +621,7 @@ fn test_rows_per_strip() {
             let img2 = [i; 2 * 100];
             match decoder.read_chunk(i as u32).unwrap() {
                 DecodingResult::U8(data) => assert_eq!(&img2[..], &data[..]),
-                other => panic!("Incorrect strip type {:?}", other),
+                other => panic!("Incorrect strip type {other:?}"),
             }
         }
     }
@@ -651,8 +651,6 @@ fn test_auxiliary_directory() {
         let encoder = image_encoder.encoder();
         encoder.write_tag(Tag::ExifDirectory, exif.offset).unwrap();
     }
-
-    drop(tiff);
 
     data.set_position(0);
     let mut decoder = Decoder::new(&mut data).unwrap();
