@@ -133,6 +133,8 @@ pub enum Tag(u16) unknown(
     ExifDirectory = 0x8769,
     // <https://web.archive.org/web/20131111073619/http://www.exif.org/Exif2-1.PDF>
     GpsDirectory = 0x8825,
+    // <https://www.color.org/technotes/ICC-Technote-ProfileEmbedding.pdf>
+    IccProfile = 34675,
     GeoKeyDirectoryTag = 34735, // (SPOT)
     GeoDoubleParamsTag = 34736, // (SPOT)
     GeoAsciiParamsTag = 34737, // (SPOT)
