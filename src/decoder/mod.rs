@@ -1,6 +1,7 @@
 use std::alloc::{Layout, LayoutError};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Seek};
+use std::num::NonZeroUsize;
 
 use crate::tags::{
     CompressionMethod, IfdPointer, PhotometricInterpretation, PlanarConfiguration, Predictor,
@@ -196,6 +197,19 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
         }
     }
+}
+
+/// Information on the byte buffer that should be supplied to the decoder.
+///
+/// This is relevant for [`Decoder::read_image_bytes`] and [`Decoder::read_chunk_bytes`] where the
+/// caller provided buffer must fit the expectations of the decoder to be filled with data from the
+/// current image.
+#[non_exhaustive]
+pub struct BufferLayoutPreference {
+    /// Minimum byte size of the buffer to read image data.
+    pub len: usize,
+    /// Minimum number of bytes to represent a row of image data of the requested content.
+    pub row_stride: Option<NonZeroUsize>,
 }
 
 /// The count and matching discriminant for a `DecodingBuffer`.
@@ -939,26 +953,32 @@ impl<R: Read + Seek> Decoder<R> {
             .to_result_buffer(&self.value_reader.limits)
     }
 
+    // FIXME: it's unusual for this method to take a `usize` dimension parameter since those would
+    // typically come from the image data. The preferred consistent representation should be `u32`
+    // and that would avoid some unusual casts `usize -> u64` with a `u64::from` instead.
     fn result_extent(&self, width: usize, height: usize) -> TiffResult<DecodingExtent> {
-        let bits_per_sample = self.image().bits_per_sample;
+        let bits_per_sample = self.image.bits_per_sample;
 
+        // If samples take up more than one byte, we expand it to a full number (integer or float)
+        // and the number of samples in that integer type just counts the number in the underlying
+        // image itself. Otherwise, a row is represented as the byte slice of bitfields without
+        // expansion.
         let row_samples = if bits_per_sample >= 8 {
             width
         } else {
-            ((((width as u64) * bits_per_sample as u64) + 7) / 8)
+            ((width as u64) * bits_per_sample as u64)
+                .div_ceil(8)
                 .try_into()
                 .map_err(|_| TiffError::LimitsExceeded)?
         };
 
         let buffer_size = row_samples
             .checked_mul(height)
-            .and_then(|x| x.checked_mul(self.image().samples_per_pixel()))
+            .and_then(|x| x.checked_mul(self.image.samples_per_pixel()))
             .ok_or(TiffError::LimitsExceeded)?;
 
-        let max_sample_bits = self.image().bits_per_sample;
-
         Ok(match self.image().sample_format {
-            SampleFormat::Uint => match max_sample_bits {
+            SampleFormat::Uint => match bits_per_sample {
                 n if n <= 8 => DecodingExtent::U8(buffer_size),
                 n if n <= 16 => DecodingExtent::U16(buffer_size),
                 n if n <= 32 => DecodingExtent::U32(buffer_size),
@@ -969,7 +989,7 @@ impl<R: Read + Seek> Decoder<R> {
                     ))
                 }
             },
-            SampleFormat::IEEEFP => match max_sample_bits {
+            SampleFormat::IEEEFP => match bits_per_sample {
                 16 => DecodingExtent::F16(buffer_size),
                 32 => DecodingExtent::F32(buffer_size),
                 64 => DecodingExtent::F64(buffer_size),
@@ -979,7 +999,7 @@ impl<R: Read + Seek> Decoder<R> {
                     ))
                 }
             },
-            SampleFormat::Int => match max_sample_bits {
+            SampleFormat::Int => match bits_per_sample {
                 n if n <= 8 => DecodingExtent::I8(buffer_size),
                 n if n <= 16 => DecodingExtent::I16(buffer_size),
                 n if n <= 32 => DecodingExtent::I32(buffer_size),
@@ -996,17 +1016,28 @@ impl<R: Read + Seek> Decoder<R> {
         })
     }
 
-    /// Returns the layout required to read the specified chunk with [`Self::read_chunk_bytes`].
+    /// Returns the layout preferred to read the specified chunk with [`Self::read_chunk_bytes`].
     ///
     /// Returns the layout without being specific as to the underlying type for forward
     /// compatibility. Note that, in general, a TIFF may contain an almost arbitrary number of
     /// channels of individual *bit* length and format each.
     ///
     /// See [`Self::colortype`] to describe the sample types.
-    pub fn image_chunk_buffer_layout(&mut self, chunk_index: u32) -> TiffResult<Layout> {
+    pub fn image_chunk_buffer_layout(
+        &mut self,
+        chunk_index: u32,
+    ) -> TiffResult<BufferLayoutPreference> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
-        self.result_extent(data_dims.0 as usize, data_dims.1 as usize)?
-            .preferred_layout()
+        let layout = self
+            .result_extent(data_dims.0 as usize, data_dims.1 as usize)?
+            .preferred_layout()?;
+
+        let row_stride = self.image.minimum_row_stride(data_dims);
+
+        Ok(BufferLayoutPreference {
+            len: layout.size(),
+            row_stride,
+        })
     }
 
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
@@ -1062,12 +1093,19 @@ impl<R: Read + Seek> Decoder<R> {
     /// channels of individual *bit* length and format each.
     ///
     /// See [`Self::colortype`] to describe the sample types.
-    pub fn image_buffer_layout(&mut self) -> TiffResult<Layout> {
-        let width = self.image().width;
-        let height = self.image().height;
+    pub fn image_buffer_layout(&mut self) -> TiffResult<BufferLayoutPreference> {
+        let data_dims @ (width, height) = (self.image.width, self.image.height);
 
-        self.result_extent(width as usize, height as usize)?
-            .preferred_layout()
+        let layout = self
+            .result_extent(width as usize, height as usize)?
+            .preferred_layout()?;
+
+        let row_stride = self.image.minimum_row_stride(data_dims);
+
+        Ok(BufferLayoutPreference {
+            len: layout.size(),
+            row_stride,
+        })
     }
 
     /// Decodes the entire image and return it as a Vector

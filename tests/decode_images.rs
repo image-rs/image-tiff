@@ -541,7 +541,7 @@ fn test_image_bytes(file: &str, expected: &[(ColorType, u32)]) {
             .image_buffer_layout()
             .expect("Cannot describe buffer layout");
 
-        buffer.resize(layout.size(), 0u8);
+        buffer.resize(layout.len, 0u8);
         decoder.read_image_bytes(&mut buffer).unwrap();
 
         // Well almost a crc..
