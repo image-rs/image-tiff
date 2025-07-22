@@ -341,6 +341,11 @@ fn test_tiled_incremental() {
 
 #[test]
 fn test_planar_rgb_u8() {
+    test_image_sum_u8("planar-rgb-u8.tif", ColorType::RGB(8), 15417630);
+}
+
+#[test]
+fn test_read_planar_bands() {
     // gdal_translate tiled-rgb-u8.tif planar-rgb-u8.tif -co INTERLEAVE=BAND -co COMPRESS=LZW -co PROFILE=BASELINE
     let file = "planar-rgb-u8.tif";
     let expected_type = ColorType::RGB(8);
@@ -377,8 +382,6 @@ fn test_planar_rgb_u8() {
         }
         _ => panic!("Wrong bit depth"),
     }
-
-    test_image_sum_u8(file, ColorType::RGB(8), 15417630);
 }
 
 #[test]
