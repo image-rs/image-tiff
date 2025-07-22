@@ -4,6 +4,7 @@ use tiff::decoder::{ifd, Decoder, DecodingResult};
 use tiff::ColorType;
 
 use std::fs::File;
+use std::io::{Read, Seek};
 use std::path::PathBuf;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
@@ -231,6 +232,54 @@ fn test_tiled_rect_rgb_u8() {
     test_image_sum_u8("tiled-rect-rgb-u8.tif", ColorType::RGB(8), 62081032);
 }
 
+#[test]
+fn test_inner_access() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-rect-rgb-u8.tif");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+
+    let c = decoder
+        .get_tag(tiff::tags::Tag::Compression)
+        .unwrap()
+        .into_u16()
+        .unwrap();
+    assert_eq!(c, tiff::tags::CompressionMethod::None.to_u16());
+
+    // Because the image is uncompressed, reading the first tile directly with the inner reader
+    // should yield the same result as reading it with the decoder's read_chunk method.
+    let first_offset = decoder
+        .get_tag_u32_vec(tiff::tags::Tag::TileOffsets)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let first_byte_count = decoder
+        .get_tag_u32_vec(tiff::tags::Tag::TileByteCounts)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    decoder
+        .inner()
+        .seek(std::io::SeekFrom::Start(first_offset as u64))
+        .expect("Cannot seek to tile offset");
+    let mut buf = vec![0; first_byte_count as usize];
+    decoder
+        .inner()
+        .read_exact(&mut buf)
+        .expect("Cannot read tile data");
+    let raw_sum: u64 = buf.into_iter().map(<u64>::from).sum();
+
+    match decoder.read_chunk(0).unwrap() {
+        DecodingResult::U8(chunk) => {
+            let sum: u64 = chunk.into_iter().map(<u64>::from).sum();
+            assert_eq!(sum, raw_sum);
+        }
+        _ => panic!("Wrong bit depth"),
+    }
+}
+
 /* #[test]
 fn test_tiled_jpeg_rgb_u8() {
     test_image_sum_u8("tiled-jpeg-rgb-u8.tif", ColorType::RGB(8), 93031606);
@@ -292,6 +341,11 @@ fn test_tiled_incremental() {
 
 #[test]
 fn test_planar_rgb_u8() {
+    test_image_sum_u8("planar-rgb-u8.tif", ColorType::RGB(8), 15417630);
+}
+
+#[test]
+fn test_read_planar_bands() {
     // gdal_translate tiled-rgb-u8.tif planar-rgb-u8.tif -co INTERLEAVE=BAND -co COMPRESS=LZW -co PROFILE=BASELINE
     let file = "planar-rgb-u8.tif";
     let expected_type = ColorType::RGB(8);
@@ -328,8 +382,6 @@ fn test_planar_rgb_u8() {
         }
         _ => panic!("Wrong bit depth"),
     }
-
-    test_image_sum_u8(file, ColorType::RGB(8), 15417630);
 }
 
 #[test]
