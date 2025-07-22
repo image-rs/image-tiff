@@ -660,6 +660,11 @@ impl<R: Read + Seek> Decoder<R> {
         }
     }
 
+    /// Returns a mutable reference to the stream being decoded.
+    pub fn inner(&mut self) -> &mut R {
+        self.value_reader.reader.inner()
+    }
+
     /// Reads a TIFF byte value
     #[inline]
     pub fn read_byte(&mut self) -> Result<u8, io::Error> {
