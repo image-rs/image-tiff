@@ -229,15 +229,15 @@ fn test_tiled_rgb_u8() {
 
 #[test]
 fn test_tiled_rect_rgb_u8() {
-    let file = "tiled-rect-rgb-u8.tif";
-    let expected_type = ColorType::RGB(8);
+    test_image_sum_u8("tiled-rect-rgb-u8.tif", ColorType::RGB(8), 62081032);
+}
 
-    test_image_sum_u8(file, expected_type, 62081032);
-
-    let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
+#[test]
+fn test_inner_access() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-rect-rgb-u8.tif");
     let img_file = File::open(path).expect("Cannot find test image!");
     let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
-    assert_eq!(decoder.colortype().unwrap(), expected_type);
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
 
     let c = decoder
         .get_tag(tiff::tags::Tag::Compression)
@@ -252,13 +252,13 @@ fn test_tiled_rect_rgb_u8() {
         .get_tag_u32_vec(tiff::tags::Tag::TileOffsets)
         .unwrap()
         .into_iter()
-        .nth(0)
+        .next()
         .unwrap();
     let first_byte_count = decoder
         .get_tag_u32_vec(tiff::tags::Tag::TileByteCounts)
         .unwrap()
         .into_iter()
-        .nth(0)
+        .next()
         .unwrap();
     decoder
         .inner()
