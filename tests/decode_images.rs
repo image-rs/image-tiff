@@ -574,3 +574,101 @@ fn test_zstd_compression() {
     // gdal_translate -co COMPRESS=ZSTD -co ZSTD_LEVEL=20 int16.tif int16_zstd.tif
     test_image_sum_i16("int16_zstd.tif", ColorType::Gray(16), 354396);
 }
+
+fn test_image_bytes(
+    file: &str,
+    expected: &[(ColorType, u32)],
+    // Represent all samples as little endian, ensuring check sums on all platforms.
+    normalize_byte_order: fn(&mut [u8]),
+) {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+
+    let mut buffer = vec![0u8; 0];
+    for (idx, &(expected_type, expected_crc)) in expected.iter().enumerate() {
+        if idx > 0 {
+            decoder
+                .next_image()
+                .expect("mismatched number of directories");
+        }
+
+        assert_eq!(decoder.colortype().unwrap(), expected_type);
+        let layout = decoder
+            .image_buffer_layout()
+            .expect("Cannot describe buffer layout");
+
+        buffer.resize(layout.len, 0u8);
+        decoder.read_image_bytes(&mut buffer).unwrap();
+        normalize_byte_order(&mut buffer);
+
+        // Well almost a crc..
+        assert_eq!(crc32fast::hash(&buffer), expected_crc);
+    }
+}
+
+fn byte_order_u16(bytes: &mut [u8]) {
+    for chunk in bytes.chunks_exact_mut(2) {
+        let n = u16::from_ne_bytes(chunk.try_into().unwrap());
+        chunk.copy_from_slice(&n.to_le_bytes());
+    }
+}
+
+fn byte_order_u32(bytes: &mut [u8]) {
+    for chunk in bytes.chunks_exact_mut(4) {
+        let n = u32::from_ne_bytes(chunk.try_into().unwrap());
+        chunk.copy_from_slice(&n.to_le_bytes());
+    }
+}
+
+fn byte_order_u64(bytes: &mut [u8]) {
+    for chunk in bytes.chunks_exact_mut(8) {
+        let n = u64::from_ne_bytes(chunk.try_into().unwrap());
+        chunk.copy_from_slice(&n.to_le_bytes());
+    }
+}
+
+#[test]
+fn bytes_cmyk_3c_8b() {
+    test_image_bytes(
+        "cmyk-3c-8b.tiff",
+        &[(ColorType::CMYK(8), 2935032230)],
+        |_| (),
+    );
+}
+
+#[test]
+fn bytes_gray_16b() {
+    test_image_bytes(
+        "minisblack-1c-16b.tiff",
+        &[(ColorType::Gray(16), 3524597615)],
+        byte_order_u16,
+    );
+}
+
+#[test]
+fn bytes_gray_32b() {
+    test_image_bytes(
+        "gradient-1c-32b.tiff",
+        &[(ColorType::Gray(32), 2257036530)],
+        byte_order_u32,
+    );
+}
+
+#[test]
+fn bytes_gray_u64() {
+    test_image_bytes(
+        "gradient-1c-64b.tiff",
+        &[(ColorType::Gray(64), 2156547113)],
+        byte_order_u64,
+    );
+}
+
+#[test]
+fn bytes_gray_f32() {
+    test_image_bytes(
+        "gradient-1c-32b-float.tiff",
+        &[(ColorType::Gray(32), 3232356730)],
+        byte_order_u32,
+    );
+}
