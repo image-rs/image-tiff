@@ -1023,6 +1023,12 @@ impl<R: Read + Seek> Decoder<R> {
     /// channels of individual *bit* length and format each.
     ///
     /// See [`Self::colortype`] to describe the sample types.
+    ///
+    /// # Bugs
+    ///
+    /// When the image is stored as a planar configuration, this method will currently only
+    /// indicate the layout needed to read the first data plane. This will be fixed in a future
+    /// major version of `tiff`.
     pub fn image_chunk_buffer_layout(
         &mut self,
         chunk_index: u32,
@@ -1041,6 +1047,11 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
+    ///
+    /// # Bugs
+    ///
+    /// When the image is stored as a planar configuration, this method will currently only read
+    /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
@@ -1056,6 +1067,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns a [`TiffError::UsageError`] if the chunk is smaller than the size indicated with a
     /// call to [`Self::image_chunk_buffer_layout`]. Note that the alignment may be arbitrary, but
     /// an alignment smaller than the preferred alignment may perform worse.
+    ///
+    /// # Bugs
+    ///
+    /// When the image is stored as a planar configuration, this method will currently only read
+    /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_chunk_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
@@ -1093,6 +1109,12 @@ impl<R: Read + Seek> Decoder<R> {
     /// channels of individual *bit* length and format each.
     ///
     /// See [`Self::colortype`] to describe the sample types.
+    ///
+    /// # Bugs
+    ///
+    /// When the image is stored as a planar configuration, this method will currently only
+    /// indicate the layout needed to read the first data plane. This will be fixed in a future
+    /// major version of `tiff`.
     pub fn image_buffer_layout(&mut self) -> TiffResult<BufferLayoutPreference> {
         let data_dims @ (width, height) = (self.image.width, self.image.height);
 
@@ -1109,6 +1131,11 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Decodes the entire image and return it as a Vector
+    ///
+    /// # Bugs
+    ///
+    /// When the image is stored as a planar configuration, this method will currently only read
+    /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let width = self.image().width;
         let height = self.image().height;
@@ -1124,6 +1151,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns a [`TiffError::UsageError`] if the chunk is smaller than the size indicated with a
     /// call to [`Self::image_buffer_layout`]. Note that the alignment may be arbitrary, but an
     /// alignment smaller than the preferred alignment may perform worse.
+    ///
+    /// # Bugs
+    ///
+    /// When the image is stored as a planar configuration, this method will currently only read
+    /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
         let width = self.image().width;
         let height = self.image().height;
