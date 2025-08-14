@@ -198,7 +198,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         &mut self,
         width: u32,
         height: u32,
-    ) -> TiffResult<ImageEncoder<W, C, K>> {
+    ) -> TiffResult<ImageEncoder<'_, W, C, K>> {
         let encoder = Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)?;
         ImageEncoder::new(encoder, width, height, self.compression, self.predictor)
     }
