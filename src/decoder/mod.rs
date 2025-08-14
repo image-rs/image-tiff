@@ -138,7 +138,7 @@ impl DecodingResult {
         }
     }
 
-    pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer {
+    pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer<'_> {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),

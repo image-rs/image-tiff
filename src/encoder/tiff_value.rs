@@ -15,7 +15,7 @@ pub trait TiffValue {
 
     /// Access this value as an contiguous sequence of bytes.
     /// If their is no trivial representation, allocate it on the heap.
-    fn data(&self) -> Cow<[u8]>;
+    fn data(&self) -> Cow<'_, [u8]>;
 
     /// Write this value to a TiffWriter.
     /// While the default implementation will work in all cases, it may require unnecessary allocations.
@@ -34,7 +34,7 @@ impl TiffValue for [u8] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(self)
     }
 }
@@ -47,7 +47,7 @@ impl TiffValue for [i8] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i8_as_ne_bytes(self))
     }
 }
@@ -60,7 +60,7 @@ impl TiffValue for [u16] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u16_as_ne_bytes(self))
     }
 }
@@ -73,7 +73,7 @@ impl TiffValue for [i16] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i16_as_ne_bytes(self))
     }
 }
@@ -86,7 +86,7 @@ impl TiffValue for [u32] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u32_as_ne_bytes(self))
     }
 }
@@ -99,7 +99,7 @@ impl TiffValue for [i32] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i32_as_ne_bytes(self))
     }
 }
@@ -112,7 +112,7 @@ impl TiffValue for [u64] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u64_as_ne_bytes(self))
     }
 }
@@ -125,7 +125,7 @@ impl TiffValue for [i64] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i64_as_ne_bytes(self))
     }
 }
@@ -138,7 +138,7 @@ impl TiffValue for [f32] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         // We write using native endian so this should be safe
         Cow::Borrowed(bytecast::f32_as_ne_bytes(self))
     }
@@ -152,7 +152,7 @@ impl TiffValue for [f64] {
         self.len()
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         // We write using native endian so this should be safe
         Cow::Borrowed(bytecast::f64_as_ne_bytes(self))
     }
@@ -171,7 +171,7 @@ impl TiffValue for u8 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(from_ref(self))
     }
 }
@@ -189,7 +189,7 @@ impl TiffValue for i8 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i8_as_ne_bytes(from_ref(self)))
     }
 }
@@ -207,7 +207,7 @@ impl TiffValue for u16 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u16_as_ne_bytes(from_ref(self)))
     }
 }
@@ -225,7 +225,7 @@ impl TiffValue for i16 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i16_as_ne_bytes(from_ref(self)))
     }
 }
@@ -243,7 +243,7 @@ impl TiffValue for u32 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u32_as_ne_bytes(from_ref(self)))
     }
 }
@@ -261,7 +261,7 @@ impl TiffValue for i32 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i32_as_ne_bytes(from_ref(self)))
     }
 }
@@ -279,7 +279,7 @@ impl TiffValue for u64 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u64_as_ne_bytes(from_ref(self)))
     }
 }
@@ -297,7 +297,7 @@ impl TiffValue for i64 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::i64_as_ne_bytes(from_ref(self)))
     }
 }
@@ -315,7 +315,7 @@ impl TiffValue for f32 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::f32_as_ne_bytes(from_ref(self)))
     }
 }
@@ -333,7 +333,7 @@ impl TiffValue for f64 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::f64_as_ne_bytes(from_ref(self)))
     }
 }
@@ -351,7 +351,7 @@ impl TiffValue for Ifd {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u32_as_ne_bytes(from_ref(&self.0)))
     }
 }
@@ -369,7 +369,7 @@ impl TiffValue for Ifd8 {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(bytecast::u64_as_ne_bytes(from_ref(&self.0)))
     }
 }
@@ -388,7 +388,7 @@ impl TiffValue for Rational {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Owned({
             let first_dword = bytecast::u32_as_ne_bytes(from_ref(&self.n));
             let second_dword = bytecast::u32_as_ne_bytes(from_ref(&self.d));
@@ -411,7 +411,7 @@ impl TiffValue for SRational {
         Ok(())
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Owned({
             let first_dword = bytecast::i32_as_ne_bytes(from_ref(&self.n));
             let second_dword = bytecast::i32_as_ne_bytes(from_ref(&self.d));
@@ -438,7 +438,7 @@ impl TiffValue for str {
         }
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         Cow::Owned({
             if self.is_ascii() && !self.bytes().any(|b| b == 0) {
                 let bytes: &[u8] = self.as_bytes();
@@ -462,7 +462,7 @@ impl<T: TiffValue + ?Sized> TiffValue for &'_ T {
         (*self).write(writer)
     }
 
-    fn data(&self) -> Cow<[u8]> {
+    fn data(&self) -> Cow<'_, [u8]> {
         T::data(self)
     }
 }
@@ -484,7 +484,7 @@ macro_rules! impl_tiff_value_for_contiguous_sequence {
                 Ok(())
             }
 
-            fn data(&self) -> Cow<[u8]> {
+            fn data(&self) -> Cow<'_, [u8]> {
                 let mut buf: Vec<u8> = Vec::with_capacity(Self::BYTE_LEN as usize * self.len());
                 for x in self {
                     buf.extend_from_slice(&x.data());
