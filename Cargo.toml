@@ -1,6 +1,6 @@
 [package]
 name = "tiff"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 resolver = "2"
 
@@ -28,7 +28,7 @@ zune-jpeg = { version = "0.4.17", optional = true }
 [dev-dependencies]
 criterion = "0.3.1"
 # We may already depend on this via flate2
-crc32fast = "1"
+crc32fast = "1.5"
 
 [features]
 default = ["deflate", "jpeg", "lzw"]
