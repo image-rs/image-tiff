@@ -1,3 +1,20 @@
+# Version 0.10.1
+
+New features:
+ - Added a dedicated `Directory` type (#277)
+ - Expose methods related to `Directory` publicly (#278)
+ - Implement writing directories (#281, #283)
+ - Add ICC (color profile) to the set of known tags (#287)
+ - Added `Decoder.inner()` to access the underlying reader (#289)
+ - Added methods for reading into a pre-allocated byte buffer (#285)
+
+Changes:
+ - No longer perform color conversion when decoding embedded JPEG. This fixes decoding for JPEG images with alpha channel. (#274)
+ - More lenient LZW decoding to match libtiff (#231)
+
+Fixes:
+ - Fixed seeking multiple times in a row (#279)
+
 # Version 0.10.0
 
 New features:
