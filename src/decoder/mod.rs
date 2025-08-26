@@ -1281,6 +1281,15 @@ impl<R: Read + Seek> Decoder<R> {
         self.image_ifd().find_tag_unsigned(tag)
     }
 
+    /// Tries to retrieve a vector of all a tag's values and convert them to the desired unsigned
+    /// type.
+    pub fn find_tag_unsigned_vec<T: TryFrom<u64>>(
+        &mut self,
+        tag: Tag,
+    ) -> TiffResult<Option<Vec<T>>> {
+        self.image_ifd().find_tag_unsigned_vec(tag)
+    }
+
     /// Tries to retrieve a tag from the current image directory and convert it to the desired
     /// unsigned type. Returns an error if the tag is not present.
     pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
