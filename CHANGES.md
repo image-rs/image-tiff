@@ -1,3 +1,7 @@
+# Version 0.10.2
+
+Republished 0.10.1, fixing an accidentally removed method (`Decoder::find_tag_unsigned_vec`).
+
 # Version 0.10.1
 
 New features:
