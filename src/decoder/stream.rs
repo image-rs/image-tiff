@@ -277,7 +277,7 @@ impl<R: Read> Read for PackBitsReader<R> {
 
 #[cfg(feature = "fax")]
 pub struct Group4Reader<R: Read> {
-    decoder: fax::decoder::Group4Decoder<io::Bytes<io::BufReader<io::Take<R>>>>,
+    decoder: fax34::decoder::Group4Decoder<io::Bytes<io::BufReader<io::Take<R>>>>,
     line_buf: io::Cursor<Vec<u8>>,
     height: u16,
     width: u16,
@@ -295,7 +295,7 @@ impl<R: Read> Group4Reader<R> {
         let height = u16::try_from(dimensions.1)?;
 
         Ok(Self {
-            decoder: fax::decoder::Group4Decoder::new(
+            decoder: fax34::decoder::Group4Decoder::new(
                 io::BufReader::new(reader.take(compressed_length)).bytes(),
                 width,
             )?,
@@ -317,12 +317,12 @@ impl<R: Read> Read for Group4Reader<R> {
             let next = self.decoder.advance().map_err(std::io::Error::other)?;
 
             match next {
-                fax::decoder::DecodeStatus::End => (),
-                fax::decoder::DecodeStatus::Incomplete => {
+                fax34::decoder::DecodeStatus::End => (),
+                fax34::decoder::DecodeStatus::Incomplete => {
                     self.y += 1;
 
                     // We known `transitions` yields exactly `self.width` items (per doc).
-                    let transitions = fax::decoder::pels(self.decoder.transition(), self.width);
+                    let transitions = fax34::decoder::pels(self.decoder.transition(), self.width);
 
                     let buffer = self.line_buf.get_mut();
                     buffer.resize(usize::from(self.width).div_ceil(8), 0u8);
@@ -330,8 +330,8 @@ impl<R: Read> Read for Group4Reader<R> {
                     let target = &mut buffer[..];
 
                     let mut bits = transitions.map(|c| match c {
-                        fax::Color::Black => true,
-                        fax::Color::White => false,
+                        fax34::Color::Black => true,
+                        fax34::Color::White => false,
                     });
 
                     // Assemble bits in MSB as per our library representation for buffer.
