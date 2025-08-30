@@ -577,10 +577,10 @@ impl Entry {
             Type::BYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 let mut buf = [0; 1];
                 reader.inner().read_exact(&mut buf)?;
-                Ok(UnsignedBig(u64::from(buf[0])))
+                Ok(Byte(buf[0]))
             }),
             Type::SBYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(SignedBig(i64::from(reader.read_i8()?)))
+                Ok(SignedByte(reader.read_i8()?))
             }),
             Type::SHORT => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
                 Ok(Short(reader.read_u16()?))
