@@ -277,7 +277,7 @@ impl<R: Read> Read for PackBitsReader<R> {
 
 #[cfg(feature = "fax")]
 pub struct Group4Reader<R: Read> {
-    decoder: fax::decoder::Group4Decoder<io::Bytes<io::Take<R>>>,
+    decoder: fax::decoder::Group4Decoder<io::Bytes<io::BufReader<io::Take<R>>>>,
     line_buf: io::Cursor<Vec<u8>>,
     height: u16,
     width: u16,
@@ -296,12 +296,12 @@ impl<R: Read> Group4Reader<R> {
 
         Ok(Self {
             decoder: fax::decoder::Group4Decoder::new(
-                reader.take(compressed_length).bytes(),
+                io::BufReader::new(reader.take(compressed_length)).bytes(),
                 width,
             )?,
             line_buf: io::Cursor::new(Vec::with_capacity(width.into())),
-            width: width,
-            height: height,
+            width,
+            height,
             y: 0,
         })
     }
