@@ -33,7 +33,7 @@ criterion = "0.3.1"
 crc32fast = "1.5"
 
 [features]
-default = ["deflate", "jpeg", "lzw"]
+default = ["deflate", "fax", "jpeg", "lzw"]
 
 # Compression algorithms
 deflate = ["dep:flate2"]
