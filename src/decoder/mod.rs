@@ -475,11 +475,21 @@ fn fix_endianness_and_predict(
     }
 }
 
-fn invert_colors(buf: &mut [u8], color_type: ColorType, sample_format: SampleFormat) {
+fn invert_colors(
+    buf: &mut [u8],
+    color_type: ColorType,
+    sample_format: SampleFormat,
+) -> TiffResult<()> {
     match (color_type, sample_format) {
-        (ColorType::Gray(8), SampleFormat::Uint) => {
+        (ColorType::Gray(n), SampleFormat::Uint) if 8 % n == 0 => {
             for x in buf {
-                *x = 0xff - *x;
+                // Equivalent to both of the following:
+                //
+                // *x = 0xff - *x
+                // *x = !*x
+                //
+                // since -x = !x+1
+                *x = !*x;
             }
         }
         (ColorType::Gray(16), SampleFormat::Uint) => {
@@ -512,8 +522,14 @@ fn invert_colors(buf: &mut [u8], color_type: ColorType, sample_format: SampleFor
                 x.copy_from_slice(&(1.0 - v).to_ne_bytes());
             }
         }
-        _ => {}
+        _ => {
+            return Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::UnknownInterpretation,
+            ))
+        }
     }
+
+    Ok(())
 }
 
 /// Fix endianness. If `byte_order` matches the host, then conversion is a no-op.

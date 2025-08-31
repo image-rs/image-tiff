@@ -344,6 +344,9 @@ impl Image {
                     ),
                 )),
             },
+            // TODO: treatment of WhiteIsZero is not quite consistent with `invert_colors` that is
+            // later called when that interpretation is read. That function does not support
+            // Multiband as a color type and will error. It's unclear how to resolve that exactly.
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero => {
                 match self.samples {
                     1 => Ok(ColorType::Gray(self.bits_per_sample)),
@@ -684,7 +687,7 @@ impl Image {
                 );
             }
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                super::invert_colors(tile, color_type, self.sample_format);
+                super::invert_colors(tile, color_type, self.sample_format)?;
             }
         } else if chunk_row_bytes > data_row_bytes && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
@@ -701,7 +704,7 @@ impl Image {
                     _ => unreachable!(),
                 }
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format);
+                    super::invert_colors(row, color_type, self.sample_format)?;
                 }
             }
         } else {
@@ -723,7 +726,7 @@ impl Image {
                     predictor,
                 );
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format);
+                    super::invert_colors(row, color_type, self.sample_format)?;
                 }
             }
         }

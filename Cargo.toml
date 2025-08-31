@@ -21,7 +21,7 @@ half = { version = "2.4.1" }
 quick-error = "2.0.1"
 
 # Rename to avoid confusion with the feature name.
-fax34 = { package = "fax", version = "0.2.4", optional = true }
+fax34 = { package = "fax", version = "0.2.6", optional = true }
 flate2 = { version = "1.0.20", optional = true }
 weezl = { version = "0.1.10", optional = true }
 zstd = { version = "0.13", optional = true }
