@@ -1,5 +1,4 @@
 //! All IO functionality needed for TIFF decoding
-
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
 /// Byte order of the TIFF file.
@@ -273,6 +272,85 @@ impl<R: Read> Read for PackBitsReader<R> {
             self.state = PackBitsReaderState::Header;
         }
         Ok(actual)
+    }
+}
+
+#[cfg(feature = "fax")]
+pub struct Group4Reader<R: Read> {
+    decoder: fax34::decoder::Group4Decoder<io::Bytes<io::BufReader<io::Take<R>>>>,
+    line_buf: io::Cursor<Vec<u8>>,
+    height: u16,
+    width: u16,
+    y: u16,
+}
+
+#[cfg(feature = "fax")]
+impl<R: Read> Group4Reader<R> {
+    pub fn new(
+        dimensions: (u32, u32),
+        reader: R,
+        compressed_length: u64,
+    ) -> crate::TiffResult<Self> {
+        let width = u16::try_from(dimensions.0)?;
+        let height = u16::try_from(dimensions.1)?;
+
+        Ok(Self {
+            decoder: fax34::decoder::Group4Decoder::new(
+                io::BufReader::new(reader.take(compressed_length)).bytes(),
+                width,
+            )?,
+            line_buf: io::Cursor::new(Vec::with_capacity(width.into())),
+            width,
+            height,
+            y: 0,
+        })
+    }
+}
+
+#[cfg(feature = "fax")]
+impl<R: Read> Read for Group4Reader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // Either we have not read any line or we are at the end of a line.
+        if self.line_buf.position() as usize == self.line_buf.get_ref().len()
+            && self.y < self.height
+        {
+            let next = self.decoder.advance().map_err(std::io::Error::other)?;
+
+            match next {
+                fax34::decoder::DecodeStatus::End => (),
+                fax34::decoder::DecodeStatus::Incomplete => {
+                    self.y += 1;
+
+                    // We known `transitions` yields exactly `self.width` items (per doc).
+                    let transitions = fax34::decoder::pels(self.decoder.transition(), self.width);
+
+                    let buffer = self.line_buf.get_mut();
+                    buffer.resize(usize::from(self.width).div_ceil(8), 0u8);
+
+                    let target = &mut buffer[..];
+
+                    let mut bits = transitions.map(|c| match c {
+                        fax34::Color::Black => true,
+                        fax34::Color::White => false,
+                    });
+
+                    // Assemble bits in MSB as per our library representation for buffer.
+                    for byte in target {
+                        let mut val = 0;
+
+                        for (idx, bit) in bits.by_ref().take(8).enumerate() {
+                            val |= u8::from(bit) << (7 - idx % 8);
+                        }
+
+                        *byte = val;
+                    }
+
+                    self.line_buf.set_position(0);
+                }
+            }
+        }
+
+        self.line_buf.read(buf)
     }
 }
 

@@ -672,3 +672,9 @@ fn bytes_gray_f32() {
         byte_order_u32,
     );
 }
+
+#[test]
+#[cfg(feature = "fax")]
+fn test_fax4() {
+    test_image_sum_u8("fax4.tiff", ColorType::Gray(1), 7802706);
+}

@@ -9,6 +9,7 @@ use crate::tags::{
 use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
+
 use std::io::{self, Cursor, Read, Seek};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -384,7 +385,9 @@ impl Image {
         reader: R,
         compression_method: CompressionMethod,
         compressed_length: u64,
-        #[allow(unused_variables)] jpeg_tables: Option<&[u8]>,
+        // FIXME: these should be `expect` attributes or we choose another way of passing them.
+        #[cfg_attr(not(feature = "jpeg"), allow(unused_variables))] jpeg_tables: Option<&[u8]>,
+        #[cfg_attr(not(feature = "fax"), allow(unused_variables))] dimensions: (u32, u32),
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
@@ -452,6 +455,12 @@ impl Image {
 
                 Box::new(Cursor::new(data))
             }
+            #[cfg(feature = "fax")]
+            CompressionMethod::Fax4 => Box::new(super::stream::Group4Reader::new(
+                dimensions,
+                reader,
+                compressed_length,
+            )?),
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),
@@ -658,6 +667,7 @@ impl Image {
             compression_method,
             *compressed_bytes,
             self.jpeg_tables.as_deref().map(|a| &**a),
+            chunk_dims,
         )?;
 
         if output_row_stride == chunk_row_bytes {
