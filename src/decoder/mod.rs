@@ -481,7 +481,8 @@ fn invert_colors(
     sample_format: SampleFormat,
 ) -> TiffResult<()> {
     match (color_type, sample_format) {
-        (ColorType::Gray(n), SampleFormat::Uint) if 8 % n == 0 => {
+        // Where pixels do not cross a byte boundary
+        (ColorType::Gray(1 | 2 | 4 | 8), SampleFormat::Uint) => {
             for x in buf {
                 // Equivalent to both of the following:
                 //
