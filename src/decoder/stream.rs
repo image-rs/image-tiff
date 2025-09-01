@@ -322,6 +322,10 @@ impl<R: Read> Read for Group4Reader<R> {
                     self.y += 1;
 
                     // We known `transitions` yields exactly `self.width` items (per doc).
+                    // FIXME: performance. We do not need an individual pixel iterator, filling
+                    // memory especially for long runs can be much quicker. The `transitions` are
+                    // the positions at which each run-length ends, i.e. the prefix sum of run
+                    // lengths. Runs in fax4 start with white.
                     let transitions = fax34::decoder::pels(self.decoder.transition(), self.width);
 
                     let buffer = self.line_buf.get_mut();
@@ -329,6 +333,23 @@ impl<R: Read> Read for Group4Reader<R> {
 
                     let target = &mut buffer[..];
 
+                    // Note: it may seem strange to treat black as 0b1 and white as 0b0 despite all
+                    // our streams by default decoding as-if PhotometricInterpretation::BlackIsMin.
+                    // This is however consistent with libtiff. It seems that fax4's "White"
+                    // differs from what libtiff thinks of as "White". For content, a line of data
+                    // is in runlength encoding of white-black-white-black always starting with
+                    // white. In libtiff, the loop always does both colors in one go and the
+                    // structure is:
+                    //
+                    // ```
+                    // for (; runs < erun; runs += 2)
+                    //   // white run
+                    //       do { *lp++ = 0L; } while (…)
+                    //   // black run
+                    //       do { *lp++ = -1L; } while (…)
+                    // ```
+                    //
+                    // So indeed the Fax4::White run is implemented by filling with zeros.
                     let mut bits = transitions.map(|c| match c {
                         fax34::Color::Black => true,
                         fax34::Color::White => false,
