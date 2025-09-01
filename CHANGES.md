@@ -1,3 +1,19 @@
+# Version 0.10.3
+
+New features:
+- Group 4 `fax` is now recognized as a compression type and decoded.
+- A crate feature `fax` controls related dependencies, on by default.
+
+Changes:
+- The presence of PhotometricInterpretation::WhiteIsZero now returns an error
+  if the color type can not be inverted by the library where they were
+  previously silently ignored. Please report any missing color types.
+
+Fixes:
+- The PhotometricInterpretation::WhiteIsZero is now also applied to 1-bit
+  images, as well as 2-bit and 4-bit sample types where previously the presence
+  of this tag was ignored.
+
 # Version 0.10.2
 
 Republished 0.10.1, fixing an accidentally removed method (`Decoder::find_tag_unsigned_vec`).
