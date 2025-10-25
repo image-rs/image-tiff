@@ -442,13 +442,13 @@ impl Image {
                 let mut jpeg_data = Vec::new();
                 jpeg_reader.read_to_end(&mut jpeg_data)?;
 
-                let mut decoder = zune_jpeg::JpegDecoder::new(jpeg_data);
+                let mut decoder = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(jpeg_data));
                 let mut options: zune_core::options::DecoderOptions = Default::default();
 
                 // Disable color conversion by setting the output colorspace to the input
                 // colorspace.
                 decoder.decode_headers()?;
-                if let Some(colorspace) = decoder.get_input_colorspace() {
+                if let Some(colorspace) = decoder.input_colorspace() {
                     options = options.jpeg_set_out_colorspace(colorspace);
                 }
 

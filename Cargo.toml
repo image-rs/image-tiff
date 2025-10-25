@@ -25,7 +25,7 @@ fax34 = { package = "fax", version = "0.2.6", optional = true }
 flate2 = { version = "1.0.20", optional = true }
 weezl = { version = "0.1.10", optional = true }
 zstd = { version = "0.13", optional = true }
-zune-jpeg = { version = "0.4.17", optional = true }
+zune-jpeg = { version = "0.5.1", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.1"
