@@ -145,12 +145,15 @@ impl Image {
                     .map(SampleFormat::from_u16_exhaustive)
                     .collect();
 
+                let Some(format) = sample_format.first().copied() else {
+                    // Reject empty sample formats
+                    return Err(TiffFormatError::InvalidTagValueType(Tag::SampleFormat).into());
+                };
                 // TODO: for now, only homogenous formats across samples are supported.
-                if !sample_format.windows(2).all(|s| s[0] == s[1]) {
+                if !sample_format.iter().all(|&s| s == format) {
                     return Err(TiffUnsupportedError::UnsupportedSampleFormat(sample_format).into());
                 }
-
-                sample_format[0]
+                format
             }
             None => SampleFormat::Uint,
         };
