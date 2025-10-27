@@ -37,20 +37,15 @@ pub type Predictor = crate::tags::Predictor;
 #[cfg(feature = "deflate")]
 pub type DeflateLevel = compression::DeflateLevel;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 pub enum Compression {
+    #[default]
     Uncompressed,
     #[cfg(feature = "lzw")]
     Lzw,
     #[cfg(feature = "deflate")]
     Deflate(DeflateLevel),
     Packbits,
-}
-
-impl Default for Compression {
-    fn default() -> Self {
-        Self::Uncompressed
-    }
 }
 
 impl Compression {
