@@ -186,9 +186,6 @@ impl<R: Read> Read for LZWReader<R> {
                     }
                 }
                 Ok(weezl::LzwStatus::NoProgress) => {
-                    assert_eq!(result.consumed_in, 0);
-                    assert_eq!(result.consumed_out, 0);
-                    assert!(self.reader.buffer().is_empty());
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "no lzw end code found",
