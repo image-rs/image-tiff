@@ -10,8 +10,8 @@ use crate::tags::{IfdPointer, Tag, Type};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
 use self::Value::{
-    Ascii, Byte, Double, Float, Ifd, IfdBig, List, Rational, RationalBig, SRational, SRationalBig,
-    Short, Signed, SignedBig, SignedByte, SignedShort, Unsigned, UnsignedBig,
+    Ascii, Byte, Double, Float, Ifd, IfdBig, List, Rational, SRational, Short, Signed, SignedBig,
+    SignedByte, SignedShort, Unsigned, UnsignedBig,
 };
 
 #[allow(unused_qualifications)]
@@ -30,8 +30,16 @@ pub enum Value {
     Double(f64),
     List(Vec<Value>),
     Rational(u32, u32),
+    #[deprecated(
+        note = "Not implemented in BigTIFF with a standard tag value",
+        since = "0.11.1"
+    )]
     RationalBig(u64, u64),
     SRational(i32, i32),
+    #[deprecated(
+        note = "Not implemented in BigTIFF with a standard tag value",
+        since = "0.11.1"
+    )]
     SRationalBig(i64, i64),
     Ascii(String),
     Ifd(u32),
@@ -170,7 +178,8 @@ impl Value {
             Unsigned(val) => Ok(vec![val]),
             UnsignedBig(val) => Ok(vec![u32::try_from(val)?]),
             Rational(numerator, denominator) => Ok(vec![numerator, denominator]),
-            RationalBig(numerator, denominator) => {
+            #[expect(deprecated)]
+            Value::RationalBig(numerator, denominator) => {
                 Ok(vec![u32::try_from(numerator)?, u32::try_from(denominator)?])
             }
             Ifd(val) => Ok(vec![val]),
@@ -220,7 +229,8 @@ impl Value {
                             new_vec.push(numerator);
                             new_vec.push(denominator);
                         }
-                        SRationalBig(numerator, denominator) => {
+                        #[expect(deprecated)]
+                        Value::SRationalBig(numerator, denominator) => {
                             new_vec.push(i32::try_from(numerator)?);
                             new_vec.push(i32::try_from(denominator)?);
                         }
@@ -234,7 +244,8 @@ impl Value {
             Signed(val) => Ok(vec![val]),
             SignedBig(val) => Ok(vec![i32::try_from(val)?]),
             SRational(numerator, denominator) => Ok(vec![numerator, denominator]),
-            SRationalBig(numerator, denominator) => {
+            #[expect(deprecated)]
+            Value::SRationalBig(numerator, denominator) => {
                 Ok(vec![i32::try_from(numerator)?, i32::try_from(denominator)?])
             }
             _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
@@ -283,7 +294,8 @@ impl Value {
             Unsigned(val) => Ok(vec![val.into()]),
             UnsignedBig(val) => Ok(vec![val]),
             Rational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
-            RationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
+            #[expect(deprecated)]
+            Value::RationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
             Ifd(val) => Ok(vec![val.into()]),
             IfdBig(val) => Ok(vec![val]),
             Ascii(val) => Ok(val.chars().map(u32::from).map(u64::from).collect()),
@@ -301,7 +313,8 @@ impl Value {
                             new_vec.push(numerator.into());
                             new_vec.push(denominator.into());
                         }
-                        SRationalBig(numerator, denominator) => {
+                        #[expect(deprecated)]
+                        Value::SRationalBig(numerator, denominator) => {
                             new_vec.push(numerator);
                             new_vec.push(denominator);
                         }
@@ -315,7 +328,8 @@ impl Value {
             Signed(val) => Ok(vec![val.into()]),
             SignedBig(val) => Ok(vec![val]),
             SRational(numerator, denominator) => Ok(vec![numerator.into(), denominator.into()]),
-            SRationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
+            #[expect(deprecated)]
+            Value::SRationalBig(numerator, denominator) => Ok(vec![numerator, denominator]),
             _ => Err(TiffError::FormatError(TiffFormatError::InvalidTypeForTag)),
         }
     }
