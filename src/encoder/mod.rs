@@ -12,8 +12,8 @@ use crate::{
     decoder::ifd::Entry,
     error::{TiffResult, UsageError},
     tags::{
-        CompressionMethod, ExtraSamples, IfdPointer, PhotometricInterpretation, ResolutionUnit,
-        SampleFormat, Tag, Type,
+        ByteOrder, CompressionMethod, ExtraSamples, IfdPointer, PhotometricInterpretation,
+        ResolutionUnit, SampleFormat, Tag, Type, ValueBuffer,
     },
     Directory, TiffError, TiffFormatError,
 };
@@ -291,6 +291,21 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         })
     }
 
+    /// Write a tag-value pair with prepared byte data.
+    ///
+    /// Note that the library will _not_ attempt to verify that the data type or the count of the
+    /// opaque value is permissible for the given tag. The data will be associated with the tag
+    /// exactly as-is.
+    ///
+    /// An error is returned if the byte order of the presented value does not match the byte order
+    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
+    pub fn write_tag_value(&mut self, tag: Tag, value: &ValueBuffer) -> TiffResult<()> {
+        let entry = self.write_entry_buf(value)?;
+        self.directory.extend([(tag, entry)]);
+
+        Ok(())
+    }
+
     /// Write a single ifd tag.
     pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
         // Encodes the value if necessary. In the current bytes all integers are taken as native
@@ -301,12 +316,12 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             value.write(&mut writer)?;
         }
 
-        let entry = Self::write_value(
+        let entry = Self::write_entry_inner(
             self.writer,
-            &DirectoryEntry {
+            DirectoryEntry {
                 data_type: <T>::FIELD_TYPE,
                 count: value.count().try_into()?,
-                data: bytes,
+                data: bytes.into(),
             },
         )?;
 
@@ -317,11 +332,68 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
 
     /// Write some data to the tiff file, the offset of the data is returned.
     ///
-    /// This could be used to write tiff strips.
+    /// This could be used to write tiff strips. All of the data will be written into the file as a
+    /// slice of bytes. It can not be used as an entry in a directory directly, where very short
+    /// values are instead represented in the offset field directly. Use [`Self::write_entry`]
+    /// instead.
     pub fn write_data<T: TiffValue>(&mut self, value: T) -> TiffResult<u64> {
         let offset = self.writer.offset();
         value.write(self.writer)?;
         Ok(offset)
+    }
+
+    /// Write some data directly to the tiff file, the offset of the data is returned.
+    ///
+    /// All of the data will be written into the file as a slice of bytes. It can not be used as an
+    /// entry in a directory directly, where very short values are instead represented in the
+    /// offset field directly. Use [`Self::write_entry_buf`] instead.
+    ///
+    /// An error is returned if the byte order of the presented value does not match the byte order
+    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
+    pub fn write_data_buf(&mut self, value: &ValueBuffer) -> TiffResult<u64> {
+        self.check_value_byteorder(value)?;
+        let offset = self.writer.offset();
+        self.writer.write_bytes(value.as_bytes())?;
+        Ok(offset)
+    }
+
+    /// Write a directory value into the file.
+    ///
+    /// Returns an [`Entry`]. If the value is short enough it will *not* be written in the file but
+    /// stored in the entry's offset field.
+    pub fn write_entry<T: TiffValue>(&mut self, value: T) -> TiffResult<Entry> {
+        Self::write_entry_inner(
+            self.writer,
+            DirectoryEntry {
+                data_type: T::FIELD_TYPE,
+                count: K::convert_offset(value.count() as u64)?,
+                // FIXME: not optimal we always allocate here. But the only other method we have
+                // available is `T::write(&mut TiffWriter<W>)` and we must pass that into
+                // `write_entry_inner` but then have a combinatorial explosion of instantiations
+                // which is absurd.
+                data: value.data(),
+            },
+        )
+    }
+
+    /// Write a directory value into the file.
+    ///
+    /// An error is returned if the byte order of the presented value does not match the byte order
+    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
+    ///
+    /// Returns an [`Entry`]. If the value is short enough it will *not* be written in the file but
+    /// stored in the entry's offset field.
+    pub fn write_entry_buf(&mut self, value: &ValueBuffer) -> TiffResult<Entry> {
+        self.check_value_byteorder(value)?;
+
+        Self::write_entry_inner(
+            self.writer,
+            DirectoryEntry {
+                data_type: value.data_type(),
+                count: K::convert_offset(value.count())?,
+                data: value.as_bytes().into(),
+            },
+        )
     }
 
     /// Insert previously written key-value entries.
@@ -377,17 +449,21 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(offset)
     }
 
-    fn write_value(
+    // Does it really make sense that this would be a (potentially) compressible write? For actual
+    // directory values their size must match the data written so there's going to be a silent
+    // problem if that actually occurs.
+    fn write_entry_inner(
         writer: &mut TiffWriter<W>,
-        value: &DirectoryEntry<K::OffsetType>,
+        value: DirectoryEntry<K::OffsetType>,
     ) -> TiffResult<Entry> {
-        let &DirectoryEntry {
+        let DirectoryEntry {
             data: ref bytes,
             ref count,
             data_type,
         } = value;
 
         let in_entry_bytes = mem::size_of::<K::OffsetType>();
+
         let mut offset_bytes = [0; 8];
 
         if bytes.len() > in_entry_bytes {
@@ -406,6 +482,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         // and some oversight, we can not clone the `count: K::OffsetType` and thus not convert it.
         // Instead, write it to a buffer...
         let mut count_bytes = [0; 8];
+        debug_assert!(in_entry_bytes == 4 || in_entry_bytes == 8);
         // Nominally Cow but we only expect `Cow::Borrowed`.
         count_bytes[..count.bytes()].copy_from_slice(&count.data());
 
@@ -417,6 +494,15 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             let count = u64::from_ne_bytes(count_bytes);
             Entry::new_u64(data_type, count, offset_bytes)
         })
+    }
+
+    fn check_value_byteorder(&self, value: &ValueBuffer) -> TiffResult<()> {
+        // FIXME: we should enable writing files with any chosen byte order.
+        if value.byte_order() != ByteOrder::native() {
+            Err(TiffError::UsageError(UsageError::ByteOrderMismatch))
+        } else {
+            Ok(())
+        }
     }
 
     /// Provides the number of bytes written by the underlying TiffWriter during the last call.
@@ -824,10 +910,10 @@ impl<'a, W: Write + Seek, C: ColorType, K: TiffKind> Drop for ImageEncoder<'a, W
     }
 }
 
-struct DirectoryEntry<S> {
+struct DirectoryEntry<'data, S> {
     data_type: Type,
     count: S,
-    data: Vec<u8>,
+    data: std::borrow::Cow<'data, [u8]>,
 }
 
 /// Trait to abstract over Tiff/BigTiff differences.

@@ -16,7 +16,12 @@ use super::writer::TiffWriter;
 pub trait TiffValue {
     const BYTE_LEN: u8;
     const FIELD_TYPE: Type;
+
+    // FIXME: If we want this to mean 'count' in the sense of `Entry` it should return `u32` or
+    // `u64`, probably the latter with `convert_offset` taking care of the check against `u32::MAX`
+    // for classic tiff.
     fn count(&self) -> usize;
+
     fn bytes(&self) -> usize {
         self.count() * usize::from(Self::BYTE_LEN)
     }

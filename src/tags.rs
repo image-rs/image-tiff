@@ -366,7 +366,7 @@ impl ValueBuffer {
         self.byte_order
     }
 
-    pub fn tiff_type(&self) -> Type {
+    pub fn data_type(&self) -> Type {
         self.ty
     }
 

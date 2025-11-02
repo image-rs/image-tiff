@@ -208,6 +208,9 @@ quick_error! {
         ReconfiguredAfterImageWrite {
             display("attempted to reconfigure the encoder after image writing has started")
         }
+        ByteOrderMismatch {
+            display("attempted to use data with a byte order that does not match the required one")
+        }
     }
 }
 
