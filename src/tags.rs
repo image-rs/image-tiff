@@ -296,3 +296,30 @@ pub enum SampleFormat(u16) unknown(
     Void = 4,
 }
 }
+
+/// Byte order of the TIFF file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ByteOrder {
+    /// little endian byte order
+    LittleEndian,
+    /// big endian byte order
+    BigEndian,
+}
+
+impl ByteOrder {
+    /// Get the byte order representing the running target.
+    ///
+    /// The infallibility of this method represents the fact that only little and big endian
+    /// systems are supported by the library. No mixed endian and no other weird stuff. (Note: as
+    /// of Rust 1.90 this is a tautology as Rust itself only has those two kinds).
+    pub const fn native() -> Self {
+        match () {
+            #[cfg(target_endian = "little")]
+            () => ByteOrder::LittleEndian,
+            #[cfg(target_endian = "big")]
+            () => ByteOrder::BigEndian,
+            #[cfg(not(any(target_endian = "big", target_endian = "little")))]
+            () => compile_error!("Unsupported target"),
+        }
+    }
+}

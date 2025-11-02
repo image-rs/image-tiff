@@ -1,14 +1,7 @@
 //! All IO functionality needed for TIFF decoding
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
-/// Byte order of the TIFF file.
-#[derive(Clone, Copy, Debug)]
-pub enum ByteOrder {
-    /// little endian byte order
-    LittleEndian,
-    /// big endian byte order
-    BigEndian,
-}
+pub use crate::tags::ByteOrder;
 
 /// Reader that is aware of the byte order.
 #[derive(Debug)]
