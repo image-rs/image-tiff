@@ -336,6 +336,62 @@ pub enum ExtraSamples(u16) {
 }
 }
 
+/// A value represented as in-memory bytes with flexible byteorder.
+pub struct ValueBuffer {
+    /// The raw bytes of the value.
+    bytes: Vec<u8>,
+
+    /// The type of the value.
+    ty: Type,
+
+    /// The byte order of the value.
+    byte_order: ByteOrder,
+}
+
+impl ValueBuffer {
+    /// A value with a count of zero.
+    ///
+    /// The byte order is set to the native byte order of the platform.
+    pub fn empty(ty: Type) -> Self {
+        ValueBuffer {
+            bytes: vec![],
+            ty,
+            byte_order: ByteOrder::native(),
+        }
+    }
+
+    pub fn byte_order(&self) -> ByteOrder {
+        self.byte_order
+    }
+
+    pub fn tiff_type(&self) -> Type {
+        self.ty
+    }
+
+    /// The count of items in the value.
+    pub fn count(&self) -> u64 {
+        (self.bytes.len() / usize::from(self.ty.byte_len())) as u64
+    }
+
+    /// View the underlying raw bytes of this value.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// View the underlying mutable raw bytes of this value.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes
+    }
+
+    /// Change the byte order of the value representation.
+    pub fn set_byte_order(&mut self, byte_order: ByteOrder) {
+        self.byte_order
+            .convert(self.ty, self.bytes.as_mut_slice(), byte_order);
+
+        self.byte_order = byte_order;
+    }
+}
+
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ByteOrder {
