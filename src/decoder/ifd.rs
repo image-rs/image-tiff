@@ -376,7 +376,10 @@ impl Entry {
     }
 
     /// Returns a mem_reader for the offset/value field
-    fn r(&self, byte_order: ByteOrder) -> EndianReader<io::Cursor<Vec<u8>>> {
+    pub(crate) fn offset_field_reader(
+        &self,
+        byte_order: ByteOrder,
+    ) -> EndianReader<io::Cursor<Vec<u8>>> {
         EndianReader::new(io::Cursor::new(self.offset.to_vec()), byte_order)
     }
 
@@ -392,43 +395,25 @@ impl Entry {
         }
 
         let bo = reader.byte_order;
-
-        let tag_size = match self.type_ {
-            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
-            Type::SHORT | Type::SSHORT => 2,
-            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
-            Type::LONG8
-            | Type::SLONG8
-            | Type::DOUBLE
-            | Type::RATIONAL
-            | Type::SRATIONAL
-            | Type::IFD8 => 8,
-        };
-
-        let value_bytes = match self.count.checked_mul(tag_size) {
-            Some(n) => n,
-            None => {
-                return Err(TiffError::LimitsExceeded);
-            }
-        };
+        let value_bytes = self.type_.value_bytes(self.count)?;
 
         // Case 2: there is one value.
         if self.count == 1 {
             // 2a: the value is 5-8 bytes and we're in BigTiff mode.
             if bigtiff && value_bytes > 4 && value_bytes <= 8 {
                 return Ok(match self.type_ {
-                    Type::LONG8 => UnsignedBig(self.r(bo).read_u64()?),
-                    Type::SLONG8 => SignedBig(self.r(bo).read_i64()?),
-                    Type::DOUBLE => Double(self.r(bo).read_f64()?),
+                    Type::LONG8 => UnsignedBig(self.offset_field_reader(bo).read_u64()?),
+                    Type::SLONG8 => SignedBig(self.offset_field_reader(bo).read_i64()?),
+                    Type::DOUBLE => Double(self.offset_field_reader(bo).read_f64()?),
                     Type::RATIONAL => {
-                        let mut r = self.r(bo);
+                        let mut r = self.offset_field_reader(bo);
                         Rational(r.read_u32()?, r.read_u32()?)
                     }
                     Type::SRATIONAL => {
-                        let mut r = self.r(bo);
+                        let mut r = self.offset_field_reader(bo);
                         SRational(r.read_i32()?, r.read_i32()?)
                     }
-                    Type::IFD8 => IfdBig(self.r(bo).read_u64()?),
+                    Type::IFD8 => IfdBig(self.offset_field_reader(bo).read_u64()?),
                     Type::BYTE
                     | Type::SBYTE
                     | Type::ASCII
@@ -447,11 +432,11 @@ impl Entry {
                 Type::BYTE => Byte(self.offset[0]),
                 Type::SBYTE => SignedByte(self.offset[0] as i8),
                 Type::UNDEFINED => Byte(self.offset[0]),
-                Type::SHORT => Short(self.r(bo).read_u16()?),
-                Type::SSHORT => SignedShort(self.r(bo).read_i16()?),
-                Type::LONG => Unsigned(self.r(bo).read_u32()?),
-                Type::SLONG => Signed(self.r(bo).read_i32()?),
-                Type::FLOAT => Float(self.r(bo).read_f32()?),
+                Type::SHORT => Short(self.offset_field_reader(bo).read_u16()?),
+                Type::SSHORT => SignedShort(self.offset_field_reader(bo).read_i16()?),
+                Type::LONG => Unsigned(self.offset_field_reader(bo).read_u32()?),
+                Type::SLONG => Signed(self.offset_field_reader(bo).read_i32()?),
+                Type::FLOAT => Float(self.offset_field_reader(bo).read_f32()?),
                 Type::ASCII => {
                     if self.offset[0] == 0 {
                         Ascii("".to_string())
@@ -460,28 +445,28 @@ impl Entry {
                     }
                 }
                 Type::LONG8 => {
-                    reader.goto_offset(self.r(bo).read_u32()?.into())?;
+                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?;
                     UnsignedBig(reader.read_u64()?)
                 }
                 Type::SLONG8 => {
-                    reader.goto_offset(self.r(bo).read_u32()?.into())?;
+                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?;
                     SignedBig(reader.read_i64()?)
                 }
                 Type::DOUBLE => {
-                    reader.goto_offset(self.r(bo).read_u32()?.into())?;
+                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?;
                     Double(reader.read_f64()?)
                 }
                 Type::RATIONAL => {
-                    reader.goto_offset(self.r(bo).read_u32()?.into())?;
+                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?;
                     Rational(reader.read_u32()?, reader.read_u32()?)
                 }
                 Type::SRATIONAL => {
-                    reader.goto_offset(self.r(bo).read_u32()?.into())?;
+                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?;
                     SRational(reader.read_i32()?, reader.read_i32()?)
                 }
-                Type::IFD => Ifd(self.r(bo).read_u32()?),
+                Type::IFD => Ifd(self.offset_field_reader(bo).read_u32()?),
                 Type::IFD8 => {
-                    reader.goto_offset(self.r(bo).read_u32()?.into())?;
+                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?;
                     IfdBig(reader.read_u64()?)
                 }
             });
@@ -512,7 +497,7 @@ impl Entry {
                     ));
                 }
                 Type::SHORT => {
-                    let mut r = self.r(bo);
+                    let mut r = self.offset_field_reader(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
                         v.push(Short(r.read_u16()?));
@@ -520,7 +505,7 @@ impl Entry {
                     return Ok(List(v));
                 }
                 Type::SSHORT => {
-                    let mut r = self.r(bo);
+                    let mut r = self.offset_field_reader(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
                         v.push(SignedShort(r.read_i16()?));
@@ -528,7 +513,7 @@ impl Entry {
                     return Ok(List(v));
                 }
                 Type::LONG => {
-                    let mut r = self.r(bo);
+                    let mut r = self.offset_field_reader(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
                         v.push(Unsigned(r.read_u32()?));
@@ -536,7 +521,7 @@ impl Entry {
                     return Ok(List(v));
                 }
                 Type::SLONG => {
-                    let mut r = self.r(bo);
+                    let mut r = self.offset_field_reader(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
                         v.push(Signed(r.read_i32()?));
@@ -544,7 +529,7 @@ impl Entry {
                     return Ok(List(v));
                 }
                 Type::FLOAT => {
-                    let mut r = self.r(bo);
+                    let mut r = self.offset_field_reader(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
                         v.push(Float(r.read_f32()?));
@@ -552,7 +537,7 @@ impl Entry {
                     return Ok(List(v));
                 }
                 Type::IFD => {
-                    let mut r = self.r(bo);
+                    let mut r = self.offset_field_reader(bo);
                     let mut v = Vec::new();
                     for _ in 0..self.count {
                         v.push(Ifd(r.read_u32()?));
@@ -636,9 +621,9 @@ impl Entry {
                 }
 
                 if bigtiff {
-                    reader.goto_offset(self.r(bo).read_u64()?)?
+                    reader.goto_offset(self.offset_field_reader(bo).read_u64()?)?
                 } else {
-                    reader.goto_offset(self.r(bo).read_u32()?.into())?
+                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?
                 }
 
                 let mut out = vec![0; n];
@@ -674,9 +659,9 @@ impl Entry {
         let mut v = Vec::with_capacity(value_count);
 
         let offset = if bigtiff {
-            self.r(bo).read_u64()?
+            self.offset_field_reader(bo).read_u64()?
         } else {
-            self.r(bo).read_u32()?.into()
+            self.offset_field_reader(bo).read_u32()?.into()
         };
         reader.goto_offset(offset)?;
 

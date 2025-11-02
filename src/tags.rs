@@ -193,6 +193,31 @@ pub enum Type(u16) {
 }
 }
 
+impl Type {
+    pub(crate) fn byte_len(&self) -> u8 {
+        match *self {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
+            Type::SHORT | Type::SSHORT => 2,
+            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+            Type::LONG8
+            | Type::SLONG8
+            | Type::DOUBLE
+            | Type::RATIONAL
+            | Type::SRATIONAL
+            | Type::IFD8 => 8,
+        }
+    }
+
+    pub(crate) fn value_bytes(&self, count: u64) -> Result<u64, crate::error::TiffError> {
+        let tag_size = u64::from(self.byte_len());
+
+        match count.checked_mul(tag_size) {
+            Some(n) => Ok(n),
+            None => Err(crate::error::TiffError::LimitsExceeded),
+        }
+    }
+}
+
 tags! {
 /// See [TIFF compression tags](https://www.awaresystems.be/imaging/tiff/tifftags/compression.html)
 /// for reference.
