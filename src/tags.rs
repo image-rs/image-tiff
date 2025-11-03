@@ -216,6 +216,20 @@ impl Type {
             None => Err(crate::error::TiffError::LimitsExceeded),
         }
     }
+
+    pub(crate) fn byte_order_class(self) -> ByteOrderClass {
+        match self {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => ByteOrderClass::One,
+            Type::SHORT | Type::SSHORT => ByteOrderClass::Two,
+            Type::LONG
+            | Type::SLONG
+            | Type::FLOAT
+            | Type::IFD
+            | Type::RATIONAL
+            | Type::SRATIONAL => ByteOrderClass::Four,
+            Type::LONG8 | Type::SLONG8 | Type::DOUBLE | Type::IFD8 => ByteOrderClass::Eight,
+        }
+    }
 }
 
 tags! {
@@ -322,4 +336,49 @@ impl ByteOrder {
             () => compile_error!("Unsupported target"),
         }
     }
+
+    /// Given a typed buffer, convert its contents to the specified byte order in-place.
+    pub fn convert(self, ty: Type, buffer: &mut [u8], to: ByteOrder) {
+        self.convert_class(ty.byte_order_class(), buffer, to)
+    }
+
+    pub(crate) fn convert_class(self, cls: ByteOrderClass, buffer: &mut [u8], to: ByteOrder) {
+        if self == to {
+            return;
+        }
+
+        // FIXME: at MSRV 1.89 or higher use `slice::as_chunks_mut`.
+        match cls {
+            ByteOrderClass::One => {
+                // No change needed
+            }
+            ByteOrderClass::Two => {
+                for chunk in buffer.chunks_exact_mut(2) {
+                    let chunk: &mut [u8; 2] = chunk.try_into().unwrap();
+                    *chunk = u16::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+            ByteOrderClass::Four => {
+                for chunk in buffer.chunks_exact_mut(4) {
+                    let chunk: &mut [u8; 4] = chunk.try_into().unwrap();
+                    *chunk = u32::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+            ByteOrderClass::Eight => {
+                for chunk in buffer.chunks_exact_mut(8) {
+                    let chunk: &mut [u8; 8] = chunk.try_into().unwrap();
+                    *chunk = u64::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+        }
+    }
+}
+
+/// The size of individual byte-order corrected elements.
+#[derive(Clone, Copy)]
+pub(crate) enum ByteOrderClass {
+    One,
+    Two,
+    Four,
+    Eight,
 }

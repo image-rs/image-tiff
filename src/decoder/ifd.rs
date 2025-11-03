@@ -556,74 +556,149 @@ impl Entry {
         }
 
         // Case 4: there is more than one value, and it doesn't fit in the offset field.
+        let mut v;
+        self.set_reader_offset(bo, bigtiff, reader)?;
+
         match self.type_ {
-            // TODO check if this could give wrong results
-            // at a different endianess of file/computer.
-            Type::BYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                let mut buf = [0; 1];
-                reader.inner().read_exact(&mut buf)?;
-                Ok(Byte(buf[0]))
-            }),
-            Type::SBYTE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(SignedByte(reader.read_i8()?))
-            }),
-            Type::SHORT => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(Short(reader.read_u16()?))
-            }),
-            Type::SSHORT => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(SignedShort(reader.read_i16()?))
-            }),
-            Type::LONG => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(Unsigned(reader.read_u32()?))
-            }),
-            Type::SLONG => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(Signed(reader.read_i32()?))
-            }),
-            Type::FLOAT => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(Float(reader.read_f32()?))
-            }),
-            Type::DOUBLE => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(Double(reader.read_f64()?))
-            }),
+            Type::BYTE | Type::UNDEFINED => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(bytes.iter().copied().map(Byte))
+                })
+            }
+            Type::SBYTE => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(bytes.iter().copied().map(|v| SignedByte(v as i8)))
+                })
+            }
+            Type::SHORT => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(2)
+                            .map(|ch| Short(u16::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::SSHORT => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(2)
+                            .map(|ch| SignedShort(i16::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::LONG => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(4)
+                            .map(|ch| Unsigned(u32::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::SLONG => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(4)
+                            .map(|ch| Signed(i32::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::FLOAT => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(4)
+                            .map(|ch| Float(f32::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::DOUBLE => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(8)
+                            .map(|ch| Double(f64::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
             Type::RATIONAL => {
-                self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                    Ok(Rational(reader.read_u32()?, reader.read_u32()?))
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(bytes.chunks_exact(8).map(|ch| {
+                        Rational(
+                            u32::from_ne_bytes(ch[..4].try_into().unwrap()),
+                            u32::from_ne_bytes(ch[4..].try_into().unwrap()),
+                        )
+                    }))
                 })
             }
             Type::SRATIONAL => {
-                self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                    Ok(SRational(reader.read_i32()?, reader.read_i32()?))
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(bytes.chunks_exact(8).map(|ch| {
+                        SRational(
+                            i32::from_ne_bytes(ch[..4].try_into().unwrap()),
+                            i32::from_ne_bytes(ch[4..].try_into().unwrap()),
+                        )
+                    }))
                 })
             }
-            Type::LONG8 => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(UnsignedBig(reader.read_u64()?))
-            }),
-            Type::SLONG8 => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(SignedBig(reader.read_i64()?))
-            }),
-            Type::IFD => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(Ifd(reader.read_u32()?))
-            }),
-            Type::IFD8 => self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                Ok(IfdBig(reader.read_u64()?))
-            }),
-            Type::UNDEFINED => {
-                self.decode_offset(self.count, bo, bigtiff, limits, reader, |reader| {
-                    let mut buf = [0; 1];
-                    reader.inner().read_exact(&mut buf)?;
-                    Ok(Byte(buf[0]))
+            Type::LONG8 => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(8)
+                            .map(|ch| UnsignedBig(u64::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::SLONG8 => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(8)
+                            .map(|ch| SignedBig(i64::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::IFD => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(4)
+                            .map(|ch| Ifd(u32::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
+                })
+            }
+            Type::IFD8 => {
+                v = Self::vec_with_capacity(self.count, limits)?;
+                self.decode_values(self.count, self.type_, reader, |bytes| {
+                    v.extend(
+                        bytes
+                            .chunks_exact(8)
+                            .map(|ch| IfdBig(u64::from_ne_bytes(ch.try_into().unwrap()))),
+                    )
                 })
             }
             Type::ASCII => {
                 let n = usize::try_from(self.count)?;
-                if n > limits.decoding_buffer_size {
-                    return Err(TiffError::LimitsExceeded);
-                }
 
-                if bigtiff {
-                    reader.goto_offset(self.offset_field_reader(bo).read_u64()?)?
-                } else {
-                    reader.goto_offset(self.offset_field_reader(bo).read_u32()?.into())?
+                if n > limits.decoding_buffer_size {
+                    return Err(dbg!(TiffError::LimitsExceeded));
                 }
 
                 let mut out = vec![0; n];
@@ -632,43 +707,81 @@ impl Entry {
                 if let Some(first) = out.iter().position(|&b| b == 0) {
                     out.truncate(first);
                 }
-                Ok(Ascii(String::from_utf8(out)?))
+
+                return Ok(Ascii(String::from_utf8(out)?));
             }
-        }
+        }?;
+
+        Ok(List(v))
     }
 
-    #[inline]
-    fn decode_offset<R, F>(
-        &self,
+    fn vec_with_capacity(
         value_count: u64,
-        bo: ByteOrder,
-        bigtiff: bool,
         limits: &super::Limits,
-        reader: &mut EndianReader<R>,
-        decode_fn: F,
-    ) -> TiffResult<Value>
-    where
-        R: Read + Seek,
-        F: Fn(&mut EndianReader<R>) -> TiffResult<Value>,
-    {
+    ) -> Result<Vec<Value>, TiffError> {
         let value_count = usize::try_from(value_count)?;
+
         if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
             return Err(TiffError::LimitsExceeded);
         }
 
-        let mut v = Vec::with_capacity(value_count);
+        Ok(Vec::with_capacity(value_count))
+    }
 
+    fn set_reader_offset<R>(
+        &self,
+        bo: ByteOrder,
+        bigtiff: bool,
+        reader: &mut EndianReader<R>,
+    ) -> TiffResult<()>
+    where
+        R: Read + Seek,
+    {
         let offset = if bigtiff {
             self.offset_field_reader(bo).read_u64()?
         } else {
             self.offset_field_reader(bo).read_u32()?.into()
         };
+
         reader.goto_offset(offset)?;
 
-        for _ in 0..value_count {
-            v.push(decode_fn(reader)?)
+        Ok(())
+    }
+
+    #[inline]
+    fn decode_values<R, F>(
+        &self,
+        value_count: u64,
+        type_: Type,
+        reader: &mut EndianReader<R>,
+        mut collect: F,
+    ) -> TiffResult<()>
+    where
+        R: Read + Seek,
+        F: FnMut(&[u8]),
+    {
+        let mut total_bytes = type_.value_bytes(value_count)?;
+        let mut buffer = [0u8; 512];
+
+        let buf_unit = usize::from(type_.byte_len());
+        let mul_of_ty = buffer.len() / buf_unit * buf_unit;
+
+        let cls = type_.byte_order_class();
+        let native = ByteOrder::native();
+
+        while total_bytes > 0 {
+            // `now <= mul_of_ty < 512` so casting is mathematical
+            let now = total_bytes.min(mul_of_ty as u64);
+            total_bytes -= now;
+
+            let buffer = &mut buffer[..now as usize];
+            reader.inner().read_exact(buffer)?;
+
+            reader.byte_order.convert_class(cls, buffer, native);
+            collect(buffer);
         }
-        Ok(List(v))
+
+        Ok(())
     }
 }
 
