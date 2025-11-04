@@ -38,17 +38,6 @@ impl<R: Read> EndianReader<R> {
         })
     }
 
-    /// Reads an i8
-    #[inline(always)]
-    pub fn read_i8(&mut self) -> Result<i8, io::Error> {
-        let mut n = [0u8; 1];
-        self.reader.read_exact(&mut n)?;
-        Ok(match self.byte_order {
-            ByteOrder::LittleEndian => i8::from_le_bytes(n),
-            ByteOrder::BigEndian => i8::from_be_bytes(n),
-        })
-    }
-
     /// Reads an i16
     #[inline(always)]
     pub fn read_i16(&mut self) -> Result<i16, io::Error> {
