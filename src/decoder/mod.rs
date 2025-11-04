@@ -538,13 +538,13 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     let host = ByteOrder::native();
 
     let class = match bit_depth {
-        0..=8 => crate::tags::ByteOrderClass::One,
-        9..=16 => crate::tags::ByteOrderClass::Two,
-        17..=32 => crate::tags::ByteOrderClass::Four,
-        _ => crate::tags::ByteOrderClass::Eight,
+        0..=8 => crate::tags::EndianBytes::One,
+        9..=16 => crate::tags::EndianBytes::Two,
+        17..=32 => crate::tags::EndianBytes::Four,
+        _ => crate::tags::EndianBytes::Eight,
     };
 
-    host.convert_class(class, buf, byte_order);
+    host.convert_endian_bytes(class, buf, byte_order);
 }
 
 impl<R: Read + Seek> Decoder<R> {

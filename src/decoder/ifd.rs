@@ -766,7 +766,7 @@ impl Entry {
         let buf_unit = usize::from(type_.byte_len());
         let mul_of_ty = buffer.len() / buf_unit * buf_unit;
 
-        let cls = type_.byte_order_class();
+        let cls = type_.endian_bytes();
         let native = ByteOrder::native();
 
         while total_bytes > 0 {
@@ -777,7 +777,7 @@ impl Entry {
             let buffer = &mut buffer[..now as usize];
             reader.inner().read_exact(buffer)?;
 
-            reader.byte_order.convert_class(cls, buffer, native);
+            reader.byte_order.convert_endian_bytes(cls, buffer, native);
             collect(buffer);
         }
 

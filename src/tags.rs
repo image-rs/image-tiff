@@ -217,17 +217,17 @@ impl Type {
         }
     }
 
-    pub(crate) fn byte_order_class(self) -> ByteOrderClass {
+    pub(crate) fn endian_bytes(self) -> EndianBytes {
         match self {
-            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => ByteOrderClass::One,
-            Type::SHORT | Type::SSHORT => ByteOrderClass::Two,
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => EndianBytes::One,
+            Type::SHORT | Type::SSHORT => EndianBytes::Two,
             Type::LONG
             | Type::SLONG
             | Type::FLOAT
             | Type::IFD
             | Type::RATIONAL
-            | Type::SRATIONAL => ByteOrderClass::Four,
-            Type::LONG8 | Type::SLONG8 | Type::DOUBLE | Type::IFD8 => ByteOrderClass::Eight,
+            | Type::SRATIONAL => EndianBytes::Four,
+            Type::LONG8 | Type::SLONG8 | Type::DOUBLE | Type::IFD8 => EndianBytes::Eight,
         }
     }
 }
@@ -338,33 +338,37 @@ impl ByteOrder {
     }
 
     /// Given a typed buffer, convert its contents to the specified byte order in-place.
+    ///
+    /// The buffer is assumed to represent an array of the given type. If the length of the buffer
+    /// is not divisible into an integer number of values, the behavior for the remaining bytes it
+    /// not specified.
     pub fn convert(self, ty: Type, buffer: &mut [u8], to: ByteOrder) {
-        self.convert_class(ty.byte_order_class(), buffer, to)
+        self.convert_endian_bytes(ty.endian_bytes(), buffer, to)
     }
 
-    pub(crate) fn convert_class(self, cls: ByteOrderClass, buffer: &mut [u8], to: ByteOrder) {
+    pub(crate) fn convert_endian_bytes(self, cls: EndianBytes, buffer: &mut [u8], to: ByteOrder) {
         if self == to {
             return;
         }
 
         // FIXME: at MSRV 1.89 or higher use `slice::as_chunks_mut`.
         match cls {
-            ByteOrderClass::One => {
+            EndianBytes::One => {
                 // No change needed
             }
-            ByteOrderClass::Two => {
+            EndianBytes::Two => {
                 for chunk in buffer.chunks_exact_mut(2) {
                     let chunk: &mut [u8; 2] = chunk.try_into().unwrap();
                     *chunk = u16::from_be_bytes(*chunk).to_le_bytes();
                 }
             }
-            ByteOrderClass::Four => {
+            EndianBytes::Four => {
                 for chunk in buffer.chunks_exact_mut(4) {
                     let chunk: &mut [u8; 4] = chunk.try_into().unwrap();
                     *chunk = u32::from_be_bytes(*chunk).to_le_bytes();
                 }
             }
-            ByteOrderClass::Eight => {
+            EndianBytes::Eight => {
                 for chunk in buffer.chunks_exact_mut(8) {
                     let chunk: &mut [u8; 8] = chunk.try_into().unwrap();
                     *chunk = u64::from_be_bytes(*chunk).to_le_bytes();
@@ -376,7 +380,7 @@ impl ByteOrder {
 
 /// The size of individual byte-order corrected elements.
 #[derive(Clone, Copy)]
-pub(crate) enum ByteOrderClass {
+pub(crate) enum EndianBytes {
     One,
     Two,
     Four,
