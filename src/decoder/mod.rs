@@ -368,27 +368,82 @@ pub struct IfdDecoder<'lt> {
 }
 
 fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
-    match bit_depth {
-        0..=8 => {
+    fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
+        for i in N..buf.len() {
+            buf[i] = buf[i].wrapping_add(buf[i - N]);
+        }
+    }
+
+    fn two_bytes_predict<const N: usize>(buf: &mut [u8]) {
+        for i in (2 * N..buf.len()).step_by(2) {
+            let v = u16::from_ne_bytes(buf[i..][..2].try_into().unwrap());
+            let p = u16::from_ne_bytes(buf[i - 2 * N..][..2].try_into().unwrap());
+            buf[i..][..2].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
+        }
+    }
+
+    fn four_bytes_predict<const N: usize>(buf: &mut [u8]) {
+        for i in (N * 4..buf.len()).step_by(4) {
+            let v = u32::from_ne_bytes(buf[i..][..4].try_into().unwrap());
+            let p = u32::from_ne_bytes(buf[i - 4 * N..][..4].try_into().unwrap());
+            buf[i..][..4].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
+        }
+    }
+
+    match (bit_depth, samples) {
+        // Note we can't use `windows` or so due to the overlap between each iteration. We split
+        // the cases by the samples / lookback constant so that each is optimized individually.
+        // This is more code generated but each loop can then have a different vectorization
+        // strategy.
+        (0..=8, 1) => one_byte_predict::<1>(buf),
+        (0..=8, 2) => one_byte_predict::<2>(buf),
+        (0..=8, 3) => one_byte_predict::<3>(buf),
+        (0..=8, 4) => one_byte_predict::<4>(buf),
+        // The generic, sub-optimal case for the above.
+        (0..=8, _) => {
             for i in samples..buf.len() {
                 buf[i] = buf[i].wrapping_add(buf[i - samples]);
             }
         }
-        9..=16 => {
+        (9..=16, 1) => {
+            two_bytes_predict::<1>(buf);
+        }
+        (9..=16, 2) => {
+            two_bytes_predict::<2>(buf);
+        }
+        (9..=16, 3) => {
+            two_bytes_predict::<3>(buf);
+        }
+        (9..=16, 4) => {
+            two_bytes_predict::<4>(buf);
+        }
+        (9..=16, _) => {
             for i in (samples * 2..buf.len()).step_by(2) {
                 let v = u16::from_ne_bytes(buf[i..][..2].try_into().unwrap());
                 let p = u16::from_ne_bytes(buf[i - 2 * samples..][..2].try_into().unwrap());
                 buf[i..][..2].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
             }
         }
-        17..=32 => {
+        (17..=32, 1) => {
+            four_bytes_predict::<1>(buf);
+        }
+        (17..=32, 2) => {
+            four_bytes_predict::<2>(buf);
+        }
+        (17..=32, 3) => {
+            four_bytes_predict::<3>(buf);
+        }
+        (17..=32, 4) => {
+            four_bytes_predict::<4>(buf);
+        }
+        (17..=32, _) => {
             for i in (samples * 4..buf.len()).step_by(4) {
                 let v = u32::from_ne_bytes(buf[i..][..4].try_into().unwrap());
                 let p = u32::from_ne_bytes(buf[i - 4 * samples..][..4].try_into().unwrap());
                 buf[i..][..4].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
             }
         }
-        33..=64 => {
+        (33..=64, _) => {
             for i in (samples * 8..buf.len()).step_by(8) {
                 let v = u64::from_ne_bytes(buf[i..][..8].try_into().unwrap());
                 let p = u64::from_ne_bytes(buf[i - 8 * samples..][..8].try_into().unwrap());
