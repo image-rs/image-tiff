@@ -193,6 +193,45 @@ pub enum Type(u16) {
 }
 }
 
+impl Type {
+    pub(crate) fn byte_len(&self) -> u8 {
+        match *self {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
+            Type::SHORT | Type::SSHORT => 2,
+            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+            Type::LONG8
+            | Type::SLONG8
+            | Type::DOUBLE
+            | Type::RATIONAL
+            | Type::SRATIONAL
+            | Type::IFD8 => 8,
+        }
+    }
+
+    pub(crate) fn value_bytes(&self, count: u64) -> Result<u64, crate::error::TiffError> {
+        let tag_size = u64::from(self.byte_len());
+
+        match count.checked_mul(tag_size) {
+            Some(n) => Ok(n),
+            None => Err(crate::error::TiffError::LimitsExceeded),
+        }
+    }
+
+    pub(crate) fn endian_bytes(self) -> EndianBytes {
+        match self {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => EndianBytes::One,
+            Type::SHORT | Type::SSHORT => EndianBytes::Two,
+            Type::LONG
+            | Type::SLONG
+            | Type::FLOAT
+            | Type::IFD
+            | Type::RATIONAL
+            | Type::SRATIONAL => EndianBytes::Four,
+            Type::LONG8 | Type::SLONG8 | Type::DOUBLE | Type::IFD8 => EndianBytes::Eight,
+        }
+    }
+}
+
 tags! {
 /// See [TIFF compression tags](https://www.awaresystems.be/imaging/tiff/tifftags/compression.html)
 /// for reference.
@@ -270,4 +309,80 @@ pub enum SampleFormat(u16) unknown(
     IEEEFP = 3,
     Void = 4,
 }
+}
+
+/// Byte order of the TIFF file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ByteOrder {
+    /// little endian byte order
+    LittleEndian,
+    /// big endian byte order
+    BigEndian,
+}
+
+impl ByteOrder {
+    /// Get the byte order representing the running target.
+    ///
+    /// The infallibility of this method represents the fact that only little and big endian
+    /// systems are supported by the library. No mixed endian and no other weird stuff. (Note: as
+    /// of Rust 1.90 this is a tautology as Rust itself only has those two kinds).
+    pub const fn native() -> Self {
+        match () {
+            #[cfg(target_endian = "little")]
+            () => ByteOrder::LittleEndian,
+            #[cfg(target_endian = "big")]
+            () => ByteOrder::BigEndian,
+            #[cfg(not(any(target_endian = "big", target_endian = "little")))]
+            () => compile_error!("Unsupported target"),
+        }
+    }
+
+    /// Given a typed buffer, convert its contents to the specified byte order in-place.
+    ///
+    /// The buffer is assumed to represent an array of the given type. If the length of the buffer
+    /// is not divisible into an integer number of values, the behavior for the remaining bytes it
+    /// not specified.
+    pub fn convert(self, ty: Type, buffer: &mut [u8], to: ByteOrder) {
+        self.convert_endian_bytes(ty.endian_bytes(), buffer, to)
+    }
+
+    pub(crate) fn convert_endian_bytes(self, cls: EndianBytes, buffer: &mut [u8], to: ByteOrder) {
+        if self == to {
+            return;
+        }
+
+        // FIXME: at MSRV 1.89 or higher use `slice::as_chunks_mut`.
+        match cls {
+            EndianBytes::One => {
+                // No change needed
+            }
+            EndianBytes::Two => {
+                for chunk in buffer.chunks_exact_mut(2) {
+                    let chunk: &mut [u8; 2] = chunk.try_into().unwrap();
+                    *chunk = u16::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+            EndianBytes::Four => {
+                for chunk in buffer.chunks_exact_mut(4) {
+                    let chunk: &mut [u8; 4] = chunk.try_into().unwrap();
+                    *chunk = u32::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+            EndianBytes::Eight => {
+                for chunk in buffer.chunks_exact_mut(8) {
+                    let chunk: &mut [u8; 8] = chunk.try_into().unwrap();
+                    *chunk = u64::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+        }
+    }
+}
+
+/// The size of individual byte-order corrected elements.
+#[derive(Clone, Copy)]
+pub(crate) enum EndianBytes {
+    One,
+    Two,
+    Four,
+    Eight,
 }

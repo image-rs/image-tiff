@@ -1,14 +1,7 @@
 //! All IO functionality needed for TIFF decoding
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
-/// Byte order of the TIFF file.
-#[derive(Clone, Copy, Debug)]
-pub enum ByteOrder {
-    /// little endian byte order
-    LittleEndian,
-    /// big endian byte order
-    BigEndian,
-}
+pub use crate::tags::ByteOrder;
 
 /// Reader that is aware of the byte order.
 #[derive(Debug)]
@@ -42,17 +35,6 @@ impl<R: Read> EndianReader<R> {
         Ok(match self.byte_order {
             ByteOrder::LittleEndian => u16::from_le_bytes(n),
             ByteOrder::BigEndian => u16::from_be_bytes(n),
-        })
-    }
-
-    /// Reads an i8
-    #[inline(always)]
-    pub fn read_i8(&mut self) -> Result<i8, io::Error> {
-        let mut n = [0u8; 1];
-        self.reader.read_exact(&mut n)?;
-        Ok(match self.byte_order {
-            ByteOrder::LittleEndian => i8::from_le_bytes(n),
-            ByteOrder::BigEndian => i8::from_be_bytes(n),
         })
     }
 
