@@ -104,6 +104,28 @@ impl Directory {
             }
         }
     }
+
+    pub(crate) fn encoded_len<K: crate::encoder::TiffKind>(&self) -> u64 {
+        let (len_count, len_offset);
+
+        match std::mem::size_of::<K::OffsetType>() {
+            offset @ 4 => {
+                // non-BigTiff uses a `u16` here.
+                len_count = 2;
+                len_offset = offset as u64;
+            }
+            offset => {
+                let offset = offset as u64;
+                // assuming BigTIFF
+                len_count = offset;
+                len_offset = offset;
+            }
+        }
+
+        // Each entry is 12 bytes in classic TIFF, 20 bytes in BigTIFF.
+        let entry_bytes = 4 + 2 * len_offset;
+        len_count + entry_bytes * self.entries.len() as u64 + len_offset
+    }
 }
 
 impl fmt::Debug for Directory {

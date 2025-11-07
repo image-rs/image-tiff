@@ -187,6 +187,9 @@ quick_error! {
         InsufficientOutputBufferSize { needed: usize, provided: usize } {
             display("the borrowed output buffer is not large enough for the decoded data, needed {needed} but have {provided}")
         }
+        ZeroIfdPointer {
+            display("the offset 0 can not point to a valid IFD")
+        }
     }
 }
 

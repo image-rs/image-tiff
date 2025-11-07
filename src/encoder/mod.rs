@@ -74,10 +74,10 @@ impl Compression {
 
 /// Encoder for Tiff and BigTiff files.
 ///
-/// With this type you can get a `DirectoryEncoder` or a `ImageEncoder`
+/// With this type you can get a [`DirectoryEncoder`] or a [`ImageEncoder`]
 /// to encode Tiff/BigTiff ifd directories with images.
 ///
-/// See `DirectoryEncoder` and `ImageEncoder`.
+/// See [`DirectoryEncoder`] and [`ImageEncoder`].
 ///
 /// # Examples
 /// ```
@@ -171,7 +171,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)
     }
 
-    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    /// Create a [`DirectoryEncoder`] to encode an ifd (directory).
     ///
     /// The caller is responsible for ensuring that the directory is a valid image in the main TIFF
     /// IFD sequence. To encode additional directories that are not linked into the sequence, use
@@ -180,7 +180,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)
     }
 
-    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    /// Create a [`DirectoryEncoder`] to encode a non-image directory.
     ///
     /// The directory is not linked into the sequence of directories. For instance, encode Exif
     /// directories or SubIfd directories with this method.
@@ -244,6 +244,12 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
 }
 
 /// The offset of an encoded directory in the file.
+///
+/// Both the `offset` and `pointer` field are a complete description of the start offset of the
+/// dictionary which is used to point to it. The struct also describes the extent covered by the
+/// encoding of the directory. The constructors [`new`][DirectoryOffset::new] allow the checked
+/// conversion. Note that even though the offsets are public do not expect their information to
+/// propagate when modified.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DirectoryOffset<K: TiffKind> {
     /// The start of the directory as a Tiff value.
@@ -255,7 +261,9 @@ pub struct DirectoryOffset<K: TiffKind> {
     pub offset: K::OffsetType,
     /// The start of the directory as a pure offset.
     pub pointer: IfdPointer,
-    /// The offset of its sequence link field, in our private representation.
+    /// The offset of its sequence link field, in our private representation. Before exposing this
+    /// make sure that we don't want any invariants (e.g. pointer being smaller than this). The
+    /// type should be fine.
     ifd_chain: NonZeroU64,
     /// The kind of Tiff file the offset is for.
     kind: PhantomData<K>,
@@ -313,6 +321,17 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(offset)
     }
 
+    /// Insert previously written key-value entries.
+    ///
+    /// It is the caller's responsibility to ensure that the data referred to by the entries is
+    /// actually (or will be) written to the file. Note that small values are necessarily inline in
+    /// the entry, the size limit depends on the Tiff kind. So do not confuse a directory from a
+    /// BigTiff in a standard tiff or the other way around.
+    pub fn extend_from(&mut self, dir: &Directory) {
+        let entries = dir.iter().map(|(tag, val)| (tag, val.clone()));
+        self.directory.extend(entries);
+    }
+
     /// Define the parent directory.
     ///
     /// Each directory has an offset based link to its successor, forming a linked list in the
@@ -329,6 +348,11 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(())
     }
 
+    /// Write the IFD to the file and return the offset it is written to.
+    ///
+    /// The offset can be used as the value, or as part of a list of values, in the entry of
+    /// another directory. If you're constructing the entry directly you'll want to use an
+    /// appropriate type variant for this such as [`Type::IFD`].
     pub fn finish_with_offsets(mut self) -> TiffResult<DirectoryOffset<K>> {
         self.finish_internal()
     }
@@ -784,6 +808,49 @@ pub trait TiffKind {
     ///
     /// Implementations of this trait should always set `OffsetArrayType` to `[OffsetType]`.
     fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType;
+}
+
+impl<K: TiffKind> DirectoryOffset<K> {
+    /// Construct the directory pointer information from its raw offset.
+    ///
+    /// Fails in these cases:
+    ///
+    /// - if start offset is too large to be represented with the chosen TIFF format, i.e. a value
+    ///   larger than [`u32::MAX`] with a standard tiff which is only valid in a BigTiff. This
+    ///   returns [`TiffError::IntSizeError`].
+    /// - the extent of the directory would overflow the file length. This returns a
+    ///   [`TiffError::UsageError`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let mut file = std::io::Cursor::new(Vec::new());
+    /// let mut tiff = TiffEncoder::new(&mut file)?;
+    ///
+    ///  // … write custom data with
+    ///
+    /// let also_dir = DirectoryOffset::new(&known_)?;
+    ///
+    /// # Ok::<_, crate::error::TiffError>(())
+    /// ```
+    pub fn new(pointer: IfdPointer, dir: &Directory) -> TiffResult<Self> {
+        let offset = K::convert_offset(pointer.0)?;
+        let encoded = dir.encoded_len::<K>();
+        let offset_field_offset = encoded - mem::size_of_val(&offset) as u64;
+
+        let ifd_chain = pointer
+            .0
+            .checked_add(offset_field_offset)
+            .and_then(NonZeroU64::new)
+            .ok_or(TiffError::UsageError(UsageError::ZeroIfdPointer))?;
+
+        Ok(DirectoryOffset {
+            pointer,
+            offset,
+            ifd_chain,
+            kind: PhantomData,
+        })
+    }
 }
 
 /// Create a standard Tiff file.
