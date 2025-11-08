@@ -28,6 +28,8 @@ use self::compression::Compression as Comp;
 use self::compression::*;
 use self::writer::*;
 
+pub use self::writer::TiffWriter;
+
 /// Type of prediction to prepare the image with.
 ///
 /// Image data can be very unpredictable, and thus very hard to compress. Predictors are simple
@@ -183,6 +185,14 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         self.compression = compression;
 
         self
+    }
+
+    /// Get a mutable reference to a writer for raw values.
+    ///
+    /// This can be used to write custom data sections to the underlying writer that may or may not
+    /// be referenced in the IFDs of the tiff structure.
+    pub fn get_mut(&mut self) -> &mut TiffWriter<W> {
+        &mut self.writer
     }
 
     /// Create a [`DirectoryEncoder`] to encode an ifd directory.

@@ -40,6 +40,7 @@ pub fn write_bigtiff_header<W: Write>(writer: &mut TiffWriter<W>) -> TiffResult<
     Ok(())
 }
 
+/// A writer that tracks offset and can compress.
 pub struct TiffWriter<W> {
     writer: W,
     offset: u64,
@@ -61,6 +62,7 @@ impl<W: Write> TiffWriter<W> {
         self.compressor = compressor;
     }
 
+    /// Unset the compression.
     pub fn reset_compression(&mut self) {
         self.compressor = Compressor::default();
     }
@@ -73,6 +75,7 @@ impl<W: Write> TiffWriter<W> {
         self.offset() - core::mem::size_of::<K::OffsetType>() as u64
     }
 
+    /// Get the number of bytes written by the last write operation.
     pub fn last_written(&self) -> u64 {
         self.byte_count
     }
@@ -180,6 +183,19 @@ impl<W: Write> TiffWriter<W> {
         }
 
         Ok(())
+    }
+}
+
+/// Write uncompressed bytes to the raw underlying file.
+impl<W: Write> std::io::Write for TiffWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.writer.write(buf)?;
+        self.offset += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
     }
 }
 
