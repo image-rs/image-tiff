@@ -821,17 +821,39 @@ impl<K: TiffKind> DirectoryOffset<K> {
     /// - the extent of the directory would overflow the file length. This returns a
     ///   [`TiffError::UsageError`].
     ///
+    /// The library does *not* validate the contents or offset in any way, it just performs the
+    /// necessary math assuming the data is an accurate representation of existing content.
+    ///
     /// # Examples
     ///
+    /// If you have any custom way of writing a directory to a file that can not go through the
+    /// usual [`TiffEncoder::extra_directory`] then you can reconstruct the offset information as
+    /// long as you provide all the necessary data to the library. You can then use it as a parent
+    /// directory, i.e. have the library overwrite its `next` field.
+    ///
     /// ```
+    /// use tiff::{
+    ///     encoder::{TiffEncoder, DirectoryOffset},
+    ///     Directory,
+    ///     tags::IfdPointer,
+    /// };
+    ///
     /// # let mut file = std::io::Cursor::new(Vec::new());
     /// let mut tiff = TiffEncoder::new(&mut file)?;
     ///
-    ///  // … write custom data with
+    /// // … some custom data writes, assume we know where a directory was written
+    /// # fn reconstruction_of_your_directory() -> Directory { Directory::from_iter([]) }
+    /// let known_offset = IfdPointer(1024);
+    /// let known_contents: Directory = reconstruction_of_your_directory();
     ///
-    /// let also_dir = DirectoryOffset::new(&known_)?;
+    /// let reconstructed = DirectoryOffset::new(known_offset, &known_contents)?;
     ///
-    /// # Ok::<_, crate::error::TiffError>(())
+    /// // Now we can use it as if the directory was written by the `TiffEncoder` itself.
+    /// let mut chain = tiff.extra_directory()?;
+    /// chain.set_parent(&reconstructed);
+    /// chain.finish_with_offsets()?;
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
     /// ```
     pub fn new(pointer: IfdPointer, dir: &Directory) -> TiffResult<Self> {
         let offset = K::convert_offset(pointer.0)?;
@@ -920,4 +942,34 @@ impl TiffKind for TiffKindBig {
     fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType {
         slice
     }
+}
+
+#[test]
+fn directory_offset_new_equivalent_to_writing() {
+    type K = TiffKindStandard;
+
+    let dir = Directory::from_iter(vec![
+        (
+            Tag::ImageWidth,
+            Entry::new(Type::LONG, 1, 100u32.to_ne_bytes()),
+        ),
+        (
+            Tag::ImageLength,
+            Entry::new(Type::LONG, 1, 200u32.to_ne_bytes()),
+        ),
+    ]);
+
+    let data = std::io::Cursor::new(vec![]);
+    let mut file = TiffEncoder::new(data).unwrap();
+
+    let mut as_dir_encoder = file.extra_directory().unwrap();
+    as_dir_encoder.extend_from(&dir);
+    let dir_extent = as_dir_encoder.finish_with_offsets().unwrap();
+
+    // Check we can recreate the extent had we written ourselves.
+    let synth = DirectoryOffset::<K>::new(dir_extent.pointer, &dir).unwrap();
+
+    assert_eq!(synth.pointer, dir_extent.pointer);
+    assert_eq!(synth.offset, dir_extent.offset);
+    assert_eq!(synth.ifd_chain, dir_extent.ifd_chain);
 }

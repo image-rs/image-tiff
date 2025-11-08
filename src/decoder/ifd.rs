@@ -332,6 +332,12 @@ impl Value {
     }
 }
 
+/// A combination of type, count, and offset.
+///
+/// In a TIFF the data offset portion of an entry is used for inline data in case the length of the
+/// encoded value does not exceed the size of the offset field. Since the size of the offset field
+/// depends on the file kind (4 bytes for standard TIFF, 8 bytes for BigTIFF) the interpretation of
+/// this struct is only complete in combination with file metadata.
 #[derive(Clone)]
 pub struct Entry {
     type_: Type,
@@ -349,12 +355,14 @@ impl ::std::fmt::Debug for Entry {
 }
 
 impl Entry {
+    /// Create a new entry fit to be added to a standard TIFF IFD.
     pub fn new(type_: Type, count: u32, offset: [u8; 4]) -> Entry {
         let mut entry_off = [0u8; 8];
         entry_off[..4].copy_from_slice(&offset);
         Entry::new_u64(type_, count.into(), entry_off)
     }
 
+    /// Create a new entry with data for a Big TIFF IFD.
     pub fn new_u64(type_: Type, count: u64, offset: [u8; 8]) -> Entry {
         Entry {
             type_,

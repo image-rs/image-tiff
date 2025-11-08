@@ -140,6 +140,14 @@ impl fmt::Debug for Directory {
     }
 }
 
+impl core::iter::FromIterator<(Tag, Entry)> for Directory {
+    fn from_iter<T: IntoIterator<Item = (Tag, Entry)>>(iter: T) -> Self {
+        let mut dir = Directory::empty();
+        dir.extend(iter);
+        dir
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Directory;

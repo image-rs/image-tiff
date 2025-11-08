@@ -1,3 +1,7 @@
+# Version 0.10.4 (unreleased)
+
+- `Directory` now implements `FromIterator<(Tag, Value)>`.
+
 # Version 0.10.3
 
 New features:
