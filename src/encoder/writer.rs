@@ -190,3 +190,58 @@ impl<W: Seek> TiffWriter<W> {
         Ok(())
     }
 }
+
+#[test]
+fn encoder_on_short_writes() {
+    struct ShortWriter<T> {
+        inner: T,
+    }
+
+    impl<T: std::io::Write> std::io::Write for ShortWriter<T> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let lower_bound = buf.len().min(1);
+            let lower = buf.len().saturating_sub(1).max(lower_bound);
+
+            self.inner.write(&buf[..lower])
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    impl<T: std::io::Seek> std::io::Seek for ShortWriter<T> {
+        fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    let mut write = ShortWriter {
+        inner: std::io::Cursor::new(vec![0u8; 0]),
+    };
+
+    let imgdata = vec![42u8; 100 * 100];
+    for comp in [
+        super::Compression::Uncompressed,
+        super::Compression::Packbits,
+    ] {
+        write.inner.set_position(0);
+        write.inner.get_mut().clear();
+
+        {
+            let mut tiff_writer = super::TiffEncoder::new(&mut write)
+                .unwrap()
+                .with_compression(comp);
+
+            tiff_writer
+                .write_image::<super::Gray8>(100, 100, &imgdata)
+                .unwrap();
+        }
+
+        write.inner.set_position(0);
+        let mut tiff_reader = crate::decoder::Decoder::new(&mut write.inner).unwrap();
+        let data = tiff_reader.read_image().unwrap();
+
+        assert!(matches!(data, crate::decoder::DecodingResult::U8(v) if v == imgdata));
+    }
+}
