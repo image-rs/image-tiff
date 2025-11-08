@@ -14,7 +14,7 @@ impl Compression for Uncompressed {
 
 impl CompressionAlgorithm for Uncompressed {
     fn write_to<W: Write>(&mut self, writer: &mut W, bytes: &[u8]) -> Result<u64, io::Error> {
-        writer.write(bytes).map(|byte_count| byte_count as u64)
+        writer.write_all(bytes).map(|()| bytes.len() as u64)
     }
 }
 
