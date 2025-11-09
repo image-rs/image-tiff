@@ -11,7 +11,7 @@ use std::{
 use crate::{
     decoder::ifd::Entry,
     error::{TiffResult, UsageError},
-    tags::{CompressionMethod, IfdPointer, ResolutionUnit, SampleFormat, Tag, Type},
+    tags::{CompressionMethod, ExtraSamples, IfdPointer, ResolutionUnit, SampleFormat, Tag, Type},
     Directory, TiffError, TiffFormatError,
 };
 
@@ -506,6 +506,7 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
     row_samples: u64,
     width: u32,
     height: u32,
+    extra_samples: Vec<u16>,
     rows_per_strip: u64,
     strip_offsets: Vec<K::OffsetType>,
     strip_byte_count: Vec<K::OffsetType>,
@@ -583,6 +584,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             strip_idx: 0,
             row_samples,
             rows_per_strip,
+            extra_samples: vec![],
             width,
             height,
             strip_offsets: Vec::new(),
@@ -592,6 +594,27 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             predictor,
             _phantom: ::std::marker::PhantomData,
         })
+    }
+
+    pub fn extra_samples(&mut self, extra: &[ExtraSamples]) -> Result<(), TiffError> {
+        if self.strip_idx != 0 {
+            return Err(TiffError::UsageError(
+                UsageError::ReconfiguredAfterImageWrite,
+            ));
+        }
+
+        let samples = self.extra_samples.len() + extra.len() + <T>::BITS_PER_SAMPLE.len();
+        let row_samples = u64::from(self.width) * u64::try_from(samples)?;
+
+        self.extra_samples
+            .extend(extra.iter().map(ExtraSamples::to_u16));
+
+        self.encoder
+            .write_tag(Tag::ExtraSamples, &self.extra_samples[..])?;
+
+        self.row_samples = row_samples;
+
+        Ok(())
     }
 
     /// Number of samples the next strip should have.

@@ -61,4 +61,18 @@ impl ColorType {
             | ColorType::Multiband { bit_depth: b, .. } => b,
         }
     }
+
+    fn num_samples(&self) -> u16 {
+        match *self {
+            ColorType::Gray(_) => 1,
+            ColorType::RGB(_) => 3,
+            ColorType::Palette(_) => 1,
+            ColorType::GrayA(_) => 2,
+            ColorType::RGBA(_) => 4,
+            ColorType::CMYK(_) => 4,
+            ColorType::CMYKA(_) => 5,
+            ColorType::YCbCr(_) => 3,
+            ColorType::Multiband { num_samples, .. } => num_samples,
+        }
+    }
 }

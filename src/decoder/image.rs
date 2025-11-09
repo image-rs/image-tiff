@@ -4,7 +4,8 @@ use super::tag_reader::TagReader;
 use super::ChunkType;
 use super::{predict_f16, predict_f32, predict_f64, ValueReader};
 use crate::tags::{
-    CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
+    CompressionMethod, ExtraSamples, PhotometricInterpretation, PlanarConfiguration, Predictor,
+    SampleFormat, Tag,
 };
 use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -69,6 +70,11 @@ pub(crate) struct Image {
     pub height: u32,
     pub bits_per_sample: u8,
     pub samples: u16,
+    /// The `ExtraSamples`, defaulting to empty if not given.
+    pub extra_samples: Vec<ExtraSamples>,
+    /// Number of samples that belong to the photometric interpretation, samples except
+    /// `ExtraSamples` (338, 0x0152) tag.
+    pub photometric_samples: u16,
     pub sample_format: SampleFormat,
     pub photometric_interpretation: PhotometricInterpretation,
     pub compression_method: CompressionMethod,
@@ -134,9 +140,29 @@ impl Image {
             .map(Value::into_u16)
             .transpose()?
             .unwrap_or(1);
+
         if samples == 0 {
             return Err(TiffFormatError::SamplesPerPixelIsZero.into());
         }
+
+        let extra_samples = match tag_reader.find_tag(Tag::ExtraSamples)? {
+            Some(n) => n.into_u16_vec()?,
+            None => vec![],
+        };
+
+        let extra_samples = extra_samples
+            .into_iter()
+            .map(|x| ExtraSamples::from_u16(x).unwrap_or(ExtraSamples::Unspecified))
+            .collect::<Vec<_>>();
+
+        let photometric_samples = match usize::from(samples).checked_sub(extra_samples.len()) {
+            None => {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ));
+            }
+            Some(n) => n as u16,
+        };
 
         let sample_format = match tag_reader.find_tag_uint_vec(Tag::SampleFormat)? {
             Some(vals) => {
@@ -297,6 +323,8 @@ impl Image {
             height,
             bits_per_sample: bits_per_sample[0],
             samples,
+            extra_samples,
+            photometric_samples,
             sample_format,
             photometric_interpretation,
             compression_method,
@@ -312,15 +340,19 @@ impl Image {
     }
 
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
+        let is_alpha_extra_samples = matches!(
+            self.extra_samples.as_slice(),
+            [ExtraSamples::AssociatedAlpha] | [ExtraSamples::UnassociatedAlpha]
+        );
+
         match self.photometric_interpretation {
-            PhotometricInterpretation::RGB => match self.samples {
-                3 => Ok(ColorType::RGB(self.bits_per_sample)),
+            PhotometricInterpretation::RGB => match self.photometric_samples {
+                3 => Ok(if is_alpha_extra_samples {
+                    ColorType::RGBA(self.bits_per_sample)
+                } else {
+                    ColorType::RGB(self.bits_per_sample)
+                }),
                 4 => Ok(ColorType::RGBA(self.bits_per_sample)),
-                // FIXME: We should _ignore_ other components. In particular:
-                // > Beware of extra components. Some TIFF files may have more components per pixel
-                // than you think. A Baseline TIFF reader must skip over them gracefully,using the
-                // values of the SamplesPerPixel and BitsPerSample fields.
-                // > -- TIFF 6.0 Specification, Section 7, Additional Baseline requirements.
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
@@ -328,8 +360,12 @@ impl Image {
                     ),
                 )),
             },
-            PhotometricInterpretation::CMYK => match self.samples {
-                4 => Ok(ColorType::CMYK(self.bits_per_sample)),
+            PhotometricInterpretation::CMYK => match self.photometric_samples {
+                4 => Ok(if is_alpha_extra_samples {
+                    ColorType::CMYKA(self.bits_per_sample)
+                } else {
+                    ColorType::CMYK(self.bits_per_sample)
+                }),
                 5 => Ok(ColorType::CMYKA(self.bits_per_sample)),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
@@ -338,7 +374,7 @@ impl Image {
                     ),
                 )),
             },
-            PhotometricInterpretation::YCbCr => match self.samples {
+            PhotometricInterpretation::YCbCr => match self.photometric_samples {
                 3 => Ok(ColorType::YCbCr(self.bits_per_sample)),
                 _ => Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
@@ -351,6 +387,9 @@ impl Image {
             // later called when that interpretation is read. That function does not support
             // Multiband as a color type and will error. It's unclear how to resolve that exactly.
             PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero => {
+                // Note: compatibility with previous implementation requires us to return extra
+                // samples as `Multiband`. For gray images however the better choice would be
+                // returning a `Gray` color, i.e. matching on `photometric_samples` instead.
                 match self.samples {
                     1 => Ok(ColorType::Gray(self.bits_per_sample)),
                     _ => Ok(ColorType::Multiband {
@@ -371,12 +410,28 @@ impl Image {
         }
     }
 
+    /// Get the multiband color describing this with its extra samples.
+    pub(crate) fn color_multiband_with_extras(&self) -> ColorType {
+        ColorType::Multiband {
+            bit_depth: self.bits_per_sample,
+            num_samples: self.samples,
+        }
+    }
+
+    /// Describe this with an accurate color or a multiband.
+    pub(crate) fn color_or_fallback(&self) -> ColorType {
+        self.colortype()
+            .unwrap_or_else(|_| self.color_multiband_with_extras())
+    }
+
     pub(crate) fn minimum_row_stride(&self, dims: (u32, u32)) -> Option<NonZeroUsize> {
         let (width, height) = dims;
 
+        let color = self.color_or_fallback();
+
         let row_stride = u64::from(width)
-            .saturating_mul(self.samples_per_pixel() as u64)
-            .saturating_mul(self.bits_per_sample as u64)
+            .saturating_mul(u64::from(self.samples_per_out_texel(color)))
+            .saturating_mul(u64::from(self.bits_per_sample))
             .div_ceil(8);
 
         // Note: row stride should be smaller than the len if we have an actual buffer. If there
@@ -486,6 +541,13 @@ impl Image {
     pub(crate) fn samples_per_pixel(&self) -> usize {
         match self.planar_config {
             PlanarConfiguration::Chunky => self.samples.into(),
+            PlanarConfiguration::Planar => 1,
+        }
+    }
+
+    pub(crate) fn samples_per_out_texel(&self, color: ColorType) -> u16 {
+        match self.planar_config {
+            PlanarConfiguration::Chunky => color.num_samples(),
             PlanarConfiguration::Planar => 1,
         }
     }
@@ -643,6 +705,7 @@ impl Image {
                 .ok_or(TiffError::FormatError(
                     TiffFormatError::InconsistentSizesEncountered,
                 ))?;
+
         if *compressed_bytes > limits.intermediate_buffer_size as u64 {
             return Err(TiffError::LimitsExceeded);
         }
@@ -650,8 +713,16 @@ impl Image {
         let compression_method = self.compression_method;
         let photometric_interpretation = self.photometric_interpretation;
         let predictor = self.predictor;
-        let samples = self.samples_per_pixel();
 
+        let samples = self.samples_per_pixel();
+        let data_samples = self.samples_per_out_texel(color_type);
+
+        // We have two dimensions: the 2d rectangle of encoded data and the 2d rectangle this
+        // takes up in the output. Each has an associated count of bits per pixel. The first
+        // dimension, i.e. a ''row'', is the number of pixels that are encoded with bit packing
+        // while the second is the byte-padded array of each so encoded slices.
+        //
+        // During decoding we map the relevant bits from one to the other.
         let chunk_dims = self.chunk_dimensions()?;
         let data_dims = self.chunk_data_dimensions(chunk_index)?;
 
@@ -661,7 +732,7 @@ impl Image {
         let chunk_row_bytes: usize = chunk_row_bits.div_ceil(8).try_into()?;
 
         let data_row_bits = (u64::from(data_dims.0) * u64::from(self.bits_per_sample))
-            .checked_mul(samples as u64)
+            .checked_mul(data_samples as u64)
             .ok_or(TiffError::LimitsExceeded)?;
         let data_row_bytes: usize = data_row_bits.div_ceil(8).try_into()?;
 
@@ -677,7 +748,11 @@ impl Image {
             chunk_dims,
         )?;
 
-        if output_row_stride == chunk_row_bytes {
+        let is_all_bits = samples == usize::from(data_samples);
+        let is_output_chunk_rows = output_row_stride == chunk_row_bytes;
+
+        if is_output_chunk_rows && is_all_bits {
+            // Here we can read directly into the output buffer itself.
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
@@ -690,6 +765,7 @@ impl Image {
                     predictor,
                 );
             }
+
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(tile, color_type, self.sample_format)?;
             }
@@ -711,7 +787,8 @@ impl Image {
                     super::invert_colors(row, color_type, self.sample_format)?;
                 }
             }
-        } else {
+        } else if is_all_bits {
+            // We read row-by-row but each row fits in its output buffer.
             for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(row)?;
@@ -729,6 +806,48 @@ impl Image {
                     byte_order,
                     predictor,
                 );
+
+                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    super::invert_colors(row, color_type, self.sample_format)?;
+                }
+            }
+        } else {
+            // The encoded data potentially takes up more space than the output data so we must be
+            // prepared to discard some of it. That decision is bit-by-bit.
+            let bits_per_pixel = u32::from(self.bits_per_sample) * u32::from(self.samples);
+            // Assumes the photometric samples are always the start.. This is slightly problematic.
+            // To expand spport we should instead have different methods of transforming the read
+            // buffer data, not only the `compact_photometric_bytes` method below and then choose
+            // from the right one with supplied parameters. Then we can also bit-for-bit copy with
+            // a selection for better performance.
+            let photometric_bit_end = u32::from(self.bits_per_sample) * data_samples as u32;
+
+            debug_assert!(bits_per_pixel >= photometric_bit_end);
+
+            if bits_per_pixel % 8 != 0 || photometric_bit_end % 8 != 0 {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                ));
+            }
+
+            let photo_range = photometric_bit_end / 8..bits_per_pixel / 8;
+            let mut encoded = vec![0u8; chunk_row_bytes];
+            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
+                reader.read_exact(&mut encoded)?;
+
+                Self::compact_photometric_bytes(&mut encoded, row, &photo_range);
+
+                super::fix_endianness_and_predict(
+                    row,
+                    color_type.bit_depth(),
+                    samples,
+                    byte_order,
+                    predictor,
+                );
+
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format)?;
                 }
@@ -736,5 +855,19 @@ impl Image {
         }
 
         Ok(())
+    }
+
+    /// Turn a contiguous buffer of a whole number of raw sample arrays into a whole number of
+    /// photometric sample arrays by removing the extra samples in-between.
+    fn compact_photometric_bytes(
+        raw: &mut [u8],
+        row: &mut [u8],
+        photo_range: &std::ops::Range<u32>,
+    ) {
+        raw.chunks_exact_mut(photo_range.end as usize)
+            .zip(row.chunks_exact_mut(photo_range.start as usize))
+            .for_each(|(src, dst)| {
+                dst.copy_from_slice(&src[..photo_range.start as usize]);
+            });
     }
 }

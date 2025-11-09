@@ -235,6 +235,7 @@ const TEST_IMAGE_DIR: &str = "./tests/images/";
 
 macro_rules! test_roundtrip {
     ($name:ident, $buffer:ident, $buffer_ty:ty) => {
+        #[track_caller]
         fn $name<C: colortype::ColorType<Inner = $buffer_ty>>(
             file: &str,
             expected_type: ColorType,

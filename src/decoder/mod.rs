@@ -667,6 +667,8 @@ impl<R: Read + Seek> Decoder<R> {
                 height: 0,
                 bits_per_sample: 1,
                 samples: 1,
+                extra_samples: vec![],
+                photometric_samples: 1,
                 sample_format: SampleFormat::Uint,
                 photometric_interpretation: PhotometricInterpretation::BlackIsZero,
                 compression_method: CompressionMethod::None,
@@ -981,8 +983,10 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
+        let color = self.image.color_or_fallback();
+
         let output_row_stride = (output_width as u64)
-            .saturating_mul(self.image.samples_per_pixel() as u64)
+            .saturating_mul(self.image.samples_per_out_texel(color) as u64)
             .saturating_mul(self.image.bits_per_sample as u64)
             .div_ceil(8);
 
@@ -1032,9 +1036,12 @@ impl<R: Read + Seek> Decoder<R> {
                 .map_err(|_| TiffError::LimitsExceeded)?
         };
 
+        let color = self.image.color_or_fallback();
+        let samples = self.image.samples_per_out_texel(color);
+
         let buffer_size = row_samples
             .checked_mul(height)
-            .and_then(|x| x.checked_mul(self.image.samples_per_pixel()))
+            .and_then(|x| x.checked_mul(samples.into()))
             .ok_or(TiffError::LimitsExceeded)?;
 
         Ok(match self.image().sample_format {
@@ -1232,13 +1239,16 @@ impl<R: Read + Seek> Decoder<R> {
             chunk_dimensions.0.min(width),
             chunk_dimensions.1.min(height),
         );
+
         if chunk_dimensions.0 == 0 || chunk_dimensions.1 == 0 {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
         }
 
-        let samples = self.image().samples_per_pixel();
+        let color = self.image().colortype()?;
+        let samples = self.image().samples_per_out_texel(color);
+
         if samples == 0 {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
