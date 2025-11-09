@@ -57,7 +57,7 @@ fn encode_decode() {
                 ),
                 (Tag::Compression, ifd::Value::Short(1)),
                 (Tag::PhotometricInterpretation, ifd::Value::Short(2)),
-                (Tag::StripOffsets, ifd::Value::Unsigned(47)),
+                (Tag::StripOffsets, ifd::Value::Unsigned(35)),
                 (Tag::SamplesPerPixel, ifd::Value::Short(3)),
                 (Tag::RowsPerStrip, ifd::Value::Unsigned(3334)),
                 (Tag::StripByteCounts, ifd::Value::Unsigned(30000)),
