@@ -11,7 +11,7 @@ use std::{
 use crate::{
     decoder::ifd::Entry,
     error::{TiffResult, UsageError},
-    tags::{CompressionMethod, IfdPointer, ResolutionUnit, SampleFormat, Tag, Type},
+    tags::{CompressionMethod, ExtraSamples, IfdPointer, ResolutionUnit, SampleFormat, Tag, Type},
     Directory, TiffError, TiffFormatError,
 };
 
@@ -506,6 +506,7 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
     row_samples: u64,
     width: u32,
     height: u32,
+    extra_samples: Vec<u16>,
     rows_per_strip: u64,
     strip_offsets: Vec<K::OffsetType>,
     strip_byte_count: Vec<K::OffsetType>,
@@ -562,9 +563,6 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         encoder.write_tag(Tag::Compression, compression.tag().to_u16())?;
         encoder.write_tag(Tag::Predictor, predictor.to_u16())?;
 
-        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
-        let sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
-        encoder.write_tag(Tag::SampleFormat, &sample_format[..])?;
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
 
         encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
@@ -583,6 +581,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             strip_idx: 0,
             row_samples,
             rows_per_strip,
+            extra_samples: vec![],
             width,
             height,
             strip_offsets: Vec::new(),
@@ -592,6 +591,27 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             predictor,
             _phantom: ::std::marker::PhantomData,
         })
+    }
+
+    pub fn extra_samples(&mut self, extra: &[ExtraSamples]) -> Result<(), TiffError> {
+        if self.strip_idx != 0 {
+            return Err(TiffError::UsageError(
+                UsageError::ReconfiguredAfterImageWrite,
+            ));
+        }
+
+        let samples = self.extra_samples.len() + extra.len() + <T>::BITS_PER_SAMPLE.len();
+        let row_samples = u64::from(self.width) * u64::try_from(samples)?;
+
+        self.extra_samples
+            .extend(extra.iter().map(ExtraSamples::to_u16));
+
+        self.encoder
+            .write_tag(Tag::ExtraSamples, &self.extra_samples[..])?;
+
+        self.row_samples = row_samples;
+
+        Ok(())
     }
 
     /// Number of samples the next strip should have.
@@ -731,6 +751,39 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     }
 
     fn finish_internal(&mut self) -> TiffResult<DirectoryOffset<K>> {
+        if self.extra_samples.is_empty() {
+            self.encoder
+                .write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
+        } else {
+            let mut sample_format: Vec<_> = <T>::BITS_PER_SAMPLE.to_vec();
+            let replicated =
+                core::iter::repeat(<T>::BITS_PER_SAMPLE[0]).take(self.extra_samples.len());
+            sample_format.extend(replicated);
+
+            self.encoder
+                .write_tag(Tag::BitsPerSample, &sample_format[..])?;
+
+            self.encoder.write_tag(
+                Tag::SamplesPerPixel,
+                u16::try_from(<T>::BITS_PER_SAMPLE.len() + self.extra_samples.len())?,
+            )?;
+        }
+
+        let mut sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
+        let extra_format = sample_format
+            .first()
+            .copied()
+            // Frankly should not occur, we have no sample format without at least one entry. We
+            // would need an interface upgrade to handle this however. Either decide to support
+            // heterogeneous sample formats or a way to provide fallback that is used for purely
+            // extra samples and not provided via a slice used for samples themselves.
+            .unwrap_or(SampleFormat::Void.to_u16());
+
+        sample_format.extend(core::iter::repeat(extra_format).take(self.extra_samples.len()));
+
+        self.encoder
+            .write_tag(Tag::SampleFormat, &sample_format[..])?;
+
         self.encoder
             .write_tag(Tag::StripOffsets, K::convert_slice(&self.strip_offsets))?;
         self.encoder.write_tag(

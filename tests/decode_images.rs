@@ -684,3 +684,39 @@ fn test_fax4() {
 fn test_fax4_white_is_min() {
     test_image_sum_u8("imagemagick_group4.tiff", ColorType::Gray(1), 3742820);
 }
+
+#[test]
+fn write_extra_bits_image() {
+    use tiff::{encoder, tags::ExtraSamples};
+
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("extra_bits_rgb_8b.tiff");
+    let img_file = File::create(path).expect("Cannot find test image!");
+
+    let mut encoder = encoder::TiffEncoder::new(img_file).expect("Cannot create encoder");
+    let mut img = encoder.new_image::<encoder::colortype::RGB8>(8, 8).unwrap();
+
+    img.extra_samples(&[ExtraSamples::Unspecified]).unwrap();
+
+    // all pixels are supposed to be 0, the extra is 1
+    let data: [u8; 256] = core::array::from_fn(|i| (i as u8 % 4).saturating_sub(2));
+
+    img.write_data(&data)
+        .expect("correct amount of data to write");
+}
+
+#[test]
+fn extra_bits_gray() {
+    test_image_sum_u8(
+        "extra_bits_gray_8b.tiff",
+        ColorType::Multiband {
+            bit_depth: 8,
+            num_samples: 2,
+        },
+        64,
+    );
+}
+
+#[test]
+fn extra_bits_rgb() {
+    test_image_sum_u8("extra_bits_rgb_8b.tiff", ColorType::RGB(8), 0);
+}

@@ -2,6 +2,15 @@
 
 - `Directory` now implements `FromIterator<(Tag, Value)>`.
 
+Changes:
+- The decoder now interprets the `ExtraSamples` tag. The sample count must now
+  more strict match the expected value with alpha channels only allowing for
+  explicitly denoted unassociated or associated alpha. This effects the
+  indicated color type when decoding images with additional samples indicated
+  as unspecified relation.  Previously, these may have been interpreted as
+  alpha by the total sample count (e.g. RgbA if 4 samples under a photometric
+  interpretation of RGB).
+
 # Version 0.10.3
 
 New features:

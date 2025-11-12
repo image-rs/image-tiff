@@ -311,6 +311,17 @@ pub enum SampleFormat(u16) unknown(
 }
 }
 
+tags! {
+pub enum ExtraSamples(u16) {
+    /// There is no specified association between the sample and the image.
+    Unspecified = 0,
+    /// The sample is associated alpha, i.e. pre-multiplied color.
+    AssociatedAlpha = 1,
+    /// The sample is unassociated alpha such as a mask. There might be more than one such sample.
+    UnassociatedAlpha = 2,
+}
+}
+
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ByteOrder {

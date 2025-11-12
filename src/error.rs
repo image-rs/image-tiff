@@ -190,6 +190,9 @@ quick_error! {
         ZeroIfdPointer {
             display("the offset 0 can not point to a valid IFD")
         }
+        ReconfiguredAfterImageWrite {
+            display("attempted to reconfigure the encoder after image writing has started")
+        }
     }
 }
 
