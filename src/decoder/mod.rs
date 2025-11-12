@@ -210,6 +210,10 @@ pub struct BufferLayoutPreference {
     pub len: usize,
     /// Minimum number of bytes to represent a row of image data of the requested content.
     pub row_stride: Option<NonZeroUsize>,
+    /// Number of planes in the image.
+    pub planes: usize,
+    /// Number of bytes used to represent one plane.
+    pub plane_stride: Option<NonZeroUsize>,
 }
 
 /// The count and matching discriminant for a `DecodingBuffer`.
@@ -1101,15 +1105,22 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
     ) -> TiffResult<BufferLayoutPreference> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+
         let layout = self
             .result_extent(data_dims.0 as usize, data_dims.1 as usize)?
             .preferred_layout()?;
 
         let row_stride = self.image.minimum_row_stride(data_dims);
 
+        let plane_stride = row_stride
+            .and_then(|v| v.get().checked_mul(data_dims.1 as usize))
+            .and_then(core::num::NonZeroUsize::new);
+
         Ok(BufferLayoutPreference {
             len: layout.size(),
             row_stride,
+            planes: 1,
+            plane_stride,
         })
     }
 
@@ -1183,17 +1194,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// indicate the layout needed to read the first data plane. This will be fixed in a future
     /// major version of `tiff`.
     pub fn image_buffer_layout(&mut self) -> TiffResult<BufferLayoutPreference> {
-        let data_dims @ (width, height) = (self.image.width, self.image.height);
-
-        let layout = self
-            .result_extent(width as usize, height as usize)?
-            .preferred_layout()?;
-
-        let row_stride = self.image.minimum_row_stride(data_dims);
+        let layout = self.image().preferred_output_layout()?;
 
         Ok(BufferLayoutPreference {
-            len: layout.size(),
-            row_stride,
+            len: layout.plane_stride,
+            row_stride: core::num::NonZeroUsize::new(layout.output_row_stride),
+            planes: layout.plane_offsets.len(),
+            plane_stride: core::num::NonZeroUsize::new(layout.plane_stride),
         })
     }
 
@@ -1224,73 +1231,46 @@ impl<R: Read + Seek> Decoder<R> {
     /// When the image is stored as a planar configuration, this method will currently only read
     /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
-        let width = self.image().width;
-        let height = self.image().height;
+        let image::PlaneLayout {
+            plane_chunks,
+            output_row_stride,
+            chunk_row_stride,
+            chunks_stride,
+            chunks_across,
+            plane_stride,
+            plane_offsets,
+        } = self.image().preferred_output_layout()?;
 
-        let extent = self.result_extent(width as usize, height as usize)?;
-        extent.assert_layout(buffer.len())?;
+        // Find how many planes fit into the output buffer.
+        let used_plane_offsets = plane_offsets
+            .iter()
+            .enumerate()
+            // Find the first plane that would not fit completely at its offset.
+            .skip_while(|(_, &offset)| buffer.len().checked_sub(plane_stride) >= Some(offset))
+            .nth(0)
+            // If all planes fit, use all of them.
+            .map_or(plane_offsets.len(), |(idx, _)| idx);
 
-        if width == 0 || height == 0 {
-            return Ok(());
-        }
-
-        let chunk_dimensions = self.image().chunk_dimensions()?;
-        let chunk_dimensions = (
-            chunk_dimensions.0.min(width),
-            chunk_dimensions.1.min(height),
-        );
-
-        if chunk_dimensions.0 == 0 || chunk_dimensions.1 == 0 {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ));
-        }
-
-        let color = self.image().colortype()?;
-        let samples = self.image().samples_per_out_texel(color);
-
-        if samples == 0 {
-            return Err(TiffError::FormatError(
-                TiffFormatError::InconsistentSizesEncountered,
-            ));
-        }
-
-        let output_row_bits = (width as u64 * self.image.bits_per_sample as u64)
-            .checked_mul(samples as u64)
-            .ok_or(TiffError::LimitsExceeded)?;
-        let output_row_stride: usize = output_row_bits.div_ceil(8).try_into()?;
-
-        let chunk_row_bits = (chunk_dimensions.0 as u64 * self.image.bits_per_sample as u64)
-            .checked_mul(samples as u64)
-            .ok_or(TiffError::LimitsExceeded)?;
-        let chunk_row_bytes: usize = chunk_row_bits.div_ceil(8).try_into()?;
-
-        let chunks_across = ((width - 1) / chunk_dimensions.0 + 1) as usize;
-
-        if chunks_across > 1 && chunk_row_bits % 8 != 0 {
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::MisalignedTileBoundaries,
-            ));
-        }
-
-        let image_chunks = self.image().chunk_offsets.len() / self.image().strips_per_pixel();
         // For multi-band images, only the first band is read.
         // Possible improvements:
         // * pass requested band as parameter
         // * collect bands to a RGB encoding result in case of RGB bands
-        for chunk in 0..image_chunks {
-            self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
-
+        for chunk in 0..plane_chunks {
             let x = chunk % chunks_across;
             let y = chunk / chunks_across;
-            let buffer_offset =
-                y * output_row_stride * chunk_dimensions.1 as usize + x * chunk_row_bytes;
-            self.image.expand_chunk(
-                &mut self.value_reader,
-                &mut buffer[buffer_offset..],
-                output_row_stride,
-                chunk as u32,
-            )?;
+            let buffer_offset = y * chunks_stride + x * chunk_row_stride;
+
+            for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
+                let chunk = chunk + idx * plane_chunks;
+                self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
+
+                self.image.expand_chunk(
+                    &mut self.value_reader,
+                    &mut buffer[plane_offset..][buffer_offset..],
+                    output_row_stride,
+                    chunk as u32,
+                )?;
+            }
         }
 
         Ok(())
