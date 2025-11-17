@@ -45,6 +45,8 @@ pub(crate) struct PlaneLayout {
     pub plane_stride: usize,
     /// Buffer offset from one plane of output to the next.
     pub plane_offsets: Vec<usize>,
+    /// Total number of bytes for all planes in given order.
+    pub total_bytes: usize,
 }
 
 impl TileAttributes {
@@ -655,10 +657,22 @@ impl Image {
             .ok_or(TiffError::LimitsExceeded)?
             .try_into()?;
 
-        let plane_offsets = (0..=usize::MAX)
+        // Using the standard range iterator as checked_add on steroids.
+        let mut offset = 0..=usize::MAX;
+
+        let plane_offsets = offset
+            .by_ref()
+            // Note: for supporting subsampling, adjust as required.
             .step_by(plane_stride)
             .take(usize::from(color.num_samples() / samples))
             .collect();
+
+        // Get the past-the-end of the last plane.
+        //
+        // This also verifies the `take` above was not short.
+        let Some(total_bytes) = offset.nth(plane_stride) else {
+            return Err(TiffError::LimitsExceeded);
+        };
 
         let chunks_across: usize = ((width - 1) / chunk_dimensions.0 + 1).try_into()?;
 
@@ -679,6 +693,7 @@ impl Image {
             chunk_row_stride,
             plane_stride,
             plane_offsets,
+            total_bytes,
         })
     }
 

@@ -205,6 +205,7 @@ impl<'a> DecodingBuffer<'a> {
 /// caller provided buffer must fit the expectations of the decoder to be filled with data from the
 /// current image.
 #[non_exhaustive]
+#[derive(Debug, Clone)]
 pub struct BufferLayoutPreference {
     /// Minimum byte size of the buffer to read image data.
     pub len: usize,
@@ -214,6 +215,8 @@ pub struct BufferLayoutPreference {
     pub planes: usize,
     /// Number of bytes used to represent one plane.
     pub plane_stride: Option<NonZeroUsize>,
+    /// Number of bytes of data when reading all planes.
+    pub complete_len: usize,
 }
 
 /// The count and matching discriminant for a `DecodingBuffer`.
@@ -992,16 +995,47 @@ impl<R: Read + Seek> Decoder<R> {
         let output_row_stride = (output_width as u64)
             .saturating_mul(self.image.samples_per_out_texel(color) as u64)
             .saturating_mul(self.image.bits_per_sample as u64)
-            .div_ceil(8);
+            .div_ceil(8)
+            .try_into()?;
 
-        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, output_row_stride)
+        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, output_row_stride)?;
+
+        Ok(())
+    }
+
+    /// Read all planes from a specific tile.
+    ///
+    /// This behaves in one of two ways depending on the planar configuration of the image:
+    /// 1. For chunky images, this reads the specified chunk index as if by
+    ///    [`Self::read_chunk_bytes`].
+    /// 2. For planar images, this reads the chunks of each complete plane to appropriate offsets
+    ///    in the output buffer. The size of the buffer determines the number of planes being read.
+    ///    The `chunk_index` determines the index of the first plane being read.
+    pub fn read_plane_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
+        let layout = self.image().preferred_output_layout()?;
+
+        let plane_offsets = [0usize];
+        let used_plane_offsets = 1;
+        let plane_chunks = 0u32;
+
+        for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
+            let chunk_index = chunk_index + idx as u32 * plane_chunks;
+
+            self.read_chunk_to_bytes(
+                &mut buffer[plane_offset..],
+                chunk_index,
+                layout.output_row_stride,
+            )?;
+        }
+
+        Ok(())
     }
 
     fn read_chunk_to_bytes(
         &mut self,
         buffer: &mut [u8],
         chunk_index: u32,
-        output_row_stride: u64,
+        output_row_stride: usize,
     ) -> TiffResult<()> {
         let offset = self.image.chunk_file_range(chunk_index)?.0;
         self.goto_offset_u64(offset)?;
@@ -1009,7 +1043,7 @@ impl<R: Read + Seek> Decoder<R> {
         self.image.expand_chunk(
             &mut self.value_reader,
             buffer,
-            output_row_stride.try_into()?,
+            output_row_stride,
             chunk_index,
         )?;
 
@@ -1121,6 +1155,7 @@ impl<R: Read + Seek> Decoder<R> {
             row_stride,
             planes: 1,
             plane_stride,
+            complete_len: layout.size(),
         })
     }
 
@@ -1159,7 +1194,8 @@ impl<R: Read + Seek> Decoder<R> {
         let output_row_stride = u64::from(data_dims.0)
             .saturating_mul(self.image.samples_per_pixel() as u64)
             .saturating_mul(self.image.bits_per_sample as u64)
-            .div_ceil(8);
+            .div_ceil(8)
+            .try_into()?;
 
         self.read_chunk_to_bytes(buffer, chunk_index, output_row_stride)?;
 
@@ -1201,6 +1237,7 @@ impl<R: Read + Seek> Decoder<R> {
             row_stride: core::num::NonZeroUsize::new(layout.output_row_stride),
             planes: layout.plane_offsets.len(),
             plane_stride: core::num::NonZeroUsize::new(layout.plane_stride),
+            complete_len: layout.total_bytes,
         })
     }
 
@@ -1239,6 +1276,8 @@ impl<R: Read + Seek> Decoder<R> {
             chunks_across,
             plane_stride,
             plane_offsets,
+            // We assume that is correct, so really it can be ignored.
+            total_bytes: _,
         } = self.image().preferred_output_layout()?;
 
         // Find how many planes fit into the output buffer.

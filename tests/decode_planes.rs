@@ -16,7 +16,8 @@ fn read_all_planes() {
     assert_eq!(layout.planes, 3);
     let plane_stride = layout.plane_stride.map_or(0, |x| x.get());
 
-    let mut buffer = vec![0u8; layout.planes * plane_stride];
+    eprintln!("{:?}", layout);
+    let mut buffer = vec![0u8; layout.complete_len];
     tif.read_image_bytes(&mut buffer).unwrap();
 
     // Mainly you can see: these are different and non-zero. Otherwise these magic constants just
