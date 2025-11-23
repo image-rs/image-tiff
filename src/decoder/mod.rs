@@ -1050,7 +1050,7 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    fn result_buffer(&self, width: usize, height: usize) -> TiffResult<DecodingResult> {
+    fn result_buffer(&self, width: u32, height: u32) -> TiffResult<DecodingResult> {
         self.result_extent(width, height)?
             .to_result_buffer(&self.value_reader.limits)
     }
@@ -1058,29 +1058,30 @@ impl<R: Read + Seek> Decoder<R> {
     // FIXME: it's unusual for this method to take a `usize` dimension parameter since those would
     // typically come from the image data. The preferred consistent representation should be `u32`
     // and that would avoid some unusual casts `usize -> u64` with a `u64::from` instead.
-    fn result_extent(&self, width: usize, height: usize) -> TiffResult<DecodingExtent> {
-        let bits_per_sample = self.image.bits_per_sample;
+    fn result_extent(&self, width: u32, height: u32) -> TiffResult<DecodingExtent> {
+        let color = self.image.color_or_fallback();
+
+        let samples = self.image.samples_per_out_texel(color);
+        let bits_per_sample = color.bit_depth();
 
         // If samples take up more than one byte, we expand it to a full number (integer or float)
         // and the number of samples in that integer type just counts the number in the underlying
         // image itself. Otherwise, a row is represented as the byte slice of bitfields without
         // expansion.
         let row_samples = if bits_per_sample >= 8 {
-            width
+            u64::from(width)
         } else {
-            ((width as u64) * bits_per_sample as u64)
+            (u64::from(width) * bits_per_sample as u64)
                 .div_ceil(8)
                 .try_into()
                 .map_err(|_| TiffError::LimitsExceeded)?
         };
 
-        let color = self.image.color_or_fallback();
-        let samples = self.image.samples_per_out_texel(color);
-
-        let buffer_size = row_samples
-            .checked_mul(height)
+        let buffer_size: usize = row_samples
+            .checked_mul(u64::from(height))
             .and_then(|x| x.checked_mul(samples.into()))
-            .ok_or(TiffError::LimitsExceeded)?;
+            .ok_or(TiffError::LimitsExceeded)?
+            .try_into()?;
 
         Ok(match self.image().sample_format {
             SampleFormat::Uint => match bits_per_sample {
@@ -1141,7 +1142,7 @@ impl<R: Read + Seek> Decoder<R> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
         let layout = self
-            .result_extent(data_dims.0 as usize, data_dims.1 as usize)?
+            .result_extent(data_dims.0, data_dims.1)?
             .preferred_layout()?;
 
         let row_stride = self.image.minimum_row_stride(data_dims);
@@ -1159,6 +1160,26 @@ impl<R: Read + Seek> Decoder<R> {
         })
     }
 
+    /// Return the layout preferred to read planes corresponding to the specified chunk.
+    ///
+    /// This is similar to [`Self::image_chunk_buffer_layout`] but iterates all planes with chunks
+    /// at the corresponding coordinates of the image.
+    ///
+    /// # Bugs
+    ///
+    /// Sub-sampled images are not yet supported properly.
+    pub fn image_plane_buffer_layout(
+        &mut self,
+        chunk_index: u32,
+    ) -> TiffResult<BufferLayoutPreference> {
+        match self.image().planar_config {
+            PlanarConfiguration::Chunky => return self.image_chunk_buffer_layout(chunk_index),
+            PlanarConfiguration::Planar => {}
+        }
+
+        todo!()
+    }
+
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
     ///
     /// # Bugs
@@ -1167,8 +1188,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
-
-        let mut result = self.result_buffer(data_dims.0 as usize, data_dims.1 as usize)?;
+        let mut result = self.result_buffer(data_dims.0, data_dims.1)?;
 
         self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
 
@@ -1188,7 +1208,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_chunk_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let extent = self.result_extent(data_dims.0 as usize, data_dims.1 as usize)?;
+        let extent = self.result_extent(data_dims.0, data_dims.1)?;
         extent.assert_layout(buffer.len())?;
 
         let output_row_stride = u64::from(data_dims.0)
@@ -1251,7 +1271,7 @@ impl<R: Read + Seek> Decoder<R> {
         let width = self.image().width;
         let height = self.image().height;
 
-        let mut result = self.result_buffer(width as usize, height as usize)?;
+        let mut result = self.result_buffer(width, height)?;
         self.read_image_bytes(result.as_buffer(0).as_bytes_mut())?;
 
         Ok(result)
