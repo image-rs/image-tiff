@@ -175,6 +175,9 @@ quick_error! {
         InvalidChunkIndex(index: u32) {
             display("invalid chunk index ({index}) requested")
         }
+        InvalidPlaneIndex(index: u16) {
+            display("invalid plane index ({index}) requested")
+        }
         PredictorCompressionMismatch {
             display("requested predictor is not compatible with the requested compression")
         }

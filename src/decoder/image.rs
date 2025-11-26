@@ -1019,19 +1019,16 @@ impl ReadoutLayout {
         let num_planes = self.color.num_samples() / self.samples_per_out_texel();
 
         // Using the standard range iterator as checked_add on steroids.
-        let mut offset = 0..=usize::MAX;
+        //
+        // Note: for supporting subsampling, adjust as required.
+        let mut offset = (0..=usize::MAX).step_by(self.plane_stride);
 
-        let plane_offsets = offset
-            .by_ref()
-            // Note: for supporting subsampling, adjust as required.
-            .step_by(self.plane_stride)
-            .take(usize::from(num_planes))
-            .collect();
+        let plane_offsets = offset.by_ref().take(usize::from(num_planes)).collect();
 
         // Get the past-the-end of the last plane.
         //
         // This also verifies the `take` above was not short.
-        let Some(total_bytes) = offset.nth(self.plane_stride) else {
+        let Some(total_bytes) = offset.next() else {
             return Err(TiffError::LimitsExceeded);
         };
 

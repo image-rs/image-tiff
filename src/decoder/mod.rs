@@ -197,6 +197,10 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
         }
     }
+
+    pub fn byte_len(&mut self) -> usize {
+        self.as_bytes_mut().len()
+    }
 }
 
 /// Information on the byte buffer that should be supplied to the decoder.
@@ -217,6 +221,32 @@ pub struct BufferLayoutPreference {
     pub plane_stride: Option<NonZeroUsize>,
     /// Number of bytes of data when reading all planes.
     pub complete_len: usize,
+}
+
+impl BufferLayoutPreference {
+    fn from_planes(layout: &image::PlaneLayout) -> Self {
+        BufferLayoutPreference {
+            len: layout.plane_stride,
+            row_stride: core::num::NonZeroUsize::new(layout.output_row_stride),
+            planes: layout.plane_offsets.len(),
+            plane_stride: core::num::NonZeroUsize::new(layout.plane_stride),
+            complete_len: layout.total_bytes,
+        }
+    }
+
+    #[inline(always)]
+    fn assert_min_layout<T>(self, buffer: &[T]) -> TiffResult<()> {
+        if core::mem::size_of_val(buffer) < self.len {
+            Err(TiffError::UsageError(
+                UsageError::InsufficientOutputBufferSize {
+                    needed: self.len,
+                    provided: buffer.len(),
+                },
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// The count and matching discriminant for a `DecodingBuffer`.
@@ -273,13 +303,14 @@ impl DecodingExtent {
         .map_err(overflow)
     }
 
-    fn assert_layout(self, buffer: usize) -> TiffResult<()> {
+    #[inline(always)]
+    fn assert_min_layout<T>(self, buffer: &[T]) -> TiffResult<()> {
         let needed_bytes = self.preferred_layout()?.size();
-        if buffer < needed_bytes {
+        if core::mem::size_of_val(buffer) < needed_bytes {
             Err(TiffError::UsageError(
                 UsageError::InsufficientOutputBufferSize {
                     needed: needed_bytes,
-                    provided: buffer,
+                    provided: buffer.len(),
                 },
             ))
         } else {
@@ -1003,34 +1034,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    /// Read all planes from a specific tile.
-    ///
-    /// This behaves in one of two ways depending on the planar configuration of the image:
-    /// 1. For chunky images, this reads the specified chunk index as if by
-    ///    [`Self::read_chunk_bytes`].
-    /// 2. For planar images, this reads the chunks of each complete plane to appropriate offsets
-    ///    in the output buffer. The size of the buffer determines the number of planes being read.
-    ///    The `chunk_index` determines the index of the first plane being read.
-    pub fn read_plane_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
-        let layout = self.image().preferred_output_layout()?;
-
-        let plane_offsets = [0usize];
-        let used_plane_offsets = 1;
-        let plane_chunks = 0u32;
-
-        for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
-            let chunk_index = chunk_index + idx as u32 * plane_chunks;
-
-            self.read_chunk_to_bytes(
-                &mut buffer[plane_offset..],
-                chunk_index,
-                layout.output_row_stride,
-            )?;
-        }
-
-        Ok(())
-    }
-
     fn read_chunk_to_bytes(
         &mut self,
         buffer: &mut [u8],
@@ -1051,44 +1054,54 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn result_buffer(&self, width: u32, height: u32) -> TiffResult<DecodingResult> {
-        self.result_extent(width, height)?
+        self.result_extent(width, height, 0..1)?
             .to_result_buffer(&self.value_reader.limits)
     }
 
     // FIXME: it's unusual for this method to take a `usize` dimension parameter since those would
     // typically come from the image data. The preferred consistent representation should be `u32`
     // and that would avoid some unusual casts `usize -> u64` with a `u64::from` instead.
-    fn result_extent(&self, width: u32, height: u32) -> TiffResult<DecodingExtent> {
-        let color = self.image.color_or_fallback();
-
-        let samples = self.image.samples_per_out_texel(color);
-        let bits_per_sample = color.bit_depth();
+    // FIXME: when planes are not homogenous (i.e. subsampled or differing depths) then the
+    // `readout_for_size` or `to_plane_layout` needs a parameter to determine the planes being
+    // read instead of assuming a constant repeated size for them.
+    fn result_extent(
+        &self,
+        width: u32,
+        height: u32,
+        planes: core::ops::Range<u16>,
+    ) -> TiffResult<DecodingExtent> {
+        let read = self.image.readout_for_size(width, height)?;
+        let bits_per_sample = read.color.bit_depth();
 
         // If samples take up more than one byte, we expand it to a full number (integer or float)
         // and the number of samples in that integer type just counts the number in the underlying
         // image itself. Otherwise, a row is represented as the byte slice of bitfields without
-        // expansion.
-        let row_samples = if bits_per_sample >= 8 {
-            u64::from(width)
-        } else {
-            (u64::from(width) * bits_per_sample as u64)
-                .div_ceil(8)
-                .try_into()
-                .map_err(|_| TiffError::LimitsExceeded)?
+        // expansion. The output did that computation for us.
+        let buffer = read.to_plane_layout()?;
+
+        // The layout is for all planes. So restrict ourselves to the planes that were requested.
+        let offset = match buffer.plane_offsets.get(usize::from(planes.start)) {
+            Some(n) => *n,
+            None => {
+                return Err(TiffError::UsageError(UsageError::InvalidPlaneIndex(
+                    planes.start,
+                )))
+            }
         };
 
-        let buffer_size: usize = row_samples
-            .checked_mul(u64::from(height))
-            .and_then(|x| x.checked_mul(samples.into()))
-            .ok_or(TiffError::LimitsExceeded)?
-            .try_into()?;
+        let end = match buffer.plane_offsets.get(usize::from(planes.end)) {
+            Some(n) => *n,
+            None => buffer.total_bytes,
+        };
+
+        let buffer_bytes = end - offset;
 
         Ok(match self.image().sample_format {
             SampleFormat::Uint => match bits_per_sample {
-                n if n <= 8 => DecodingExtent::U8(buffer_size),
-                n if n <= 16 => DecodingExtent::U16(buffer_size),
-                n if n <= 32 => DecodingExtent::U32(buffer_size),
-                n if n <= 64 => DecodingExtent::U64(buffer_size),
+                n if n <= 8 => DecodingExtent::U8(buffer_bytes),
+                n if n <= 16 => DecodingExtent::U16(buffer_bytes / 2),
+                n if n <= 32 => DecodingExtent::U32(buffer_bytes / 4),
+                n if n <= 64 => DecodingExtent::U64(buffer_bytes / 8),
                 n => {
                     return Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::UnsupportedBitsPerChannel(n),
@@ -1096,9 +1109,9 @@ impl<R: Read + Seek> Decoder<R> {
                 }
             },
             SampleFormat::IEEEFP => match bits_per_sample {
-                16 => DecodingExtent::F16(buffer_size),
-                32 => DecodingExtent::F32(buffer_size),
-                64 => DecodingExtent::F64(buffer_size),
+                16 => DecodingExtent::F16(buffer_bytes / 2),
+                32 => DecodingExtent::F32(buffer_bytes / 4),
+                64 => DecodingExtent::F64(buffer_bytes / 8),
                 n => {
                     return Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::UnsupportedBitsPerChannel(n),
@@ -1106,10 +1119,10 @@ impl<R: Read + Seek> Decoder<R> {
                 }
             },
             SampleFormat::Int => match bits_per_sample {
-                n if n <= 8 => DecodingExtent::I8(buffer_size),
-                n if n <= 16 => DecodingExtent::I16(buffer_size),
-                n if n <= 32 => DecodingExtent::I32(buffer_size),
-                n if n <= 64 => DecodingExtent::I64(buffer_size),
+                n if n <= 8 => DecodingExtent::I8(buffer_bytes),
+                n if n <= 16 => DecodingExtent::I16(buffer_bytes / 2),
+                n if n <= 32 => DecodingExtent::I32(buffer_bytes / 4),
+                n if n <= 64 => DecodingExtent::I64(buffer_bytes / 8),
                 n => {
                     return Err(TiffError::UnsupportedError(
                         TiffUnsupportedError::UnsupportedBitsPerChannel(n),
@@ -1142,7 +1155,7 @@ impl<R: Read + Seek> Decoder<R> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
         let layout = self
-            .result_extent(data_dims.0, data_dims.1)?
+            .result_extent(data_dims.0, data_dims.1, 0..1)?
             .preferred_layout()?;
 
         let row_stride = self.image.minimum_row_stride(data_dims);
@@ -1177,7 +1190,11 @@ impl<R: Read + Seek> Decoder<R> {
             PlanarConfiguration::Planar => {}
         }
 
-        todo!()
+        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+        let layout = self
+            .image()
+            .preferred_output_layout_for(data_dims.0, data_dims.1)?;
+        Ok(BufferLayoutPreference::from_planes(&layout))
     }
 
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
@@ -1208,8 +1225,8 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_chunk_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let extent = self.result_extent(data_dims.0, data_dims.1)?;
-        extent.assert_layout(buffer.len())?;
+        let extent = self.result_extent(data_dims.0, data_dims.1, 0..1)?;
+        extent.assert_min_layout(buffer)?;
 
         let output_row_stride = u64::from(data_dims.0)
             .saturating_mul(self.image.samples_per_pixel() as u64)
@@ -1251,14 +1268,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// major version of `tiff`.
     pub fn image_buffer_layout(&mut self) -> TiffResult<BufferLayoutPreference> {
         let layout = self.image().preferred_output_layout()?;
-
-        Ok(BufferLayoutPreference {
-            len: layout.plane_stride,
-            row_stride: core::num::NonZeroUsize::new(layout.output_row_stride),
-            planes: layout.plane_offsets.len(),
-            plane_stride: core::num::NonZeroUsize::new(layout.plane_stride),
-            complete_len: layout.total_bytes,
-        })
+        Ok(BufferLayoutPreference::from_planes(&layout))
     }
 
     /// Decodes the entire image and return it as a Vector
@@ -1287,18 +1297,26 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// When the image is stored as a planar configuration, this method will currently only read
     /// the first sample's plane. This will be fixed in a future major version of `tiff`.
+    ///
+    /// # Error
+    ///
+    /// Returns an error if the buffer fits less than one plane. In particular, for non-planar
+    /// images returns an error if the buffer does not fit the required size.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
-        let image::PlaneLayout {
+        let ref layout @ image::PlaneLayout {
             plane_chunks,
             output_row_stride,
             chunk_row_stride,
             chunks_stride,
             chunks_across,
             plane_stride,
-            plane_offsets,
+            ref plane_offsets,
             // We assume that is correct, so really it can be ignored.
             total_bytes: _,
         } = self.image().preferred_output_layout()?;
+
+        let preference = BufferLayoutPreference::from_planes(&layout);
+        preference.assert_min_layout(buffer)?;
 
         // Find how many planes fit into the output buffer.
         let used_plane_offsets = plane_offsets
@@ -1309,6 +1327,8 @@ impl<R: Read + Seek> Decoder<R> {
             .nth(0)
             // If all planes fit, use all of them.
             .map_or(plane_offsets.len(), |(idx, _)| idx);
+
+        debug_assert!(used_plane_offsets >= 1, "Should have errored");
 
         // For multi-band images, only the first band is read.
         // Possible improvements:
