@@ -50,92 +50,60 @@ pub enum DecodingResult {
 }
 
 impl DecodingResult {
-    fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size {
+    fn new<T: Default + Copy>(
+        size: usize,
+        limits: &Limits,
+        from_fn: fn(Vec<T>) -> Self,
+    ) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / core::mem::size_of::<T>() {
             Err(TiffError::LimitsExceeded)
         } else {
-            Ok(DecodingResult::U8(vec![0; size]))
+            Ok(from_fn(vec![T::default(); size]))
         }
+    }
+
+    fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        Self::new(size, limits, DecodingResult::U8)
     }
 
     fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / 2 {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::U16(vec![0; size]))
-        }
+        Self::new(size, limits, DecodingResult::U16)
     }
 
     fn new_u32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / 4 {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::U32(vec![0; size]))
-        }
+        Self::new(size, limits, DecodingResult::U32)
     }
 
     fn new_u64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / 8 {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::U64(vec![0; size]))
-        }
+        Self::new(size, limits, DecodingResult::U64)
     }
 
     fn new_f32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / std::mem::size_of::<f32>() {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::F32(vec![0.0; size]))
-        }
+        Self::new(size, limits, DecodingResult::F32)
     }
 
     fn new_f64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / std::mem::size_of::<f64>() {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::F64(vec![0.0; size]))
-        }
+        Self::new(size, limits, DecodingResult::F64)
     }
 
     fn new_f16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / std::mem::size_of::<u16>() {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::F16(vec![f16::ZERO; size]))
-        }
+        Self::new(size, limits, DecodingResult::F16)
     }
 
     fn new_i8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / std::mem::size_of::<i8>() {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::I8(vec![0; size]))
-        }
+        Self::new(size, limits, DecodingResult::I8)
     }
 
     fn new_i16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / 2 {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::I16(vec![0; size]))
-        }
+        Self::new(size, limits, DecodingResult::I16)
     }
 
     fn new_i32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / 4 {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::I32(vec![0; size]))
-        }
+        Self::new(size, limits, DecodingResult::I32)
     }
 
     fn new_i64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        if size > limits.decoding_buffer_size / 8 {
-            Err(TiffError::LimitsExceeded)
-        } else {
-            Ok(DecodingResult::I64(vec![0; size]))
-        }
+        Self::new(size, limits, DecodingResult::I64)
     }
 
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer<'_> {
@@ -233,13 +201,15 @@ impl BufferLayoutPreference {
             complete_len: layout.total_bytes,
         }
     }
+}
 
+impl image::ReadoutLayout {
     #[inline(always)]
-    fn assert_min_layout<T>(self, buffer: &[T]) -> TiffResult<()> {
-        if core::mem::size_of_val(buffer) < self.len {
+    fn assert_min_layout<T>(&self, buffer: &[T]) -> TiffResult<()> {
+        if core::mem::size_of_val(buffer) < self.plane_stride {
             Err(TiffError::UsageError(
                 UsageError::InsufficientOutputBufferSize {
-                    needed: self.len,
+                    needed: self.plane_stride,
                     provided: buffer.len(),
                 },
             ))
@@ -301,21 +271,6 @@ impl DecodingExtent {
             DecodingExtent::I64(count) => Layout::array::<i64>(count),
         }
         .map_err(overflow)
-    }
-
-    #[inline(always)]
-    fn assert_min_layout<T>(self, buffer: &[T]) -> TiffResult<()> {
-        let needed_bytes = self.preferred_layout()?.size();
-        if core::mem::size_of_val(buffer) < needed_bytes {
-            Err(TiffError::UsageError(
-                UsageError::InsufficientOutputBufferSize {
-                    needed: needed_bytes,
-                    provided: buffer.len(),
-                },
-            ))
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -1222,8 +1177,7 @@ impl<R: Read + Seek> Decoder<R> {
         let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
 
         let layout = self.image().readout_for_size(width, height)?;
-        let extent = self.result_extent(&layout, 0..1)?;
-        extent.assert_min_layout(buffer)?;
+        layout.assert_min_layout(buffer)?;
 
         self.read_chunk_to_bytes(buffer, chunk_index, &layout)?;
 
@@ -1305,8 +1259,7 @@ impl<R: Read + Seek> Decoder<R> {
             ref readout,
         } = readout.to_plane_layout()?;
 
-        let preference = BufferLayoutPreference::from_planes(layout);
-        preference.assert_min_layout(buffer)?;
+        layout.readout.assert_min_layout(buffer)?;
 
         // Note: with differently sized planes this is dependent on the plane.
         let last_plane_start = buffer.len().checked_sub(readout.plane_stride);
@@ -1340,7 +1293,7 @@ impl<R: Read + Seek> Decoder<R> {
                 self.image.expand_chunk(
                     &mut self.value_reader,
                     &mut buffer[plane_offset..][buffer_offset..],
-                    &readout,
+                    readout,
                     chunk,
                 )?;
             }
