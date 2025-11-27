@@ -1136,9 +1136,12 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+
         let layout = self
             .image()
-            .preferred_output_layout_for(data_dims.0, data_dims.1)?;
+            .readout_for_size(data_dims.0, data_dims.1)?
+            .to_plane_layout()?;
+
         Ok(BufferLayoutPreference::from_planes(&layout))
     }
 
@@ -1212,7 +1215,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// indicate the layout needed to read the first data plane. This will be fixed in a future
     /// major version of `tiff`.
     pub fn image_buffer_layout(&mut self) -> TiffResult<BufferLayoutPreference> {
-        let layout = self.image().preferred_output_layout()?;
+        let layout = self.image().readout_for_image()?.to_plane_layout()?;
         Ok(BufferLayoutPreference::from_planes(&layout))
     }
 

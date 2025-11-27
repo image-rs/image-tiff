@@ -606,20 +606,6 @@ impl Image {
         }
     }
 
-    /// Get the layout for each output plane (i.e. one plane for non-planar tiff).
-    pub(crate) fn preferred_output_layout(&self) -> TiffResult<PlaneLayout> {
-        let Image { width, height, .. } = *self;
-        self.preferred_output_layout_for(width, height)
-    }
-
-    pub(crate) fn preferred_output_layout_for(
-        &self,
-        width: u32,
-        height: u32,
-    ) -> TiffResult<PlaneLayout> {
-        self.readout_for_size(width, height)?.to_plane_layout()
-    }
-
     pub(crate) fn readout_for_image(&self) -> TiffResult<ReadoutLayout> {
         let Image { width, height, .. } = *self;
         self.readout_for_size(width, height)
