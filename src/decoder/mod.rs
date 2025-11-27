@@ -1009,9 +1009,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    // FIXME: it's unusual for this method to take a `usize` dimension parameter since those would
-    // typically come from the image data. The preferred consistent representation should be `u32`
-    // and that would avoid some unusual casts `usize -> u64` with a `u64::from` instead.
     // FIXME: when planes are not homogenous (i.e. subsampled or differing depths) then the
     // `readout_for_size` or `to_plane_layout` needs a parameter to determine the planes being
     // read instead of assuming a constant repeated size for them.
@@ -1020,12 +1017,6 @@ impl<R: Read + Seek> Decoder<R> {
         read: &image::ReadoutLayout,
         planes: core::ops::Range<u16>,
     ) -> TiffResult<DecodingExtent> {
-        let bits_per_sample = read.color.bit_depth();
-
-        // If samples take up more than one byte, we expand it to a full number (integer or float)
-        // and the number of samples in that integer type just counts the number in the underlying
-        // image itself. Otherwise, a row is represented as the byte slice of bitfields without
-        // expansion. The output did that computation for us.
         let buffer = read.to_plane_layout()?;
 
         // The layout is for all planes. So restrict ourselves to the planes that were requested.
@@ -1044,6 +1035,7 @@ impl<R: Read + Seek> Decoder<R> {
         };
 
         let buffer_bytes = end - offset;
+        let bits_per_sample = read.color.bit_depth();
 
         Ok(match self.image().sample_format {
             SampleFormat::Uint => match bits_per_sample {

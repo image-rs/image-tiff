@@ -29,15 +29,6 @@ pub(crate) struct TileAttributes {
     pub tile_length: usize,
 }
 
-pub(crate) struct PlaneLayout {
-    /// The underlying readout layout.
-    pub readout: ReadoutLayout,
-    /// Buffer offset from one plane of output to the next.
-    pub plane_offsets: Vec<usize>,
-    /// Total number of bytes for all planes in given order.
-    pub total_bytes: usize,
-}
-
 impl TileAttributes {
     pub fn tiles_across(&self) -> usize {
         self.image_width.div_ceil(self.tile_width)
@@ -130,6 +121,16 @@ pub(crate) struct ReadoutLayout {
     pub chunks_across: u32,
     /// Chunks to advance to get to the next plane of chunks.
     pub chunks_per_plane: u32,
+}
+
+/// A `ReadoutLayout` with pre-calculated plane information.
+pub(crate) struct PlaneLayout {
+    /// The underlying readout layout.
+    pub readout: ReadoutLayout,
+    /// Buffer offset from one plane of output to the next.
+    pub plane_offsets: Vec<usize>,
+    /// Total number of bytes for all planes in given order.
+    pub total_bytes: usize,
 }
 
 impl Image {
