@@ -405,7 +405,7 @@ pub struct IfdDecoder<'lt> {
     inner: tag_reader::TagReader<'lt, dyn tag_reader::EntryDecoder + 'lt>,
 }
 
-fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
+fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
     fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
         for i in N..buf.len() {
             buf[i] = buf[i].wrapping_add(buf[i - N]);
@@ -427,6 +427,8 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
             buf[i..][..4].copy_from_slice(&(v.wrapping_add(p)).to_ne_bytes());
         }
     }
+
+    let samples = usize::from(samples);
 
     match (bit_depth, samples) {
         // Note we can't use `windows` or so due to the overlap between each iteration. We split
@@ -494,7 +496,9 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: usize) {
     }
 }
 
-fn predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
+fn predict_f32(input: &mut [u8], output: &mut [u8], samples: u16) {
+    let samples = usize::from(samples);
+
     for i in samples..input.len() {
         input[i] = input[i].wrapping_add(input[i - samples]);
     }
@@ -509,7 +513,9 @@ fn predict_f32(input: &mut [u8], output: &mut [u8], samples: usize) {
     }
 }
 
-fn predict_f16(input: &mut [u8], output: &mut [u8], samples: usize) {
+fn predict_f16(input: &mut [u8], output: &mut [u8], samples: u16) {
+    let samples = usize::from(samples);
+
     for i in samples..input.len() {
         input[i] = input[i].wrapping_add(input[i - samples]);
     }
@@ -522,7 +528,9 @@ fn predict_f16(input: &mut [u8], output: &mut [u8], samples: usize) {
     }
 }
 
-fn predict_f64(input: &mut [u8], output: &mut [u8], samples: usize) {
+fn predict_f64(input: &mut [u8], output: &mut [u8], samples: u16) {
+    let samples = usize::from(samples);
+
     for i in samples..input.len() {
         input[i] = input[i].wrapping_add(input[i - samples]);
     }
@@ -544,7 +552,7 @@ fn predict_f64(input: &mut [u8], output: &mut [u8], samples: usize) {
 fn fix_endianness_and_predict(
     buf: &mut [u8],
     bit_depth: u8,
-    samples: usize,
+    samples: u16,
     byte_order: ByteOrder,
     predictor: Predictor,
 ) {
@@ -1021,15 +1029,12 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
-        let color = self.image.color_or_fallback();
+        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let output_row_stride = (output_width as u64)
-            .saturating_mul(self.image.samples_per_out_texel(color) as u64)
-            .saturating_mul(self.image.bits_per_sample as u64)
-            .div_ceil(8)
-            .try_into()?;
+        let mut layout = self.image().readout_for_size(width, height)?;
+        layout.set_row_stride(output_width)?;
 
-        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, output_row_stride)?;
+        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, &layout)?;
 
         Ok(())
     }
@@ -1038,24 +1043,15 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         buffer: &mut [u8],
         chunk_index: u32,
-        output_row_stride: usize,
+        layout: &image::ReadoutLayout,
     ) -> TiffResult<()> {
         let offset = self.image.chunk_file_range(chunk_index)?.0;
         self.goto_offset_u64(offset)?;
 
-        self.image.expand_chunk(
-            &mut self.value_reader,
-            buffer,
-            output_row_stride,
-            chunk_index,
-        )?;
+        self.image
+            .expand_chunk(&mut self.value_reader, buffer, layout, chunk_index)?;
 
         Ok(())
-    }
-
-    fn result_buffer(&self, width: u32, height: u32) -> TiffResult<DecodingResult> {
-        self.result_extent(width, height, 0..1)?
-            .to_result_buffer(&self.value_reader.limits)
     }
 
     // FIXME: it's unusual for this method to take a `usize` dimension parameter since those would
@@ -1066,11 +1062,9 @@ impl<R: Read + Seek> Decoder<R> {
     // read instead of assuming a constant repeated size for them.
     fn result_extent(
         &self,
-        width: u32,
-        height: u32,
+        read: &image::ReadoutLayout,
         planes: core::ops::Range<u16>,
     ) -> TiffResult<DecodingExtent> {
-        let read = self.image.readout_for_size(width, height)?;
         let bits_per_sample = read.color.bit_depth();
 
         // If samples take up more than one byte, we expand it to a full number (integer or float)
@@ -1153,16 +1147,12 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
     ) -> TiffResult<BufferLayoutPreference> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+        let readout = self.image().readout_for_size(data_dims.0, data_dims.1)?;
 
-        let layout = self
-            .result_extent(data_dims.0, data_dims.1, 0..1)?
-            .preferred_layout()?;
+        let layout = self.result_extent(&readout, 0..1)?.preferred_layout()?;
 
-        let row_stride = self.image.minimum_row_stride(data_dims);
-
-        let plane_stride = row_stride
-            .and_then(|v| v.get().checked_mul(data_dims.1 as usize))
-            .and_then(core::num::NonZeroUsize::new);
+        let row_stride = core::num::NonZeroUsize::new(readout.minimum_row_stride);
+        let plane_stride = core::num::NonZeroUsize::new(readout.plane_stride);
 
         Ok(BufferLayoutPreference {
             len: layout.size(),
@@ -1201,13 +1191,19 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// # Bugs
     ///
-    /// When the image is stored as a planar configuration, this method will currently only read
-    /// the first sample's plane. This will be fixed in a future major version of `tiff`.
+    /// When the image is stored as a planar configuration, this method will currently only
+    /// correctly read the first sample's plane. This will be fixed in a future major version of
+    /// `tiff`.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
-        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
-        let mut result = self.result_buffer(data_dims.0, data_dims.1)?;
+        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
 
-        self.read_chunk_to_buffer(result.as_buffer(0), chunk_index, data_dims.0 as usize)?;
+        let readout = self.image().readout_for_size(width, height)?;
+
+        let mut result = self
+            .result_extent(&readout, 0..1)?
+            .to_result_buffer(&self.value_reader.limits)?;
+
+        self.read_chunk_to_bytes(result.as_buffer(0).as_bytes_mut(), chunk_index, &readout)?;
 
         Ok(result)
     }
@@ -1223,18 +1219,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// When the image is stored as a planar configuration, this method will currently only read
     /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_chunk_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
-        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
+        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
 
-        let extent = self.result_extent(data_dims.0, data_dims.1, 0..1)?;
+        let layout = self.image().readout_for_size(width, height)?;
+        let extent = self.result_extent(&layout, 0..1)?;
         extent.assert_min_layout(buffer)?;
 
-        let output_row_stride = u64::from(data_dims.0)
-            .saturating_mul(self.image.samples_per_pixel() as u64)
-            .saturating_mul(self.image.bits_per_sample as u64)
-            .div_ceil(8)
-            .try_into()?;
-
-        self.read_chunk_to_bytes(buffer, chunk_index, output_row_stride)?;
+        self.read_chunk_to_bytes(buffer, chunk_index, &layout)?;
 
         Ok(())
     }
@@ -1278,10 +1269,12 @@ impl<R: Read + Seek> Decoder<R> {
     /// When the image is stored as a planar configuration, this method will currently only read
     /// the first sample's plane. This will be fixed in a future major version of `tiff`.
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        let width = self.image().width;
-        let height = self.image().height;
+        let readout = self.image().readout_for_image()?;
 
-        let mut result = self.result_buffer(width, height)?;
+        let mut result = self
+            .result_extent(&readout, 0..1)?
+            .to_result_buffer(&self.value_reader.limits)?;
+
         self.read_image_bytes(result.as_buffer(0).as_bytes_mut())?;
 
         Ok(result)
@@ -1303,19 +1296,17 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns an error if the buffer fits less than one plane. In particular, for non-planar
     /// images returns an error if the buffer does not fit the required size.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
+        let readout = self.image().readout_for_image()?;
+
         let ref layout @ image::PlaneLayout {
-            plane_chunks,
-            output_row_stride,
-            chunk_row_stride,
-            chunks_stride,
-            chunks_across,
+            output_row_stride: _,
             plane_stride,
             ref plane_offsets,
             // We assume that is correct, so really it can be ignored.
             total_bytes: _,
-        } = self.image().preferred_output_layout()?;
+        } = readout.to_plane_layout()?;
 
-        let preference = BufferLayoutPreference::from_planes(&layout);
+        let preference = BufferLayoutPreference::from_planes(layout);
         preference.assert_min_layout(buffer)?;
 
         // Find how many planes fit into the output buffer.
@@ -1334,20 +1325,21 @@ impl<R: Read + Seek> Decoder<R> {
         // Possible improvements:
         // * pass requested band as parameter
         // * collect bands to a RGB encoding result in case of RGB bands
-        for chunk in 0..plane_chunks {
-            let x = chunk % chunks_across;
-            let y = chunk / chunks_across;
-            let buffer_offset = y * chunks_stride + x * chunk_row_stride;
+        for chunk in 0..readout.chunks_per_plane {
+            let x = (chunk % readout.chunks_across) as usize;
+            let y = (chunk / readout.chunks_across) as usize;
+
+            let buffer_offset = y * readout.chunk_col_stride + x * readout.chunk_row_stride;
 
             for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
-                let chunk = chunk + idx * plane_chunks;
-                self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
+                let chunk = chunk + idx as u32 * readout.chunks_per_plane;
+                self.goto_offset_u64(self.image().chunk_offsets[chunk as usize])?;
 
                 self.image.expand_chunk(
                     &mut self.value_reader,
                     &mut buffer[plane_offset..][buffer_offset..],
-                    output_row_stride,
-                    chunk as u32,
+                    &readout,
+                    chunk,
                 )?;
             }
         }

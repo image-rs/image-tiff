@@ -190,6 +190,9 @@ quick_error! {
         InsufficientOutputBufferSize { needed: usize, provided: usize } {
             display("the borrowed output buffer is not large enough for the decoded data, needed {needed} but have {provided}")
         }
+        InsufficientOutputRowStride { needed: usize, requested: usize } {
+            display("the provided output row stride would alias rows of decoded data, needed {needed} but have {requested}")
+        }
         ZeroIfdPointer {
             display("the offset 0 can not point to a valid IFD")
         }
