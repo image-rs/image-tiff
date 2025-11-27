@@ -30,10 +30,8 @@ pub(crate) struct TileAttributes {
 }
 
 pub(crate) struct PlaneLayout {
-    /// Buffer offset from one row of the image to its next, in bytes.
-    pub output_row_stride: usize,
-    /// Number of bytes in a plane.
-    pub plane_stride: usize,
+    /// The underlying readout layout.
+    pub readout: ReadoutLayout,
     /// Buffer offset from one plane of output to the next.
     pub plane_offsets: Vec<usize>,
     /// Total number of bytes for all planes in given order.
@@ -99,6 +97,7 @@ pub(crate) struct Image {
 }
 
 /// Describes how to read a tile-aligned portion of the image.
+#[derive(Clone)]
 pub(crate) struct ReadoutLayout {
     /// The planar configuration, which applies to both the underlying image and the output buffer.
     /// This may be relaxed if we find a clean enough way to provide it.
@@ -1040,10 +1039,9 @@ impl ReadoutLayout {
         };
 
         Ok(PlaneLayout {
-            output_row_stride: self.row_stride,
-            plane_stride: self.plane_stride,
             plane_offsets,
             total_bytes,
+            readout: self.clone(),
         })
     }
 }

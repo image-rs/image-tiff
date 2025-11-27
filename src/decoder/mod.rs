@@ -226,10 +226,10 @@ pub struct BufferLayoutPreference {
 impl BufferLayoutPreference {
     fn from_planes(layout: &image::PlaneLayout) -> Self {
         BufferLayoutPreference {
-            len: layout.plane_stride,
-            row_stride: core::num::NonZeroUsize::new(layout.output_row_stride),
+            len: layout.readout.plane_stride,
+            row_stride: core::num::NonZeroUsize::new(layout.readout.row_stride),
             planes: layout.plane_offsets.len(),
-            plane_stride: core::num::NonZeroUsize::new(layout.plane_stride),
+            plane_stride: core::num::NonZeroUsize::new(layout.readout.plane_stride),
             complete_len: layout.total_bytes,
         }
     }
@@ -1299,22 +1299,24 @@ impl<R: Read + Seek> Decoder<R> {
         let readout = self.image().readout_for_image()?;
 
         let ref layout @ image::PlaneLayout {
-            output_row_stride: _,
-            plane_stride,
             ref plane_offsets,
             // We assume that is correct, so really it can be ignored.
             total_bytes: _,
+            ref readout,
         } = readout.to_plane_layout()?;
 
         let preference = BufferLayoutPreference::from_planes(layout);
         preference.assert_min_layout(buffer)?;
+
+        // Note: with differently sized planes this is dependent on the plane.
+        let last_plane_start = buffer.len().checked_sub(readout.plane_stride);
 
         // Find how many planes fit into the output buffer.
         let used_plane_offsets = plane_offsets
             .iter()
             .enumerate()
             // Find the first plane that would not fit completely at its offset.
-            .skip_while(|(_, &offset)| buffer.len().checked_sub(plane_stride) >= Some(offset))
+            .skip_while(|(_, &offset)| last_plane_start >= Some(offset))
             .nth(0)
             // If all planes fit, use all of them.
             .map_or(plane_offsets.len(), |(idx, _)| idx);
