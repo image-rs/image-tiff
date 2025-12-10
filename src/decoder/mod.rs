@@ -22,6 +22,10 @@ mod image;
 mod stream;
 mod tag_reader;
 
+/// An index referring to a (rectangular) region of an image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TiffCodingUnit(pub u32);
+
 /// Result of a decoding process
 #[derive(Debug)]
 pub enum DecodingResult {
@@ -1110,6 +1114,40 @@ impl<R: Read + Seek> Decoder<R> {
         })
     }
 
+    /// Return the layout preferred to read several planes corresponding to the specified region.
+    ///
+    /// This is similar to [`Self::image_chunk_buffer_layout`] but can read chunks from all planes
+    /// at the corresponding coordinates of the image.
+    ///
+    /// # Bugs
+    ///
+    /// Sub-sampled images are not yet supported properly.
+    pub fn image_coding_unit_layout(
+        &mut self,
+        code_unit: TiffCodingUnit,
+    ) -> TiffResult<BufferLayoutPreference> {
+        match self.image().planar_config {
+            PlanarConfiguration::Chunky => return self.image_chunk_buffer_layout(code_unit.0),
+            PlanarConfiguration::Planar => {}
+        }
+
+        let (width, height) = self.image().chunk_data_dimensions(code_unit.0)?;
+
+        let layout = self
+            .image()
+            .readout_for_size(width, height)?
+            .to_plane_layout()?;
+
+        if code_unit.0 >= layout.readout.chunks_per_plane {
+            return Err(TiffError::UsageError(UsageError::InvalidCodingUnit(
+                code_unit.0,
+                layout.readout.chunks_per_plane,
+            )));
+        }
+
+        Ok(BufferLayoutPreference::from_planes(&layout))
+    }
+
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
     ///
     /// # Bugs
@@ -1148,6 +1186,61 @@ impl<R: Read + Seek> Decoder<R> {
         layout.assert_min_layout(buffer)?;
 
         self.read_chunk_to_bytes(buffer, chunk_index, &layout)?;
+
+        Ok(())
+    }
+
+    /// Read chunks corresponding to several planes of a region of pixels.
+    ///
+    /// For non planar images this is equivalent to [`Self::read_chunk_bytes`] as there is only one
+    /// plane in the image. For planar images the planes are stored consecutively into the output
+    /// buffer. Returns an error if not enough space for at least one plane is provided. Otherwise
+    /// reads all planes that can be stored completely in the provided output buffer.
+    ///
+    /// A region is a rectangular assortment of pixels in the image, depending on the chunk type
+    /// either strips or tiles. Borrowing terminology from JPEG we call the collection of all
+    /// chunks from all planes that encode samples from the same region a "coding unit".
+    ///
+    /// # Bugs
+    ///
+    /// Sub-sampled images are not yet supported properly.
+    pub fn read_coding_unit_bytes(
+        &mut self,
+        slice: TiffCodingUnit,
+        buffer: &mut [u8],
+    ) -> TiffResult<()> {
+        let (width, height) = self.image().chunk_data_dimensions(slice.0)?;
+        let readout = self.image().readout_for_size(width, height)?;
+
+        let ref layout @ image::PlaneLayout {
+            ref plane_offsets,
+            // We assume that is correct, so really it can be ignored.
+            total_bytes: _,
+            ref readout,
+        } = readout.to_plane_layout()?;
+
+        if slice.0 >= readout.chunks_per_plane {
+            return Err(TiffError::UsageError(UsageError::InvalidCodingUnit(
+                slice.0,
+                readout.chunks_per_plane,
+            )));
+        }
+
+        // No subsamples planes support, for now.
+        let used_plane_offsets = usize::from(layout.used_planes(buffer)?);
+        debug_assert!(used_plane_offsets >= 1, "Should have errored");
+
+        for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
+            let chunk = slice.0 + idx as u32 * readout.chunks_per_plane;
+            self.goto_offset_u64(self.image().chunk_offsets[chunk as usize])?;
+
+            self.image.expand_chunk(
+                &mut self.value_reader,
+                &mut buffer[plane_offset..],
+                readout,
+                chunk,
+            )?;
+        }
 
         Ok(())
     }
@@ -1227,21 +1320,7 @@ impl<R: Read + Seek> Decoder<R> {
             ref readout,
         } = readout.to_plane_layout()?;
 
-        layout.readout.assert_min_layout(buffer)?;
-
-        // Note: with differently sized planes this is dependent on the plane.
-        let last_plane_start = buffer.len().checked_sub(readout.plane_stride);
-
-        // Find how many planes fit into the output buffer.
-        let used_plane_offsets = plane_offsets
-            .iter()
-            .enumerate()
-            // Find the first plane that would not fit completely at its offset.
-            .skip_while(|(_, &offset)| last_plane_start >= Some(offset))
-            .nth(0)
-            // If all planes fit, use all of them.
-            .map_or(plane_offsets.len(), |(idx, _)| idx);
-
+        let used_plane_offsets = usize::from(layout.used_planes(buffer)?);
         debug_assert!(used_plane_offsets >= 1, "Should have errored");
 
         // For multi-band images, only the first band is read.

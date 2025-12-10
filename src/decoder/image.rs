@@ -123,16 +123,6 @@ pub(crate) struct ReadoutLayout {
     pub chunks_per_plane: u32,
 }
 
-/// A `ReadoutLayout` with pre-calculated plane information.
-pub(crate) struct PlaneLayout {
-    /// The underlying readout layout.
-    pub readout: ReadoutLayout,
-    /// Buffer offset from one plane of output to the next.
-    pub plane_offsets: Vec<usize>,
-    /// Total number of bytes for all planes in given order.
-    pub total_bytes: usize,
-}
-
 impl Image {
     pub fn from_reader<R: Read + Seek>(
         decoder: &mut ValueReader<R>,
@@ -1030,5 +1020,44 @@ impl ReadoutLayout {
             total_bytes,
             readout: self.clone(),
         })
+    }
+}
+
+/// A `ReadoutLayout` with pre-calculated plane information.
+pub(crate) struct PlaneLayout {
+    /// The underlying readout layout.
+    pub readout: ReadoutLayout,
+    /// Buffer offset from one plane of output to the next.
+    pub plane_offsets: Vec<usize>,
+    /// Total number of bytes for all planes in given order.
+    pub total_bytes: usize,
+}
+
+impl PlaneLayout {
+    /// Return the number of planes to extract into the provided buffer.
+    pub(crate) fn used_planes(&self, buffer: &[impl Sized]) -> TiffResult<u16> {
+        self.readout.assert_min_layout(buffer)?;
+        let buffer_len = core::mem::size_of_val(buffer);
+
+        // Note: with differently sized planes this is dependent on the plane.
+        let last_plane_start = buffer_len.checked_sub(self.readout.plane_stride);
+
+        // Find how many planes fit into the output buffer.
+        let used_plane_offsets = self
+            .plane_offsets
+            .iter()
+            .enumerate()
+            // Find the first plane that would not fit completely at its offset.
+            .skip_while(|(_, &offset)| last_plane_start >= Some(offset))
+            .nth(0)
+            // If all planes fit, use all of them.
+            .map_or(self.plane_offsets.len(), |(idx, _)| idx);
+
+        debug_assert!(
+            used_plane_offsets <= usize::from(u16::MAX),
+            "Planes limited by number of samples, which is encoded as u16"
+        );
+
+        Ok(used_plane_offsets as u16)
     }
 }

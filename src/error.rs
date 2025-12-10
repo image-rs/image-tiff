@@ -178,6 +178,9 @@ quick_error! {
         InvalidPlaneIndex(index: u16) {
             display("invalid plane index ({index}) requested")
         }
+        InvalidCodingUnit(index: u32, have: u32) {
+            display("out of bounds coding unit ({index}) requested, only {have} available")
+        }
         PredictorCompressionMismatch {
             display("requested predictor is not compatible with the requested compression")
         }
