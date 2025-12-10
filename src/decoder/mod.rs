@@ -1110,33 +1110,6 @@ impl<R: Read + Seek> Decoder<R> {
         })
     }
 
-    /// Return the layout preferred to read planes corresponding to the specified chunk.
-    ///
-    /// This is similar to [`Self::image_chunk_buffer_layout`] but iterates all planes with chunks
-    /// at the corresponding coordinates of the image.
-    ///
-    /// # Bugs
-    ///
-    /// Sub-sampled images are not yet supported properly.
-    pub fn image_plane_buffer_layout(
-        &mut self,
-        chunk_index: u32,
-    ) -> TiffResult<BufferLayoutPreference> {
-        match self.image().planar_config {
-            PlanarConfiguration::Chunky => return self.image_chunk_buffer_layout(chunk_index),
-            PlanarConfiguration::Planar => {}
-        }
-
-        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
-
-        let layout = self
-            .image()
-            .readout_for_size(data_dims.0, data_dims.1)?
-            .to_plane_layout()?;
-
-        Ok(BufferLayoutPreference::from_planes(&layout))
-    }
-
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
     ///
     /// # Bugs
