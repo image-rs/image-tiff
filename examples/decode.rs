@@ -11,15 +11,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = Decoder::new(io)?;
 
     let mut data = DecodingResult::I8(vec![]);
-    let limits = tiff::decoder::Limits::unlimited();
 
     for i in 0u32.. {
-        let layout = reader.image_buffer_layout()?;
         let colortype = reader.colortype()?;
         let dimensions = reader.dimensions()?;
-
-        data.resize_to(&layout, &limits)?;
-        reader.read_image_bytes(data.as_buffer(0).as_bytes_mut())?;
+        let layout = reader.read_image_to_buffer(&mut data)?;
 
         debug_planes(i, &mut data, &layout, &colortype, dimensions);
 

@@ -60,7 +60,20 @@ impl DecodingResult {
         buffer: &BufferLayoutPreference,
         limits: &Limits,
     ) -> Result<(), TiffError> {
-        let extent = DecodingExtent::U8(buffer.complete_len);
+        let sample_type = buffer.sample_type.ok_or(TiffError::UnsupportedError(
+            TiffUnsupportedError::UnknownInterpretation,
+        ))?;
+
+        let extent = sample_type.extent_for_bytes(buffer.complete_len);
+        self.resize_to_extent(extent, limits)
+    }
+
+    fn resize_to_extent(
+        &mut self,
+        extent: DecodingExtent,
+        limits: &Limits,
+    ) -> Result<(), TiffError> {
+        // FIXME: we *can* reuse the allocation sometimes.
         *self = extent.to_result_buffer(limits)?;
         Ok(())
     }
@@ -1144,22 +1157,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(u32::try_from(self.image().chunk_offsets.len())?)
     }
 
-    pub fn read_chunk_to_buffer(
-        &mut self,
-        mut buffer: DecodingBuffer,
-        chunk_index: u32,
-        output_width: usize,
-    ) -> TiffResult<()> {
-        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
-
-        let mut layout = self.image().readout_for_size(width, height)?;
-        layout.set_row_stride(output_width)?;
-
-        self.read_chunk_to_bytes(buffer.as_bytes_mut(), chunk_index, &layout)?;
-
-        Ok(())
-    }
-
     fn read_chunk_to_bytes(
         &mut self,
         buffer: &mut [u8],
@@ -1276,6 +1273,32 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    /// Read the specified chunk (at index `chunk_index`) into a provide buffer.
+    ///
+    /// It will re-allocate the buffer into the correct type and size, within the decoder's
+    /// configured limits, and then pass it to the underlying method. This is essentially a
+    /// type-safe wrapper around the raw [`Self::read_chunk_to_bytes`] method.
+    ///
+    /// Note that for planar images each chunk contains only one sample of the underlying data.
+    pub fn read_chunk_to_buffer(
+        &mut self,
+        buffer: &mut DecodingResult,
+        chunk_index: u32,
+        output_width: usize,
+    ) -> TiffResult<()> {
+        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
+
+        let mut layout = self.image().readout_for_size(width, height)?;
+        layout.set_row_stride(output_width)?;
+
+        let extent = layout.result_extent_for_planes(0..1)?;
+        buffer.resize_to_extent(extent, &self.value_reader.limits)?;
+
+        self.read_chunk_to_bytes(buffer.as_buffer(0).as_bytes_mut(), chunk_index, &layout)?;
+
+        Ok(())
+    }
+
     /// Read chunks corresponding to several planes of a region of pixels.
     ///
     /// For non planar images this is equivalent to [`Self::read_chunk_bytes`] as there is only one
@@ -1388,9 +1411,9 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Decodes the entire image into a provided buffer.
     ///
-    /// Returns a [`TiffError::UsageError`] if the chunk is smaller than the size indicated with a
-    /// call to [`Self::image_buffer_layout`]. Note that the alignment may be arbitrary, but an
-    /// alignment smaller than the preferred alignment may perform worse.
+    /// It will re-allocate the buffer into the correct type and size, within the decoder's
+    /// configured limits, and then pass it to the underlying method. This is essentially a
+    /// type-safe wrapper around the raw [`Self::read_image_bytes`] method.
     ///
     /// # Examples
     ///
@@ -1398,19 +1421,37 @@ impl<R: Read + Seek> Decoder<R> {
     /// use tiff::decoder::{Decoder, DecodingResult, Limits};
     ///
     /// let mut result = DecodingResult::I8(vec![]);
-    /// let limits = Limits::unlimited();
     ///
     /// let mut reader = /* */
     /// # Decoder::new(std::io::Cursor::new(include_bytes!(concat!(
     /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
     /// # )))).unwrap();
     ///
-    /// let layout = reader.image_buffer_layout()?;
-    /// result.resize_to(&layout, &limits)?;
-    /// reader.read_image_bytes(result.as_buffer(0).as_bytes_mut())?;
+    /// reader.read_image_to_buffer(&mut result)?;
     ///
     /// # Ok::<_, tiff::TiffError>(())
     /// ```
+    pub fn read_image_to_buffer(
+        &mut self,
+        result: &mut DecodingResult,
+    ) -> TiffResult<BufferLayoutPreference> {
+        let readout = self.image().readout_for_image()?;
+
+        let planes = readout.to_plane_layout()?;
+        let layout = BufferLayoutPreference::from_planes(&planes);
+
+        let extent = readout.result_extent_for_planes(0..1)?;
+        result.resize_to_extent(extent, &self.value_reader.limits)?;
+        self.read_image_bytes(result.as_buffer(0).as_bytes_mut())?;
+
+        Ok(layout)
+    }
+
+    /// Decodes the entire image into a provided buffer.
+    ///
+    /// Returns a [`TiffError::UsageError`] if the chunk is smaller than the size indicated with a
+    /// call to [`Self::image_buffer_layout`]. Note that the alignment may be arbitrary, but an
+    /// alignment smaller than the preferred alignment may perform worse.
     ///
     /// # Error
     ///
