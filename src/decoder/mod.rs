@@ -54,6 +54,17 @@ pub enum DecodingResult {
 }
 
 impl DecodingResult {
+    /// Reallocate the buffer to decode all planes of the indicated layout.
+    pub fn resize_to(
+        &mut self,
+        buffer: &BufferLayoutPreference,
+        limits: &Limits,
+    ) -> Result<(), TiffError> {
+        let extent = DecodingExtent::U8(buffer.complete_len);
+        *self = extent.to_result_buffer(limits)?;
+        Ok(())
+    }
+
     fn new<T: Default + Copy>(
         size: usize,
         limits: &Limits,
@@ -192,6 +203,39 @@ impl<'a> DecodingBuffer<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DecodingSampleType {
+    U8,
+    U16,
+    U32,
+    U64,
+    F16,
+    F32,
+    F64,
+    I8,
+    I16,
+    I32,
+    I64,
+}
+
+impl DecodingSampleType {
+    fn extent_for_bytes(self, bytes: usize) -> DecodingExtent {
+        match self {
+            DecodingSampleType::U8 => DecodingExtent::U8(bytes),
+            DecodingSampleType::U16 => DecodingExtent::U16(bytes.div_ceil(2)),
+            DecodingSampleType::U32 => DecodingExtent::U32(bytes.div_ceil(4)),
+            DecodingSampleType::U64 => DecodingExtent::U64(bytes.div_ceil(8)),
+            DecodingSampleType::I8 => DecodingExtent::I8(bytes),
+            DecodingSampleType::I16 => DecodingExtent::I16(bytes.div_ceil(2)),
+            DecodingSampleType::I32 => DecodingExtent::I32(bytes.div_ceil(4)),
+            DecodingSampleType::I64 => DecodingExtent::I64(bytes.div_ceil(8)),
+            DecodingSampleType::F16 => DecodingExtent::F16(bytes.div_ceil(2)),
+            DecodingSampleType::F32 => DecodingExtent::F32(bytes.div_ceil(4)),
+            DecodingSampleType::F64 => DecodingExtent::F64(bytes.div_ceil(8)),
+        }
+    }
+}
+
 /// Information on the byte buffer that should be supplied to the decoder.
 ///
 /// This is relevant for [`Decoder::read_image_bytes`] and [`Decoder::read_chunk_bytes`] where the
@@ -202,6 +246,15 @@ impl<'a> DecodingBuffer<'a> {
 pub struct BufferLayoutPreference {
     /// Minimum byte size of the buffer to read image data.
     pub len: usize,
+    /// The interpretation of each sample in the image.
+    ///
+    /// We only support a uniform sample layout. Detailed information for mixed colors may be added
+    /// in the future and will become available by explicit query. The same goes for the bit-depth
+    /// of samples that must also be uniform.
+    pub sample_format: SampleFormat,
+    /// The type representation for each sample. Only available for depths and formats which the
+    /// library can describe.
+    pub sample_type: Option<DecodingSampleType>,
     /// Minimum number of bytes to represent a row of image data of the requested content.
     pub row_stride: Option<NonZeroUsize>,
     /// Number of planes in the image.
@@ -220,11 +273,87 @@ impl BufferLayoutPreference {
             planes: layout.plane_offsets.len(),
             plane_stride: core::num::NonZeroUsize::new(layout.readout.plane_stride),
             complete_len: layout.total_bytes,
+            sample_format: layout.readout.sample_format,
+            sample_type: Self::sample_type(layout.readout.sample_format, layout.readout.color),
         }
+    }
+
+    fn sample_type(sample_format: SampleFormat, color: ColorType) -> Option<DecodingSampleType> {
+        Some(match sample_format {
+            SampleFormat::Uint => match color.bit_depth() {
+                n if n <= 8 => DecodingSampleType::U8,
+                n if n <= 16 => DecodingSampleType::U16,
+                n if n <= 32 => DecodingSampleType::U32,
+                n if n <= 64 => DecodingSampleType::U64,
+                _ => return None,
+            },
+            SampleFormat::IEEEFP => match color.bit_depth() {
+                16 => DecodingSampleType::F16,
+                32 => DecodingSampleType::F32,
+                64 => DecodingSampleType::F64,
+                _ => return None,
+            },
+            SampleFormat::Int => match color.bit_depth() {
+                n if n <= 8 => DecodingSampleType::I8,
+                n if n <= 16 => DecodingSampleType::I16,
+                n if n <= 32 => DecodingSampleType::I32,
+                n if n <= 64 => DecodingSampleType::I64,
+                _ => return None,
+            },
+            _other => {
+                return None;
+            }
+        })
     }
 }
 
 impl image::ReadoutLayout {
+    // FIXME: when planes are not homogenous (i.e. subsampled or differing depths) then the
+    // `readout_for_size` or `to_plane_layout` needs a parameter to determine the planes being
+    // read instead of assuming a constant repeated size for them.
+    fn result_extent_for_planes(
+        self: &image::ReadoutLayout,
+        planes: core::ops::Range<u16>,
+    ) -> TiffResult<DecodingExtent> {
+        let buffer = self.to_plane_layout()?;
+
+        // The layout is for all planes. So restrict ourselves to the planes that were requested.
+        let offset = match buffer.plane_offsets.get(usize::from(planes.start)) {
+            Some(n) => *n,
+            None => {
+                return Err(TiffError::UsageError(UsageError::InvalidPlaneIndex(
+                    planes.start,
+                )))
+            }
+        };
+
+        let end = match buffer.plane_offsets.get(usize::from(planes.end)) {
+            Some(n) => *n,
+            None => buffer.total_bytes,
+        };
+
+        let buffer_bytes = end - offset;
+        let bits_per_sample = self.color.bit_depth();
+
+        let Some(sample_type) = BufferLayoutPreference::sample_type(self.sample_format, self.color)
+        else {
+            if matches!(
+                self.sample_format,
+                SampleFormat::Uint | SampleFormat::Int | SampleFormat::IEEEFP
+            ) {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedSampleDepth(bits_per_sample),
+                ));
+            } else {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::UnsupportedSampleFormat(vec![self.sample_format]),
+                ));
+            }
+        };
+
+        Ok(sample_type.extent_for_bytes(buffer_bytes))
+    }
+
     #[inline(always)]
     fn assert_min_layout<T>(&self, buffer: &[T]) -> TiffResult<()> {
         if core::mem::size_of_val(buffer) < self.plane_stride {
@@ -292,6 +421,22 @@ impl DecodingExtent {
             DecodingExtent::I64(count) => Layout::array::<i64>(count),
         }
         .map_err(overflow)
+    }
+
+    fn sample_type(&self) -> DecodingSampleType {
+        match *self {
+            DecodingExtent::U8(_) => DecodingSampleType::U8,
+            DecodingExtent::U16(_) => DecodingSampleType::U16,
+            DecodingExtent::U32(_) => DecodingSampleType::U32,
+            DecodingExtent::U64(_) => DecodingSampleType::U64,
+            DecodingExtent::F16(_) => DecodingSampleType::F16,
+            DecodingExtent::F32(_) => DecodingSampleType::F32,
+            DecodingExtent::F64(_) => DecodingSampleType::F64,
+            DecodingExtent::I8(_) => DecodingSampleType::I8,
+            DecodingExtent::I16(_) => DecodingSampleType::I16,
+            DecodingExtent::I32(_) => DecodingSampleType::I32,
+            DecodingExtent::I64(_) => DecodingSampleType::I64,
+        }
     }
 }
 
@@ -1030,73 +1175,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    // FIXME: when planes are not homogenous (i.e. subsampled or differing depths) then the
-    // `readout_for_size` or `to_plane_layout` needs a parameter to determine the planes being
-    // read instead of assuming a constant repeated size for them.
-    fn result_extent(
-        &self,
-        read: &image::ReadoutLayout,
-        planes: core::ops::Range<u16>,
-    ) -> TiffResult<DecodingExtent> {
-        let buffer = read.to_plane_layout()?;
-
-        // The layout is for all planes. So restrict ourselves to the planes that were requested.
-        let offset = match buffer.plane_offsets.get(usize::from(planes.start)) {
-            Some(n) => *n,
-            None => {
-                return Err(TiffError::UsageError(UsageError::InvalidPlaneIndex(
-                    planes.start,
-                )))
-            }
-        };
-
-        let end = match buffer.plane_offsets.get(usize::from(planes.end)) {
-            Some(n) => *n,
-            None => buffer.total_bytes,
-        };
-
-        let buffer_bytes = end - offset;
-        let bits_per_sample = read.color.bit_depth();
-
-        Ok(match self.image().sample_format {
-            SampleFormat::Uint => match bits_per_sample {
-                n if n <= 8 => DecodingExtent::U8(buffer_bytes),
-                n if n <= 16 => DecodingExtent::U16(buffer_bytes / 2),
-                n if n <= 32 => DecodingExtent::U32(buffer_bytes / 4),
-                n if n <= 64 => DecodingExtent::U64(buffer_bytes / 8),
-                n => {
-                    return Err(TiffError::UnsupportedError(
-                        TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                    ))
-                }
-            },
-            SampleFormat::IEEEFP => match bits_per_sample {
-                16 => DecodingExtent::F16(buffer_bytes / 2),
-                32 => DecodingExtent::F32(buffer_bytes / 4),
-                64 => DecodingExtent::F64(buffer_bytes / 8),
-                n => {
-                    return Err(TiffError::UnsupportedError(
-                        TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                    ))
-                }
-            },
-            SampleFormat::Int => match bits_per_sample {
-                n if n <= 8 => DecodingExtent::I8(buffer_bytes),
-                n if n <= 16 => DecodingExtent::I16(buffer_bytes / 2),
-                n if n <= 32 => DecodingExtent::I32(buffer_bytes / 4),
-                n if n <= 64 => DecodingExtent::I64(buffer_bytes / 8),
-                n => {
-                    return Err(TiffError::UnsupportedError(
-                        TiffUnsupportedError::UnsupportedBitsPerChannel(n),
-                    ))
-                }
-            },
-            format => {
-                return Err(TiffUnsupportedError::UnsupportedSampleFormat(vec![format]).into())
-            }
-        })
-    }
-
     /// Returns the layout preferred to read the specified chunk with [`Self::read_chunk_bytes`].
     ///
     /// Returns the layout without being specific as to the underlying type for forward
@@ -1117,7 +1195,9 @@ impl<R: Read + Seek> Decoder<R> {
         let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
         let readout = self.image().readout_for_size(data_dims.0, data_dims.1)?;
 
-        let layout = self.result_extent(&readout, 0..1)?.preferred_layout()?;
+        let extent = readout.result_extent_for_planes(0..1)?;
+        let sample_type = extent.sample_type();
+        let layout = extent.preferred_layout()?;
 
         let row_stride = core::num::NonZeroUsize::new(readout.minimum_row_stride);
         let plane_stride = core::num::NonZeroUsize::new(readout.plane_stride);
@@ -1128,6 +1208,8 @@ impl<R: Read + Seek> Decoder<R> {
             planes: 1,
             plane_stride,
             complete_len: layout.size(),
+            sample_format: self.image().sample_format,
+            sample_type: Some(sample_type),
         })
     }
 
@@ -1177,8 +1259,8 @@ impl<R: Read + Seek> Decoder<R> {
 
         let readout = self.image().readout_for_size(width, height)?;
 
-        let mut result = self
-            .result_extent(&readout, 0..1)?
+        let mut result = readout
+            .result_extent_for_planes(0..1)?
             .to_result_buffer(&self.value_reader.limits)?;
 
         self.read_chunk_to_bytes(result.as_buffer(0).as_bytes_mut(), chunk_index, &readout)?;
@@ -1303,8 +1385,8 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let readout = self.image().readout_for_image()?;
 
-        let mut result = self
-            .result_extent(&readout, 0..1)?
+        let mut result = readout
+            .result_extent_for_planes(0..1)?
             .to_result_buffer(&self.value_reader.limits)?;
 
         self.read_image_bytes(result.as_buffer(0).as_bytes_mut())?;

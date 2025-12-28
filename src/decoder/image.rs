@@ -98,6 +98,8 @@ pub(crate) struct ReadoutLayout {
     pub color: ColorType,
     /// The number of bytes from one row to another.
     pub minimum_row_stride: usize,
+    /// The format of samples (assumed uniform for now, same with depth of `ColorType`).
+    pub sample_format: SampleFormat,
 
     /// Number of bytes to advance in output per row.
     pub row_stride: usize,
@@ -659,6 +661,7 @@ impl Image {
             planar_config: self.planar_config,
             color,
             minimum_row_stride,
+            sample_format: self.sample_format,
             row_stride: data_row_bytes,
             chunk_row_stride: chunk_row_bytes,
             chunk_col_stride,
