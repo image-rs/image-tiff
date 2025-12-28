@@ -377,7 +377,7 @@ impl Image {
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
         let is_alpha_extra_samples = matches!(
             self.extra_samples.as_slice(),
-            [ExtraSamples::AssociatedAlpha] | [ExtraSamples::UnassociatedAlpha]
+            [ExtraSamples::AssociatedAlpha, ..] | [ExtraSamples::UnassociatedAlpha, ..]
         );
 
         match self.photometric_interpretation {
