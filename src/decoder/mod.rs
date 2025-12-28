@@ -110,6 +110,7 @@ impl DecodingResult {
         Self::new(size, limits, DecodingResult::I64)
     }
 
+    /// Get a view of this buffer starting from the nth _sample_ of the current type.
     pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer<'_> {
         match *self {
             DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
@@ -154,9 +155,25 @@ pub enum DecodingBuffer<'a> {
 }
 
 impl<'a> DecodingBuffer<'a> {
-    fn as_bytes_mut(&mut self) -> &mut [u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         match self {
-            DecodingBuffer::U8(ref mut buf) => buf,
+            DecodingBuffer::U8(buf) => buf,
+            DecodingBuffer::I8(buf) => bytecast::i8_as_ne_bytes(buf),
+            DecodingBuffer::U16(buf) => bytecast::u16_as_ne_bytes(buf),
+            DecodingBuffer::I16(buf) => bytecast::i16_as_ne_bytes(buf),
+            DecodingBuffer::U32(buf) => bytecast::u32_as_ne_bytes(buf),
+            DecodingBuffer::I32(buf) => bytecast::i32_as_ne_bytes(buf),
+            DecodingBuffer::U64(buf) => bytecast::u64_as_ne_bytes(buf),
+            DecodingBuffer::I64(buf) => bytecast::i64_as_ne_bytes(buf),
+            DecodingBuffer::F16(buf) => bytecast::f16_as_ne_bytes(buf),
+            DecodingBuffer::F32(buf) => bytecast::f32_as_ne_bytes(buf),
+            DecodingBuffer::F64(buf) => bytecast::f64_as_ne_bytes(buf),
+        }
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            DecodingBuffer::U8(buf) => buf,
             DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
             DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
             DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
@@ -170,8 +187,8 @@ impl<'a> DecodingBuffer<'a> {
         }
     }
 
-    pub fn byte_len(&mut self) -> usize {
-        self.as_bytes_mut().len()
+    pub fn byte_len(&self) -> usize {
+        self.as_bytes().len()
     }
 }
 
