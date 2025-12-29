@@ -1396,7 +1396,13 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// When the image is stored as a planar configuration, this method will currently only read
     /// the first sample's plane. This will be fixed in a future major version of `tiff`.
-    #[deprecated = "Use `DecodingResult::resize_to` and `read_image_bytes` instead. This old method will keep its bugged planar behavior until it is removed."]
+    ///
+    /// # Intent to deprecate
+    ///
+    /// Use `DecodingResult::resize_to` and `read_image_bytes` instead where possible, preserving
+    /// the buffer across multiple calls. This old method will likely keep its bugged planar
+    /// behavior until it is fully replaced, to ensure that existing code will not run into
+    /// unexpectedly large allocations that will error on limits instead.
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let readout = self.image().readout_for_image()?;
 
