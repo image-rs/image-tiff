@@ -12,7 +12,6 @@ use crate::{
 };
 
 use std::io::{self, Cursor, Read, Seek};
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -86,6 +85,44 @@ pub(crate) struct Image {
     pub tile_attributes: Option<TileAttributes>,
     pub chunk_offsets: Vec<u64>,
     pub chunk_bytes: Vec<u64>,
+}
+
+/// Describes how to read a tile-aligned portion of the image.
+#[derive(Clone)]
+pub(crate) struct ReadoutLayout {
+    /// The planar configuration, which applies to both the underlying image and the output buffer.
+    /// This may be relaxed if we find a clean enough way to provide it.
+    pub planar_config: PlanarConfiguration,
+
+    /// The sample interpretation (interpret with planar_config).
+    pub color: ColorType,
+    /// The number of bytes from one row to another.
+    pub minimum_row_stride: usize,
+    /// The format of samples (assumed uniform for now, same with depth of `ColorType`).
+    pub sample_format: SampleFormat,
+
+    /// Number of bytes to advance in output per row.
+    pub row_stride: usize,
+    /// Number of bytes to advance in output per chunk in width.
+    pub chunk_row_stride: usize,
+    /// Number of bytes to advance in output per chunk in height.
+    pub chunk_col_stride: usize,
+    /// Number of bytes in output from one plane to another.
+    pub plane_stride: usize,
+
+    /// Bits per sample in the encoded data.
+    pub tiff_bits_per_sample: u8,
+    /// Number of samples in the encoded data.
+    pub tiff_samples: u16,
+    /// Dimensions of the underlying rectangular chunks (tile or strips).
+    pub tiff_chunk_dimensions: (u32, u32),
+    /// Number of bytes in the underlying data with all samples per row of chunks.
+    pub tiff_row_bytes: usize,
+
+    /// Chunks until wrapping to the next row of chunks.
+    pub chunks_across: u32,
+    /// Chunks to advance to get to the next plane of chunks.
+    pub chunks_per_plane: u32,
 }
 
 impl Image {
@@ -190,7 +227,7 @@ impl Image {
 
         // Technically bits_per_sample.len() should be *equal* to samples, but libtiff also allows
         // it to be a single value that applies to all samples.
-        if bits_per_sample.len() != samples.into() && bits_per_sample.len() != 1 {
+        if bits_per_sample.len() != usize::from(samples) && bits_per_sample.len() != 1 {
             return Err(TiffError::FormatError(
                 TiffFormatError::InconsistentSizesEncountered,
             ));
@@ -342,7 +379,7 @@ impl Image {
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
         let is_alpha_extra_samples = matches!(
             self.extra_samples.as_slice(),
-            [ExtraSamples::AssociatedAlpha] | [ExtraSamples::UnassociatedAlpha]
+            [ExtraSamples::AssociatedAlpha, ..] | [ExtraSamples::UnassociatedAlpha, ..]
         );
 
         match self.photometric_interpretation {
@@ -408,38 +445,6 @@ impl Image {
                 ),
             )),
         }
-    }
-
-    /// Get the multiband color describing this with its extra samples.
-    pub(crate) fn color_multiband_with_extras(&self) -> ColorType {
-        ColorType::Multiband {
-            bit_depth: self.bits_per_sample,
-            num_samples: self.samples,
-        }
-    }
-
-    /// Describe this with an accurate color or a multiband.
-    pub(crate) fn color_or_fallback(&self) -> ColorType {
-        self.colortype()
-            .unwrap_or_else(|_| self.color_multiband_with_extras())
-    }
-
-    pub(crate) fn minimum_row_stride(&self, dims: (u32, u32)) -> Option<NonZeroUsize> {
-        let (width, height) = dims;
-
-        let color = self.color_or_fallback();
-
-        let row_stride = u64::from(width)
-            .saturating_mul(u64::from(self.samples_per_out_texel(color)))
-            .saturating_mul(u64::from(self.bits_per_sample))
-            .div_ceil(8);
-
-        // Note: row stride should be smaller than the len if we have an actual buffer. If there
-        // are no pixels in the buffer (height _or_ width is 0) then the stride is not well defined
-        // and we return `None`.
-        (height > 0)
-            .then_some(row_stride as usize)
-            .and_then(NonZeroUsize::new)
     }
 
     fn create_reader<'r, R: 'r + Read>(
@@ -538,9 +543,9 @@ impl Image {
     /// Example with `bits_per_sample = [8, 8, 8]` and `PhotometricInterpretation::RGB`:
     /// * `PlanarConfiguration::Chunky` -> 3 (RGBRGBRGB...)
     /// * `PlanarConfiguration::Planar` -> 1 (RRR...) (GGG...) (BBB...)
-    pub(crate) fn samples_per_pixel(&self) -> usize {
+    pub(crate) fn samples_per_pixel(&self) -> u16 {
         match self.planar_config {
-            PlanarConfiguration::Chunky => self.samples.into(),
+            PlanarConfiguration::Chunky => self.samples,
             PlanarConfiguration::Planar => 1,
         }
     }
@@ -553,10 +558,10 @@ impl Image {
     }
 
     /// Number of strips per pixel.
-    pub(crate) fn strips_per_pixel(&self) -> usize {
+    pub(crate) fn strips_per_pixel(&self) -> u16 {
         match self.planar_config {
             PlanarConfiguration::Chunky => 1,
-            PlanarConfiguration::Planar => self.samples.into(),
+            PlanarConfiguration::Planar => self.samples,
         }
     }
 
@@ -594,14 +599,90 @@ impl Image {
         }
     }
 
+    pub(crate) fn readout_for_image(&self) -> TiffResult<ReadoutLayout> {
+        let Image { width, height, .. } = *self;
+        self.readout_for_size(width, height)
+    }
+
+    /// Get the layout for reading out a tile-aligned portion of the image.
+    ///
+    /// The provided width and height should be less than or equal to the image dimensions.
+    pub(crate) fn readout_for_size(&self, width: u32, height: u32) -> TiffResult<ReadoutLayout> {
+        let color = self.colortype()?;
+
+        let tiff_samples = self.samples_per_pixel();
+        let tiff_bits_per_sample = self.bits_per_sample;
+        let data_samples = self.samples_per_out_texel(color);
+        let tiff_chunk_dimensions = self.chunk_dimensions()?;
+        let strips_per_pixel = self.strips_per_pixel();
+
+        let data_dimensions = (width, height);
+
+        let tiff_row_bits = (u64::from(tiff_chunk_dimensions.0) * u64::from(tiff_bits_per_sample))
+            .checked_mul(u64::from(tiff_samples))
+            .ok_or(TiffError::LimitsExceeded)?;
+        let tiff_row_bytes: usize = tiff_row_bits.div_ceil(8).try_into()?;
+
+        let chunk_row_bits = (u64::from(tiff_chunk_dimensions.0) * u64::from(tiff_bits_per_sample))
+            .checked_mul(u64::from(data_samples))
+            .ok_or(TiffError::LimitsExceeded)?;
+        let chunk_row_bytes: usize = chunk_row_bits.div_ceil(8).try_into()?;
+
+        let data_row_bits = (u64::from(data_dimensions.0) * u64::from(tiff_bits_per_sample))
+            .checked_mul(u64::from(data_samples))
+            .ok_or(TiffError::LimitsExceeded)?;
+        let data_row_bytes: usize = data_row_bits.div_ceil(8).try_into()?;
+
+        let chunk_col_stride: usize = data_row_bits
+            .div_ceil(8)
+            .checked_mul(u64::from(tiff_chunk_dimensions.1))
+            .ok_or(TiffError::LimitsExceeded)?
+            .try_into()?;
+
+        let plane_stride: usize = data_row_bits
+            .div_ceil(8)
+            .checked_mul(u64::from(data_dimensions.1))
+            .ok_or(TiffError::LimitsExceeded)?
+            .try_into()?;
+
+        let minimum_row_stride = data_row_bytes;
+
+        let chunks_across: u32 = data_dimensions.0.div_ceil(tiff_chunk_dimensions.0);
+        let chunks_per_plane = (self.chunk_offsets.len() as u32) / u32::from(strips_per_pixel);
+
+        // We would not get an offset in byte units, sorry, no bit interleaving in the output.
+        if chunks_across > 1 && chunk_row_bits % 8 != 0 {
+            return Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::MisalignedTileBoundaries,
+            ));
+        }
+
+        Ok(ReadoutLayout {
+            planar_config: self.planar_config,
+            color,
+            minimum_row_stride,
+            sample_format: self.sample_format,
+            row_stride: data_row_bytes,
+            chunk_row_stride: chunk_row_bytes,
+            chunk_col_stride,
+            plane_stride,
+            tiff_bits_per_sample,
+            tiff_samples,
+            tiff_chunk_dimensions,
+            tiff_row_bytes,
+            chunks_across,
+            chunks_per_plane,
+        })
+    }
+
     pub(crate) fn chunk_data_dimensions(&self, chunk_index: u32) -> TiffResult<(u32, u32)> {
         let dims = self.chunk_dimensions()?;
 
         match self.chunk_type {
             ChunkType::Strip => {
-                let strip_attrs = self.strip_decoder.as_ref().unwrap();
-                let strips_per_band =
-                    self.height.saturating_sub(1) / strip_attrs.rows_per_strip + 1;
+                let rows_per_strip = dims.1;
+                let strips_per_band = self.height.div_ceil(rows_per_strip);
+
                 let strip_height_without_padding = (chunk_index % strips_per_band)
                     .checked_mul(dims.1)
                     .and_then(|x| self.height.checked_sub(x))
@@ -630,7 +711,7 @@ impl Image {
         &self,
         reader: &mut ValueReader<impl Read>,
         buf: &mut [u8],
-        output_row_stride: usize,
+        layout: &ReadoutLayout,
         chunk_index: u32,
     ) -> TiffResult<()> {
         let ValueReader {
@@ -640,10 +721,10 @@ impl Image {
         } = reader;
 
         let byte_order = reader.byte_order;
-        let reader = reader.inner();
 
         // Validate that the color type is supported.
-        let color_type = self.colortype()?;
+        let color_type = layout.color;
+
         match color_type {
             ColorType::RGB(n)
             | ColorType::RGBA(n)
@@ -714,8 +795,8 @@ impl Image {
         let photometric_interpretation = self.photometric_interpretation;
         let predictor = self.predictor;
 
-        let samples = self.samples_per_pixel();
-        let data_samples = self.samples_per_out_texel(color_type);
+        let samples = layout.tiff_samples;
+        let data_samples = layout.samples_per_out_texel();
 
         // We have two dimensions: the 2d rectangle of encoded data and the 2d rectangle this
         // takes up in the output. Each has an associated count of bits per pixel. The first
@@ -726,30 +807,23 @@ impl Image {
         let chunk_dims = self.chunk_dimensions()?;
         let data_dims = self.chunk_data_dimensions(chunk_index)?;
 
-        let chunk_row_bits = (u64::from(chunk_dims.0) * u64::from(self.bits_per_sample))
-            .checked_mul(samples as u64)
-            .ok_or(TiffError::LimitsExceeded)?;
-        let chunk_row_bytes: usize = chunk_row_bits.div_ceil(8).try_into()?;
-
-        let data_row_bits = (u64::from(data_dims.0) * u64::from(self.bits_per_sample))
-            .checked_mul(data_samples as u64)
-            .ok_or(TiffError::LimitsExceeded)?;
-        let data_row_bytes: usize = data_row_bits.div_ceil(8).try_into()?;
+        let chunk_row_bytes: usize = layout.tiff_row_bytes;
+        let data_row_bytes: usize = layout.chunk_row_bytes(data_dims.0)?;
 
         // TODO: Should these return errors instead?
-        assert!(output_row_stride >= data_row_bytes);
-        assert!(buf.len() >= output_row_stride * (data_dims.1 as usize - 1) + data_row_bytes);
+        assert!(layout.minimum_row_stride >= data_row_bytes);
+        assert!(buf.len() >= layout.row_stride * (data_dims.1 as usize - 1) + data_row_bytes);
+
+        let is_all_bits = samples == data_samples;
+        let is_output_chunk_rows = layout.row_stride == chunk_row_bytes;
 
         let mut reader = Self::create_reader(
-            reader,
+            reader.inner(),
             compression_method,
             *compressed_bytes,
             self.jpeg_tables.as_deref().map(|a| &**a),
             chunk_dims,
         )?;
-
-        let is_all_bits = samples == usize::from(data_samples);
-        let is_output_chunk_rows = output_row_stride == chunk_row_bytes;
 
         if is_output_chunk_rows && is_all_bits {
             // Here we can read directly into the output buffer itself.
@@ -773,7 +847,7 @@ impl Image {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
             let mut encoded = vec![0u8; chunk_row_bytes];
-            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
+            for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
                 reader.read_exact(&mut encoded)?;
 
                 let row = &mut row[..data_row_bytes];
@@ -789,10 +863,14 @@ impl Image {
             }
         } else if is_all_bits {
             // We read row-by-row but each row fits in its output buffer.
-            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
+            for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
                 let row = &mut row[..data_row_bytes];
-                reader.read_exact(row)?;
+                let used = data_row_bytes.min(chunk_row_bytes);
 
+                // Two ways how we get here: we have more bytes in our chunk data than in the image
+                // we are to read. Then we need to skip the rest of the data. Or we have a bigger
+                // row stride than the chunk contains data, then we  need to fill only the front.
+                reader.read_exact(&mut row[..used])?;
                 // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {
                     let len = u64::try_from(chunk_row_bytes - data_row_bytes)?;
@@ -835,7 +913,7 @@ impl Image {
 
             let photo_range = photometric_bit_end / 8..bits_per_pixel / 8;
             let mut encoded = vec![0u8; chunk_row_bytes];
-            for row in buf.chunks_mut(output_row_stride).take(data_dims.1 as usize) {
+            for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
                 reader.read_exact(&mut encoded)?;
 
                 Self::compact_photometric_bytes(&mut encoded, row, &photo_range);
@@ -869,5 +947,120 @@ impl Image {
             .for_each(|(src, dst)| {
                 dst.copy_from_slice(&src[..photo_range.start as usize]);
             });
+    }
+}
+
+impl ReadoutLayout {
+    pub(crate) fn samples_per_out_texel(&self) -> u16 {
+        match self.planar_config {
+            PlanarConfiguration::Chunky => self.color.num_samples(),
+            PlanarConfiguration::Planar => 1,
+        }
+    }
+
+    // For a concrete chunk, which may be a partial border chunk, the byte length of one row of its
+    // pixel data.
+    pub(crate) fn chunk_row_bytes(&self, width: u32) -> TiffResult<usize> {
+        let data_samples = self.samples_per_out_texel();
+        let data_row_bits = (u64::from(width) * u64::from(self.tiff_bits_per_sample))
+            .checked_mul(u64::from(data_samples))
+            .ok_or(TiffError::LimitsExceeded)?;
+        Ok(data_row_bits.div_ceil(8).try_into()?)
+    }
+
+    pub(crate) fn set_row_stride(&mut self, row_stride: usize) -> Result<(), TiffError> {
+        if row_stride < self.minimum_row_stride {
+            return Err(TiffError::UsageError(
+                UsageError::InsufficientOutputRowStride {
+                    needed: self.minimum_row_stride,
+                    requested: row_stride,
+                },
+            ));
+        }
+
+        let data_row_bytes = u64::try_from(row_stride)?;
+
+        let chunk_col_stride = data_row_bytes
+            .checked_mul(u64::from(self.tiff_chunk_dimensions.1))
+            .ok_or(TiffError::LimitsExceeded)?
+            .try_into()?;
+
+        let height = self.plane_stride.checked_div(self.row_stride);
+
+        let plane_stride = height
+            .and_then(|h| data_row_bytes.checked_mul(h as u64))
+            // If height was zero, or the previous stride was zero, there are no bytes in a plane
+            .unwrap_or(0)
+            .try_into()?;
+
+        self.row_stride = row_stride;
+        self.chunk_col_stride = chunk_col_stride;
+        self.plane_stride = plane_stride;
+
+        Ok(())
+    }
+
+    /// Reduce this down to the layout of the output planes.
+    pub(crate) fn to_plane_layout(&self) -> Result<PlaneLayout, TiffError> {
+        let num_planes = self.color.num_samples() / self.samples_per_out_texel();
+
+        // Using the standard range iterator as checked_add on steroids.
+        //
+        // Note: for supporting subsampling, adjust as required.
+        let mut offset = (0..=usize::MAX).step_by(self.plane_stride);
+
+        let plane_offsets = offset.by_ref().take(usize::from(num_planes)).collect();
+
+        // Get the past-the-end of the last plane.
+        //
+        // This also verifies the `take` above was not short.
+        let Some(total_bytes) = offset.next() else {
+            return Err(TiffError::LimitsExceeded);
+        };
+
+        Ok(PlaneLayout {
+            plane_offsets,
+            total_bytes,
+            readout: self.clone(),
+        })
+    }
+}
+
+/// A `ReadoutLayout` with pre-calculated plane information.
+pub(crate) struct PlaneLayout {
+    /// The underlying readout layout.
+    pub readout: ReadoutLayout,
+    /// Buffer offset from one plane of output to the next.
+    pub plane_offsets: Vec<usize>,
+    /// Total number of bytes for all planes in given order.
+    pub total_bytes: usize,
+}
+
+impl PlaneLayout {
+    /// Return the number of planes to extract into the provided buffer.
+    pub(crate) fn used_planes(&self, buffer: &[impl Sized]) -> TiffResult<u16> {
+        self.readout.assert_min_layout(buffer)?;
+        let buffer_len = core::mem::size_of_val(buffer);
+
+        // Note: with differently sized planes this is dependent on the plane.
+        let last_plane_start = buffer_len.checked_sub(self.readout.plane_stride);
+
+        // Find how many planes fit into the output buffer.
+        let used_plane_offsets = self
+            .plane_offsets
+            .iter()
+            .enumerate()
+            // Find the first plane that would not fit completely at its offset.
+            .skip_while(|(_, &offset)| last_plane_start >= Some(offset))
+            .nth(0)
+            // If all planes fit, use all of them.
+            .map_or(self.plane_offsets.len(), |(idx, _)| idx);
+
+        debug_assert!(
+            used_plane_offsets <= usize::from(u16::MAX),
+            "Planes limited by number of samples, which is encoded as u16"
+        );
+
+        Ok(used_plane_offsets as u16)
     }
 }

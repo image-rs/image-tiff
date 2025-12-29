@@ -175,6 +175,12 @@ quick_error! {
         InvalidChunkIndex(index: u32) {
             display("invalid chunk index ({index}) requested")
         }
+        InvalidPlaneIndex(index: u16) {
+            display("invalid plane index ({index}) requested")
+        }
+        InvalidCodingUnit(index: u32, have: u32) {
+            display("out of bounds coding unit ({index}) requested, only {have} available")
+        }
         PredictorCompressionMismatch {
             display("requested predictor is not compatible with the requested compression")
         }
@@ -186,6 +192,9 @@ quick_error! {
         }
         InsufficientOutputBufferSize { needed: usize, provided: usize } {
             display("the borrowed output buffer is not large enough for the decoded data, needed {needed} but have {provided}")
+        }
+        InsufficientOutputRowStride { needed: usize, requested: usize } {
+            display("the provided output row stride would alias rows of decoded data, needed {needed} but have {requested}")
         }
         ZeroIfdPointer {
             display("the offset 0 can not point to a valid IFD")

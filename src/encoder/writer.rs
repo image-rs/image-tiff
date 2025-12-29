@@ -221,6 +221,8 @@ fn encoder_on_short_writes() {
     };
 
     let imgdata = vec![42u8; 100 * 100];
+    let mut data = crate::decoder::DecodingResult::U8(vec![]);
+
     for comp in [
         super::Compression::Uncompressed,
         super::Compression::Packbits,
@@ -240,8 +242,12 @@ fn encoder_on_short_writes() {
 
         write.inner.set_position(0);
         let mut tiff_reader = crate::decoder::Decoder::new(&mut write.inner).unwrap();
-        let data = tiff_reader.read_image().unwrap();
+        let _layout = tiff_reader.read_image_to_buffer(&mut data).unwrap();
 
-        assert!(matches!(data, crate::decoder::DecodingResult::U8(v) if v == imgdata));
+        assert!(
+            matches!(&data, crate::decoder::DecodingResult::U8(v) if *v == imgdata),
+            "{data:?} @ {}",
+            data.as_buffer(0).byte_len()
+        );
     }
 }
