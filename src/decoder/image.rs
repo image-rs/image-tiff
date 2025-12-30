@@ -95,6 +95,19 @@ pub(crate) struct ReadoutLayout {
     pub planar_config: PlanarConfiguration,
 
     /// The sample interpretation (interpret with planar_config).
+    ///
+    /// FIXME: we should not require this here. The ability to turn out the raw bytes from the
+    /// sample arrays is very different from turning out interpretable color. Firstly we can always
+    /// readout `Multiband` but currently only use that ColorType in special circumstances (it must
+    /// not overlap cases where actually want to use a ColorType).
+    ///
+    /// And then we have CIE Lab, which uses a tuple of `(u8, i8, i8)`, that is still filterable
+    /// but still not represented by any of our `DecoderResult` variants. Other color variants
+    /// depend on extra tags (YCbCrCoefficients/0x0211) and we don't have a good side channel to
+    /// tag the output with all that TIFF specific information, so arguably we should process and
+    /// apply those to the data so it becomes a self-contained representation.
+    ///
+    /// This should be computed at a higher level, in `Decoder`, instead.
     pub color: ColorType,
     /// The number of bytes from one row to another.
     pub minimum_row_stride: usize,
@@ -435,15 +448,60 @@ impl Image {
                     }),
                 }
             }
-            // TODO: this is bad we should not fail at this point
-            PhotometricInterpretation::RGBPalette
-            | PhotometricInterpretation::TransparencyMask
-            | PhotometricInterpretation::CIELab => Err(TiffError::UnsupportedError(
+            // ```
+            // struct IccLab /* Interpretation 9* {
+            //     pub L: u8, // SampleFormat::Uint
+            //     pub a: u8, // SampleFormat::Uint, defined as TiffLab::a + 128
+            //     pub b: u8, // SampleFormat::Uint, defined as TiffLab::b + 128
+            // }
+            // ```
+            PhotometricInterpretation::IccLab => match self.photometric_samples {
+                3 if matches!(self.sample_format, SampleFormat::Uint) => {
+                    Ok(ColorType::Lab(self.bits_per_sample))
+                }
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                )),
+            },
+            // Unsupported due to inherently heterogeneous sample types. This is represented as:
+            // ```
+            // struct TiffLab /* Interpretation 8* {
+            //     pub L: u8, // SampleFormat::Uint
+            //     pub a: i8, // SampleFormat::Int
+            //     pub b: i8, // SampleFormat::Int
+            // }
+            // ```
+            PhotometricInterpretation::CIELab => Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::InterpretationWithBits(
-                    self.photometric_interpretation,
+                    PhotometricInterpretation::CIELab,
                     vec![self.bits_per_sample; self.samples as usize],
                 ),
             )),
+            // Unsupported due to extra unfiltering and conversion steps. We need to find the
+            // Decode tag (SRATIONAL; 2 * SamplesPerPixel) and apply the following conversion:
+            //
+            // L* = Decode[0] + Lsample x (Decode[1] - Decode[0]) / (2^n -1)
+            // …
+            //
+            // So we'll have a larger depth in the output and either worry about reducing fractions
+            // or turn everything into floats. That's a lot of decisions.
+            PhotometricInterpretation::ItuLab => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::InterpretationWithBits(
+                    PhotometricInterpretation::CIELab,
+                    vec![self.bits_per_sample; self.samples as usize],
+                ),
+            )),
+            PhotometricInterpretation::RGBPalette | PhotometricInterpretation::TransparencyMask => {
+                Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                ))
+            }
         }
     }
 

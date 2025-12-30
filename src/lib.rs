@@ -44,6 +44,9 @@ pub enum ColorType {
     /// Pixel is YCbCr
     YCbCr(u8),
 
+    /// Pixel is CIE L*a*b* (ICC LAb)
+    Lab(u8),
+
     /// Pixel has multiple bands/channels
     Multiband { bit_depth: u8, num_samples: u16 },
 }
@@ -58,6 +61,7 @@ impl ColorType {
             | ColorType::CMYK(b)
             | ColorType::CMYKA(b)
             | ColorType::YCbCr(b)
+            | ColorType::Lab(b)
             | ColorType::Multiband { bit_depth: b, .. } => b,
         }
     }
@@ -72,6 +76,7 @@ impl ColorType {
             ColorType::CMYK(_) => 4,
             ColorType::CMYKA(_) => 5,
             ColorType::YCbCr(_) => 3,
+            ColorType::Lab(_) => 3,
             ColorType::Multiband { num_samples, .. } => num_samples,
         }
     }
