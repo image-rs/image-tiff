@@ -266,6 +266,8 @@ pub enum PhotometricInterpretation(u16) {
     CMYK = 5,
     YCbCr = 6,
     CIELab = 8,
+    IccLab = 9,
+    ItuLab = 10,
 }
 }
 
