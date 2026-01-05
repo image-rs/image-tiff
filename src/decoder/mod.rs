@@ -1277,7 +1277,7 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// It will re-allocate the buffer into the correct type and size, within the decoder's
     /// configured limits, and then pass it to the underlying method. This is essentially a
-    /// type-safe wrapper around the raw [`Self::read_chunk_to_bytes`] method.
+    /// type-safe wrapper around the raw [`Self::read_chunk_bytes`] method.
     ///
     /// Note that for planar images each chunk contains only one sample of the underlying data.
     pub fn read_chunk_to_buffer(
