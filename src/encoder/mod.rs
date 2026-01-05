@@ -11,7 +11,10 @@ use std::{
 use crate::{
     decoder::ifd::Entry,
     error::{TiffResult, UsageError},
-    tags::{CompressionMethod, ExtraSamples, IfdPointer, ResolutionUnit, SampleFormat, Tag, Type},
+    tags::{
+        CompressionMethod, ExtraSamples, IfdPointer, PhotometricInterpretation, ResolutionUnit,
+        SampleFormat, Tag, Type,
+    },
     Directory, TiffError, TiffFormatError,
 };
 
@@ -564,6 +567,12 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         encoder.write_tag(Tag::Predictor, predictor.to_u16())?;
 
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
+
+        if matches!(<T>::TIFF_VALUE, PhotometricInterpretation::YCbCr) {
+            // The default for this tag is 2,2 for subsampling but we do not support such a
+            // transformation. Instead all samples must be provided.
+            encoder.write_tag(Tag::ChromaSubsampling, &[1u16, 1u16][..])?;
+        }
 
         encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
 

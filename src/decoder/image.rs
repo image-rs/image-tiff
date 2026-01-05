@@ -85,6 +85,7 @@ pub(crate) struct Image {
     pub tile_attributes: Option<TileAttributes>,
     pub chunk_offsets: Vec<u64>,
     pub chunk_bytes: Vec<u64>,
+    pub chroma_subsampling: (u16, u16),
 }
 
 /// Describes how to read a tile-aligned portion of the image.
@@ -275,6 +276,25 @@ impl Image {
             .transpose()?
             .unwrap_or(PlanarConfiguration::Chunky);
 
+        let ycbcr_subsampling = tag_reader.find_tag_uint_vec::<u16>(Tag::ChromaSubsampling)?;
+
+        let chroma_subsampling = if let Some(subsamples) = &ycbcr_subsampling {
+            let [a, b] = subsamples.as_slice() else {
+                return Err(TiffError::FormatError(TiffFormatError::InvalidCountForTag(
+                    Tag::ChromaSubsampling,
+                    subsamples.len(),
+                )));
+            };
+
+            // ImageWidth and ImageLength are constrained to be integer multiples of
+            // YCbCrSubsampleHoriz and YCbCrSubsampleVert respectively. TileWidth and TileLength
+            // have the same constraints. RowsPerStrip must be an integer multiple of
+            // YCbCrSubsampleVert.
+            (*a, *b)
+        } else {
+            (2, 2)
+        };
+
         let planes = match planar_config {
             PlanarConfiguration::Chunky => 1,
             PlanarConfiguration::Planar => samples,
@@ -386,6 +406,7 @@ impl Image {
             tile_attributes,
             chunk_offsets,
             chunk_bytes,
+            chroma_subsampling,
         })
     }
 
@@ -713,6 +734,23 @@ impl Image {
             return Err(TiffError::UnsupportedError(
                 TiffUnsupportedError::MisalignedTileBoundaries,
             ));
+        }
+
+        // Only this color type interprets the tag, which is defined with a default of (2, 2)
+        if matches!(color, ColorType::YCbCr(_)) && self.chroma_subsampling != (1, 1) {
+            // The JPEG library does upsampling for us and defines its buffers correctly
+            // (presumably). All other compression schemes are not supported..
+            //
+            // NOTE: as explained in <fa225e820b96bef35f01bf4685654beeb4a8df0c> we may be better
+            // off supporting this tag by consistently upsampling, not by adjusting the buffer
+            // size. At least as a default this makes more sense and is much more permissive in
+            // case the compression stream disagrees with the tags (we would not have enough / or
+            // the wrong buffer layout if we only asked for subsampled planes in a planar layout).
+            if !matches!(self.compression_method, CompressionMethod::ModernJPEG) {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::ChromaSubsampling,
+                ));
+            }
         }
 
         Ok(ReadoutLayout {

@@ -860,6 +860,7 @@ impl<R: Read + Seek> Decoder<R> {
                 tile_attributes: None,
                 chunk_offsets: Vec::new(),
                 chunk_bytes: Vec::new(),
+                chroma_subsampling: (2, 2),
             },
         };
         decoder.next_image()?;

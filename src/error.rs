@@ -90,6 +90,9 @@ quick_error! {
         InvalidTypeForTag {
             display("tag has invalid type")
         }
+        InvalidCountForTag(tag: Tag, len: usize) {
+            display("tag `{tag:?}` with incorrect number of elements ({len}) encountered")
+        }
         StripTileTagConflict {
             display("file should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found")
         }
@@ -155,6 +158,9 @@ quick_error! {
         }
         UnsupportedInterpretation(interpretation: PhotometricInterpretation) {
             display("unsupported photometric interpretation \"{interpretation:?}\"")
+        }
+        ChromaSubsampling {
+            display("chroma subsampling of YCbCr color is unsupported")
         }
         MisalignedTileBoundaries {
             display("tile rows are not aligned to byte boundaries")

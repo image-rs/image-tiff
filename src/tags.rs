@@ -128,6 +128,11 @@ pub enum Tag(u16) unknown(
     SMaxSampleValue = 341, // TODO add support
     // JPEG
     JPEGTables = 347,
+    // Subsampling
+    #[doc(alias = "YCbCrSubsampling")]
+    ChromaSubsampling = 530, // TODO add support
+    #[doc(alias = "YCbCrPositioning")]
+    ChromaPositioning = 531, // TODO add support
     // GeoTIFF
     ModelPixelScaleTag = 33550, // (SoftDesk)
     ModelTransformationTag = 34264, // (JPL Carto Group)
