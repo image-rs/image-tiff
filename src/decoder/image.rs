@@ -740,6 +740,12 @@ impl Image {
         if matches!(color, ColorType::YCbCr(_)) && self.chroma_subsampling != (1, 1) {
             // The JPEG library does upsampling for us and defines its buffers correctly
             // (presumably). All other compression schemes are not supported..
+            //
+            // NOTE: as explained in <fa225e820b96bef35f01bf4685654beeb4a8df0c> we may be better
+            // off supporting this tag by consistently upsampling, not by adjusting the buffer
+            // size. At least as a default this makes more sense and is much more permissive in
+            // case the compression stream disagrees with the tags (we would not have enough / or
+            // the wrong buffer layout if we only asked for subsampled planes in a planar layout).
             if !matches!(self.compression_method, CompressionMethod::ModernJPEG) {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::ChromaSubsampling,
