@@ -1,4 +1,4 @@
-# Version 0.10.4 (unreleased)
+# Version 0.11.0
 
 - `Directory` now implements `FromIterator<(Tag, Value)>`.
 
@@ -10,6 +10,45 @@ Changes:
   as unspecified relation.  Previously, these may have been interpreted as
   alpha by the total sample count (e.g. RgbA if 4 samples under a photometric
   interpretation of RGB).
+- The decoder handles planar data, current limited to non-subsampled channels.
+  The `Decoder::read_image` method return planes one-after-another depending on
+  the size of the buffer that was passed.
+- `Decoder::read_image_to_buffer` now takes `&mut DecodingResult` and resizes
+  it according to the required layout. Previously, a borrowed `DecodingBuffer`
+  was passed which can be replaced by calling `as_bytes_mut` and
+  `read_image_bytes`.
+- Several methods of tags are now `const`. Note that does not guarantee any
+  particular value when calling these methods.
+
+Fixes:
+- Fix a bug in the uncompressed encoder that could lead to short writes, i.e.
+  data silently dropped when the underlying writer did not accept all data in a
+  single write call.
+- Encoding YCbCr data now writes the `ChromaSubsampling` tag as `(1, 1)` to
+  indicate no subsampling, instead of leaving it at its default of `(2, 2)`.
+- The decoder will reject subsampled YCbCr data as there is no upsampling
+  routine, except for JPEG compressed images where the JPEG decoders handles
+  this. Since the buffer in that case indicates a full-sized plane for all
+  color samples any future support for the tag will upsample all planes (at
+  least within this major version).
+
+Additions:
+- Added support for the `CieLab` color type.
+- Added `DecodingResult::resize_to` to create a buffer with a matching sample
+  type and dimensions.
+- Added `ByteOrder::native` to access the platform's native endianness.
+- Added `ByteOrder::convert` to change the byte-order of values in a byte
+  buffer, depending on their `Type` as described at runtime.
+- Added `DirectoryOffset::new` to encode a directory whose offset is known to
+  the caller but that has not been written through the encoder itself.
+- Added `Encoder::extra_samples` to encode images with more samples than their
+  color's trait implementation would otherwise suggest.
+- Added `DirectoryEncoder::extend_from` to encode multiple tag entries from a
+  directory whose values were written to the file by means outside the
+  encoder's control.
+- Added `Decoder::read_coding_unit_bytes` to retrieve data of corresponding
+  coordinates from potentially planar data, which is encoded in multiple chunks
+  of the file.
 
 # Version 0.10.3
 
