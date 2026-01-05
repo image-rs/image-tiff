@@ -738,9 +738,13 @@ impl Image {
 
         // Only this color type interprets the tag, which is defined with a default of (2, 2)
         if matches!(color, ColorType::YCbCr(_)) && self.chroma_subsampling != (1, 1) {
-            return Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::ChromaSubsampling,
-            ));
+            // The JPEG library does upsampling for us and defines its buffers correctly
+            // (presumably). All other compression schemes are not supported..
+            if !matches!(self.compression_method, CompressionMethod::ModernJPEG) {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::ChromaSubsampling,
+                ));
+            }
         }
 
         Ok(ReadoutLayout {
