@@ -5,6 +5,14 @@ use crate::{bytecast, tags::Type, TiffError, TiffFormatError, TiffResult};
 use super::writer::TiffWriter;
 
 /// Trait for types that can be encoded in a tiff file
+#[diagnostic::on_unimplemented(
+    message = "the type `{Self}` does not implement `TiffValue`",
+    note = "the trait is implemented for primitive types (`u8`, `i16`, `f32`, etc.)",
+    note = "the trait is implemented for shared references to values",
+    note = "the trait is implemented for slices, pass them by reference (e.g. `&[u8]`)",
+    note = "the trait is implemented for arrays if it is implemented for a slice",
+    note = "values in a `Vec` or `Box` should be dereferenced, e.g. `&vec[..]`"
+)]
 pub trait TiffValue {
     const BYTE_LEN: u8;
     const FIELD_TYPE: Type;
@@ -450,6 +458,14 @@ impl TiffValue for str {
     }
 }
 
+// If you pass `&Vec<_>` then you'd get at first sight the  complaint:
+//
+//  `Vec<T>` does not implement `TiffValue`
+//
+// and a list of implementations of `TiffValue` that are quite unrelated. That is not very helpful.
+// We do not *want* `Vec` to implement the trait as an owning type, instead you should pass a
+// reference to a slice. The error message is further customized in the diagnostics of the trait.
+#[diagnostic::do_not_recommend]
 impl<T: TiffValue + ?Sized> TiffValue for &'_ T {
     const BYTE_LEN: u8 = T::BYTE_LEN;
     const FIELD_TYPE: Type = T::FIELD_TYPE;
@@ -464,6 +480,27 @@ impl<T: TiffValue + ?Sized> TiffValue for &'_ T {
 
     fn data(&self) -> Cow<'_, [u8]> {
         T::data(self)
+    }
+}
+
+/// An array is treated like a slice of the same length.
+impl<T, const N: usize> TiffValue for [T; N]
+where
+    [T]: TiffValue,
+{
+    const BYTE_LEN: u8 = <[T]>::BYTE_LEN;
+    const FIELD_TYPE: Type = <[T]>::FIELD_TYPE;
+
+    fn count(&self) -> usize {
+        self.as_slice().count()
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        self.as_slice().write(writer)
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        self.as_slice().data()
     }
 }
 
