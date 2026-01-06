@@ -9,14 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: ["1.74.0", stable, beta, nightly]
+        rust: ["1.85.0", stable, beta, nightly]
     steps:
     - uses: actions/checkout@v2
 
     - uses: dtolnay/rust-toolchain@nightly
-      if: ${{ matrix.rust == '1.74.0' }}
+      if: ${{ matrix.rust == '1.85.0' }}
     - name: Generate Cargo.lock with minimal-version dependencies
-      if: ${{ matrix.rust == '1.74.0' }}
+      if: ${{ matrix.rust == '1.85.0' }}
       run: cargo -Zminimal-versions generate-lockfile
 
     - uses: dtolnay/rust-toolchain@v1
@@ -29,7 +29,7 @@ jobs:
     - name: build
       run: cargo build -v
     - name: test
-      if: ${{ matrix.rust != '1.74.0' }}
+      if: ${{ matrix.rust != '1.85.0' }}
       run: cargo test -v && cargo doc -v
 
   features:
