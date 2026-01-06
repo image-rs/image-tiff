@@ -766,7 +766,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         } else {
             let mut sample_format: Vec<_> = <T>::BITS_PER_SAMPLE.to_vec();
             let replicated =
-                core::iter::repeat(<T>::BITS_PER_SAMPLE[0]).take(self.extra_samples.len());
+                core::iter::repeat_n(<T>::BITS_PER_SAMPLE[0], self.extra_samples.len());
             sample_format.extend(replicated);
 
             self.encoder
@@ -788,7 +788,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             // extra samples and not provided via a slice used for samples themselves.
             .unwrap_or(SampleFormat::Void.to_u16());
 
-        sample_format.extend(core::iter::repeat(extra_format).take(self.extra_samples.len()));
+        sample_format.extend(core::iter::repeat_n(extra_format, self.extra_samples.len()));
 
         self.encoder
             .write_tag(Tag::SampleFormat, &sample_format[..])?;
