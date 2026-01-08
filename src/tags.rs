@@ -1,4 +1,4 @@
-use crate::{decoder::ifd, encoder::TiffValue};
+use crate::encoder::TiffValue;
 
 macro_rules! tags {
     {
@@ -400,111 +400,6 @@ impl ValueBuffer {
             .convert(self.ty, self.bytes.as_mut_slice(), byte_order);
 
         self.byte_order = byte_order;
-    }
-}
-
-/// Create a value with native endian byte order.
-impl TryFrom<ifd::Value> for ValueBuffer {
-    type Error = crate::TiffError;
-
-    fn try_from(value: ifd::Value) -> Result<Self, Self::Error> {
-        Self::try_from(&value)
-    }
-}
-
-/// Create a value with native endian byte order.
-impl TryFrom<&'_ ifd::Value> for ValueBuffer {
-    type Error = crate::TiffError;
-
-    fn try_from(value: &'_ ifd::Value) -> Result<Self, Self::Error> {
-        use std::borrow::Cow::{self, Borrowed, Owned};
-
-        fn bytes_of_value(
-            value: &'_ ifd::Value,
-        ) -> Result<(Cow<'_, [u8]>, Type), crate::TiffError> {
-            Ok(match value {
-                ifd::Value::List(values) => {
-                    let mut type_ = None;
-                    let mut bytes = vec![];
-
-                    // This is treated separately, also we rely on the caller being faithful in their
-                    // use of the ifd::Value enum.
-                    for item in values {
-                        let (value, newty) = bytes_of_value(item)?;
-
-                        if type_.map_or(false, |ty| ty != newty) {
-                            return Err(crate::TiffError::UnsupportedError(
-                                crate::error::TiffUnsupportedError::UnsupportedDataType,
-                            ));
-                        }
-
-                        type_ = Some(newty);
-                        bytes.extend_from_slice(&value);
-                    }
-
-                    let Some(ty) = type_ else {
-                        return Err(crate::TiffError::UnsupportedError(
-                            crate::error::TiffUnsupportedError::UnsupportedDataType,
-                        ));
-                    };
-
-                    (Owned(bytes), ty)
-                }
-                ifd::Value::Byte(val) => (Borrowed(bytemuck::bytes_of(val)), Type::BYTE),
-                ifd::Value::Short(val) => (Borrowed(bytemuck::bytes_of(val)), Type::SHORT),
-                ifd::Value::SignedByte(val) => (Borrowed(bytemuck::bytes_of(val)), Type::SBYTE),
-                ifd::Value::SignedShort(val) => (Borrowed(bytemuck::bytes_of(val)), Type::SSHORT),
-                ifd::Value::Signed(val) => (Borrowed(bytemuck::bytes_of(val)), Type::SLONG),
-                ifd::Value::SignedBig(val) => (Borrowed(bytemuck::bytes_of(val)), Type::SLONG8),
-                ifd::Value::Unsigned(val) => (Borrowed(bytemuck::bytes_of(val)), Type::LONG),
-                ifd::Value::UnsignedBig(val) => (Borrowed(bytemuck::bytes_of(val)), Type::LONG8),
-                ifd::Value::Float(val) => (Borrowed(bytemuck::bytes_of(val)), Type::FLOAT),
-                ifd::Value::Double(val) => (Borrowed(bytemuck::bytes_of(val)), Type::DOUBLE),
-                ifd::Value::Rational(num, denom) => (
-                    Owned([bytemuck::bytes_of(num), bytemuck::bytes_of(denom)].concat()),
-                    Type::RATIONAL,
-                ),
-                #[expect(deprecated)]
-                ifd::Value::RationalBig(..) | ifd::Value::SRationalBig(..) => {
-                    return Err(crate::TiffError::UnsupportedError(
-                        crate::error::TiffUnsupportedError::UnsupportedDataType,
-                    ));
-                }
-                ifd::Value::SRational(num, denom) => (
-                    Owned([bytemuck::bytes_of(num), bytemuck::bytes_of(denom)].concat()),
-                    Type::SRATIONAL,
-                ),
-                ifd::Value::Ascii(st) => (Borrowed(st.as_bytes()), Type::ASCII),
-                ifd::Value::Ifd(val) => (Borrowed(bytemuck::bytes_of(val)), Type::IFD),
-                ifd::Value::IfdBig(val) => (Borrowed(bytemuck::bytes_of(val)), Type::IFD8),
-            })
-        }
-
-        let byte_order = ByteOrder::native();
-
-        let (bytes, ty) = bytes_of_value(value)?;
-        let bytes = bytes.into_owned();
-
-        // Check the count can be represented.
-        if let ifd::Value::List(values) = value {
-            let count =
-                u64::try_from(values.len()).map_err(|_| crate::TiffError::LimitsExceeded)?;
-            let expected = ty.value_bytes(count)?;
-
-            if bytes.len() != expected as usize {
-                return Err(crate::TiffError::UnsupportedError(
-                    crate::TiffUnsupportedError::UnsupportedDataType,
-                ));
-            }
-        } else {
-            debug_assert_eq!(bytes.len(), ty.byte_len().into());
-        }
-
-        Ok(ValueBuffer {
-            bytes,
-            byte_order,
-            ty,
-        })
     }
 }
 
