@@ -10,8 +10,9 @@ macro_rules! tags {
         $( #[$enum_attr] )*
         #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
         #[non_exhaustive]
+        #[repr($ty)]
         pub enum $name {
-            $($(#[$ident_attr])* $tag,)*
+            $($(#[$ident_attr])* $tag = $val,)*
             $(
                 #[$unknown_meta]
                 Unknown($ty),
