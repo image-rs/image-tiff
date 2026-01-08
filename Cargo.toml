@@ -17,6 +17,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 exclude = ["tests/images/*", "tests/fuzz_images/*"]
 
 [dependencies]
+bytemuck = "1.14"
 half = { version = "2.4.1" }
 quick-error = "2.0.1"
 
