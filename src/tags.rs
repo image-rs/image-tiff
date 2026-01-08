@@ -1,4 +1,4 @@
-use crate::decoder::ifd;
+use crate::{decoder::ifd, encoder::TiffValue};
 
 macro_rules! tags {
     {
@@ -358,6 +358,15 @@ impl ValueBuffer {
         ValueBuffer {
             bytes: vec![],
             ty,
+            byte_order: ByteOrder::native(),
+        }
+    }
+
+    /// Create a value with native byte order from in-memory data.
+    pub fn from_value<T: TiffValue>(value: &T) -> Self {
+        ValueBuffer {
+            bytes: value.data().into_owned(),
+            ty: <T as TiffValue>::FIELD_TYPE,
             byte_order: ByteOrder::native(),
         }
     }
