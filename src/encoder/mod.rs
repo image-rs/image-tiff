@@ -582,7 +582,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         )?;
         encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
-        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
+        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None)?;
 
         Ok(ImageEncoder {
             encoder,

@@ -1,6 +1,6 @@
 use std::{borrow::Cow, io::Write, slice::from_ref};
 
-use crate::{bytecast, tags::Type, TiffError, TiffFormatError, TiffResult};
+use crate::{bytecast, tags, tags::Type, TiffError, TiffFormatError, TiffResult};
 
 use super::writer::TiffWriter;
 
@@ -455,6 +455,128 @@ impl TiffValue for str {
                 vec![]
             }
         })
+    }
+}
+
+// FIXME: held up on reading the discriminant for all but the unknown variant.
+//
+// It needs to have `repr(u16)` to have a defined layout and then we may read the tag from its
+// value representation by casting a u16 pointer to a pointer to the enum type.
+//     unsafe { *<*const _>::from(self).cast::<u16>() }
+// But that is quite unsafe and needs careful review to maintain the safety requirements. Maybe we
+// could get `bytemuck` to add a trait for this (it has `TransparentWrapper`) with a derive for
+// enum types that have an explicit repr.
+//
+// This would allow returning borrowed data in more cases. For all types without an unknown, in all
+// cases including as slices, and for all types with and unknown variant when we have a single
+// value (either returning a borrowed discriminant or a borrowed value within `Unknown`).
+impl TiffValue for tags::CompressionMethod {
+    const BYTE_LEN: u8 = <u16 as TiffValue>::BYTE_LEN;
+    const FIELD_TYPE: Type = Type::SHORT;
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        let bytes = self.to_u16().to_ne_bytes();
+        Cow::Owned(bytes.to_vec())
+    }
+}
+
+impl TiffValue for tags::PhotometricInterpretation {
+    const BYTE_LEN: u8 = <u16 as TiffValue>::BYTE_LEN;
+    const FIELD_TYPE: Type = Type::SHORT;
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        self.to_u16().to_ne_bytes().to_vec().into()
+    }
+}
+
+impl TiffValue for tags::PlanarConfiguration {
+    const BYTE_LEN: u8 = 2;
+    const FIELD_TYPE: Type = Type::SHORT;
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        self.to_u16().to_ne_bytes().to_vec().into()
+    }
+}
+
+impl TiffValue for tags::Predictor {
+    const BYTE_LEN: u8 = <u16 as TiffValue>::BYTE_LEN;
+    const FIELD_TYPE: Type = Type::SHORT;
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        self.to_u16().to_ne_bytes().to_vec().into()
+    }
+}
+
+impl TiffValue for tags::ResolutionUnit {
+    const BYTE_LEN: u8 = <u16 as TiffValue>::BYTE_LEN;
+    const FIELD_TYPE: Type = Type::SHORT;
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        self.to_u16().to_ne_bytes().to_vec().into()
+    }
+}
+
+/// This is implemented for slices as the `SampleFormat` tag takes a count of `N`.
+///
+/// Use `core::slice::from_ref` if you really need to write a single element.
+///
+/// See: <https://web.archive.org/web/20191120220815/https://www.awaresystems.be/imaging/tiff/tifftags/sampleformat.html>
+impl TiffValue for [tags::SampleFormat] {
+    const BYTE_LEN: u8 = <u16 as TiffValue>::BYTE_LEN;
+    const FIELD_TYPE: Type = Type::SHORT;
+
+    fn count(&self) -> usize {
+        self.len()
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        let mut buf: Vec<u8> = Vec::with_capacity(self.len() * 2);
+        for x in self {
+            buf.extend_from_slice(&x.to_u16().to_ne_bytes());
+        }
+        Cow::Owned(buf)
+    }
+}
+
+/// This is implemented for slices as the `ExtraSamples` tag takes a count of `N`.
+///
+/// Use `core::slice::from_ref` if you really need to write a single element.
+///
+/// See: <https://web.archive.org/web/20191120220815/https://www.awaresystems.be/imaging/tiff/tifftags/extrasamples.html>
+impl TiffValue for [tags::ExtraSamples] {
+    const BYTE_LEN: u8 = <u16 as TiffValue>::BYTE_LEN;
+    const FIELD_TYPE: Type = Type::SHORT;
+
+    fn count(&self) -> usize {
+        self.len()
+    }
+
+    fn data(&self) -> Cow<'_, [u8]> {
+        let mut buf: Vec<u8> = Vec::with_capacity(self.len() * 2);
+        for x in self {
+            buf.extend_from_slice(&x.to_u16().to_ne_bytes());
+        }
+        Cow::Owned(buf)
     }
 }
 

@@ -1,3 +1,16 @@
+# Version 0.11.1 (Unreleased)
+
+Fixes:
+- The enumeration types in `tags` are now all marked with a representation of
+  their underlying TIFF type (e.g. `repr(u16)`) and variants are explicitly
+  assigned their corresponding values. That is you may _read_ the raw
+  discriminant and interpret that as the value—except for `Unknown` variants.
+
+Additions:
+- Types in `tags` now generally implement `TiffValue` and can be handed to the
+  `DirectoryEncoder::write_tag` method. Unlike primitive types they do _not_
+  always implement the trait for slices of themselves.
+
 # Version 0.11.0
 
 - `Directory` now implements `FromIterator<(Tag, Value)>`.
