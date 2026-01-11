@@ -6,7 +6,7 @@ use std::mem;
 use std::str;
 
 use super::stream::{ByteOrder, EndianReader};
-use crate::tags::{IfdPointer, Tag, Type};
+use crate::tags::{IfdPointer, Tag, Type, ValueBuffer};
 use crate::{TiffError, TiffFormatError, TiffResult};
 
 use self::Value::{
@@ -579,7 +579,7 @@ impl Entry {
 
         // Case 4: there is more than one value, and it doesn't fit in the offset field.
         let mut v;
-        self.set_reader_offset(bo, bigtiff, reader)?;
+        self.set_reader_offset_relative(bigtiff, reader, 0)?;
 
         match self.type_ {
             Type::BYTE | Type::UNDEFINED => {
@@ -737,6 +737,61 @@ impl Entry {
         Ok(List(v))
     }
 
+    pub(crate) fn buffered_value<R: Read + Seek>(
+        &self,
+        buf: &mut ValueBuffer,
+        limits: &super::Limits,
+        bigtiff: bool,
+        reader: &mut EndianReader<R>,
+    ) -> TiffResult<()> {
+        if self.count == 0 {
+            buf.assume_type(self.type_, 0, reader.byte_order);
+            return Ok(());
+        }
+
+        let value_bytes = self.buffer_with_capacity(buf, limits)?;
+
+        // Case 1: the value fits in the offset field.
+        if value_bytes <= 4 || bigtiff && value_bytes <= 8 {
+            let src = &self.offset[..value_bytes];
+            buf.raw_bytes_mut()[..value_bytes].copy_from_slice(src);
+            buf.assume_type(self.type_, self.count, reader.byte_order);
+
+            return Ok(());
+        }
+
+        // Case 2: the value is stored in the reader at an offset.
+        self.set_reader_offset_relative(bigtiff, reader, 0)?;
+
+        // In case of an error we set the type and endianess.
+        buf.assume_type(self.type_, 0, reader.byte_order);
+        let target = &mut buf.raw_bytes_mut()[..value_bytes];
+        // FIXME: if the read fails we have already grown to full size, which is not great.
+        reader.inner().read_exact(target)?;
+        buf.assume_type(self.type_, self.count, reader.byte_order);
+
+        Ok(())
+    }
+
+    // Returns `Ok(bytes)` if our value's bytes through type and count fit into `usize` and are
+    // within the limits. Extends the buffer to that many bytes.
+    fn buffer_with_capacity(
+        &self,
+        buf: &mut ValueBuffer,
+        limits: &super::Limits,
+    ) -> TiffResult<usize> {
+        let bytes = self.type_.value_bytes(self.count())?;
+
+        let allowed_length = usize::try_from(bytes)
+            .ok()
+            .filter(|&n| n <= limits.decoding_buffer_size)
+            .ok_or(TiffError::LimitsExceeded)?;
+
+        buf.prepare_length(allowed_length);
+
+        Ok(allowed_length)
+    }
+
     fn vec_with_capacity(
         value_count: u64,
         limits: &super::Limits,
@@ -750,20 +805,31 @@ impl Entry {
         Ok(Vec::with_capacity(value_count))
     }
 
-    fn set_reader_offset<R>(
+    /// Seek to an offset within a value stored in the offset defined by this entry.
+    fn set_reader_offset_relative<R>(
         &self,
-        bo: ByteOrder,
         bigtiff: bool,
         reader: &mut EndianReader<R>,
+        at: u64,
     ) -> TiffResult<()>
     where
         R: Read + Seek,
     {
+        let bo = reader.byte_order;
+
         let offset = if bigtiff {
             self.offset_field_reader(bo).read_u64()?
         } else {
             self.offset_field_reader(bo).read_u32()?.into()
         };
+
+        // FIXME: `at` should be within `self.type_.value_bytes(self.count)` and that itself should
+        // be within the bounds of the stream. But we do not check this eagerly so this below will
+        // fail sometimes differently for exotic streams, depending on the method by which we read
+        // (at once or through multiple raw into-byte-slice reads).
+        let offset = offset.checked_add(at).ok_or(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ))?;
 
         reader.goto_offset(offset)?;
 

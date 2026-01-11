@@ -346,6 +346,10 @@ pub struct ValueBuffer {
     /// The type of the value.
     ty: Type,
 
+    /// The number of items, as `bytes` may be oversized while holding bytes that are initialized
+    /// but not used by any value.
+    count: u64,
+
     /// The byte order of the value.
     byte_order: ByteOrder,
 }
@@ -358,6 +362,7 @@ impl ValueBuffer {
         ValueBuffer {
             bytes: vec![],
             ty,
+            count: 0,
             byte_order: ByteOrder::native(),
         }
     }
@@ -367,6 +372,7 @@ impl ValueBuffer {
         ValueBuffer {
             bytes: value.data().into_owned(),
             ty: <T as TiffValue>::FIELD_TYPE,
+            count: value.count() as u64,
             byte_order: ByteOrder::native(),
         }
     }
@@ -381,25 +387,68 @@ impl ValueBuffer {
 
     /// The count of items in the value.
     pub fn count(&self) -> u64 {
-        (self.bytes.len() / usize::from(self.ty.byte_len())) as u64
+        debug_assert!({
+            self.ty
+                .value_bytes(self.count)
+                .is_ok_and(|n| n < self.bytes.len() as u64)
+        });
+
+        self.count
     }
 
     /// View the underlying raw bytes of this value.
     pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
+        &self.bytes[..self.assumed_len_from_count()]
     }
 
     /// View the underlying mutable raw bytes of this value.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        &mut self.bytes
+        let len = self.assumed_len_from_count();
+        &mut self.bytes[..len]
     }
 
     /// Change the byte order of the value representation.
     pub fn set_byte_order(&mut self, byte_order: ByteOrder) {
+        let len = self.assumed_len_from_count();
+
         self.byte_order
-            .convert(self.ty, self.bytes.as_mut_slice(), byte_order);
+            .convert(self.ty, &mut self.bytes[..len], byte_order);
 
         self.byte_order = byte_order;
+    }
+
+    /// Prepare the internal for a value `to_len` bytes long.
+    ///
+    /// Shrinks the allocation if it is far too large or extends it if it is too small. In either
+    /// case ensures that at least `to_len` bytes are initialized for [`Self::raw_bytes_mut`].
+    pub(crate) fn prepare_length(&mut self, to_len: usize) {
+        if to_len > self.bytes.len() {
+            self.bytes.resize(to_len, 0);
+        }
+
+        if self.bytes.len() < to_len / 2 {
+            self.bytes.truncate(to_len);
+            self.bytes.shrink_to_fit();
+        }
+    }
+
+    pub(crate) fn assume_type(&mut self, ty: Type, count: u64, bo: ByteOrder) {
+        debug_assert!({
+            ty.value_bytes(self.count)
+                .is_ok_and(|n| n < self.bytes.len() as u64)
+        });
+
+        self.byte_order = bo;
+        self.ty = ty;
+        self.count = count;
+    }
+
+    pub(crate) fn raw_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes
+    }
+
+    fn assumed_len_from_count(&self) -> usize {
+        usize::from(self.ty.byte_len()) * self.count as usize
     }
 }
 

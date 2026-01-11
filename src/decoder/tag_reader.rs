@@ -1,7 +1,9 @@
 use std::io::{Read, Seek};
 
-use crate::{tags::Tag, Directory};
-use crate::{TiffError, TiffFormatError, TiffResult};
+use crate::{
+    tags::{Tag, ValueBuffer},
+    Directory, TiffError, TiffFormatError, TiffResult,
+};
 
 use super::ifd::{Entry, Value};
 use super::ValueReader;
@@ -14,11 +16,17 @@ pub(crate) struct TagReader<'lt, R: EntryDecoder + ?Sized> {
 pub(crate) trait EntryDecoder {
     /// Turn an entry into a value by fetching the required bytes in the stream.
     fn entry_val(&mut self, entry: &Entry) -> TiffResult<Value>;
+    /// Fill a  `ValueBuffer` by fetching the required bytes.
+    fn entry_buf(&mut self, entry: &Entry, _: &mut ValueBuffer) -> TiffResult<()>;
 }
 
 impl<R: Seek + Read> EntryDecoder for ValueReader<R> {
     fn entry_val(&mut self, entry: &Entry) -> TiffResult<Value> {
         entry.val(&self.limits, self.bigtiff, &mut self.reader)
+    }
+
+    fn entry_buf(&mut self, entry: &Entry, buf: &mut ValueBuffer) -> TiffResult<()> {
+        entry.buffered_value(buf, &self.limits, self.bigtiff, &mut self.reader)
     }
 }
 
@@ -30,6 +38,24 @@ impl<'a, R: EntryDecoder + ?Sized> TagReader<'a, R> {
         };
 
         self.decoder.entry_val(&entry).map(Some)
+    }
+
+    /// Find a tag and fill the provided buffer with its raw data.
+    ///
+    /// Returns the entry of the tag if found. This signals that the buffer was overwritten.
+    /// Otherwise the buffer is preserved as-is.
+    pub(crate) fn find_tag_buf(
+        &mut self,
+        tag: Tag,
+        buf: &mut ValueBuffer,
+    ) -> TiffResult<Option<Entry>> {
+        let entry = match self.ifd.get(tag) {
+            None => return Ok(None),
+            Some(entry) => entry.clone(),
+        };
+
+        self.decoder.entry_buf(&entry, buf)?;
+        Ok(Some(entry))
     }
 
     pub(crate) fn require_tag(&mut self, tag: Tag) -> TiffResult<Value> {

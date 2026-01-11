@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 
 use crate::tags::{
     CompressionMethod, IfdPointer, PhotometricInterpretation, PlanarConfiguration, Predictor,
-    SampleFormat, Tag, Type,
+    SampleFormat, Tag, Type, ValueBuffer,
 };
 use crate::{
     bytecast, ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError,
@@ -1717,10 +1717,29 @@ impl<R: Seek + Read> ValueReader<R> {
 }
 
 impl IfdDecoder<'_> {
+    /// Retrieve the IFD entry for a given tag, if it exists.
+    ///
+    /// The entry contains the metadata of the value, that is its type and count from which we can
+    /// calculate a total byte size.
+    pub fn find_entry(&self, tag: Tag) -> Option<ifd::Entry> {
+        self.inner.ifd.get(tag).cloned()
+    }
+
     /// Tries to retrieve a tag.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
         self.inner.find_tag(tag)
+    }
+
+    /// Retrieve a tag and reproduce its bytes into the provided buffer.
+    ///
+    /// The buffer is unmodified if the tag is not present.
+    pub fn find_tag_buf(
+        &mut self,
+        tag: Tag,
+        buf: &mut ValueBuffer,
+    ) -> TiffResult<Option<ifd::Entry>> {
+        self.inner.find_tag_buf(tag, buf)
     }
 
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
