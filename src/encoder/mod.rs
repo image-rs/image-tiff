@@ -396,6 +396,33 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         )
     }
 
+    /// Write a directory entry by its byte data.
+    ///
+    /// The data must be pre-formatted to the byte order expected by the file.
+    ///
+    /// Returns an [`Entry`]. If the value is short enough it will *not* be written in the file but
+    /// stored in the entry's offset field.
+    pub fn write_entry_bytes(&mut self, ty: Type, data: &[u8]) -> TiffResult<Entry> {
+        if data.len() % usize::from(ty.byte_len()) != 0 {
+            return Err(TiffError::UsageError(UsageError::MismatchedEntryLength {
+                ty,
+                found: data.len(),
+            }));
+        }
+
+        let count = data.len() / usize::from(ty.byte_len());
+        let count = u64::try_from(count)?;
+
+        Self::write_entry_inner(
+            self.writer,
+            DirectoryEntry {
+                data_type: ty,
+                count: K::convert_offset(count)?,
+                data: data.into(),
+            },
+        )
+    }
+
     /// Insert previously written key-value entries.
     ///
     /// It is the caller's responsibility to ensure that the data referred to by the entries is

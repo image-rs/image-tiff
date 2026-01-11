@@ -5,6 +5,7 @@ use std::string;
 use quick_error::quick_error;
 
 use crate::decoder::ChunkType;
+use crate::tags::Type;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
@@ -210,6 +211,9 @@ quick_error! {
         }
         ByteOrderMismatch {
             display("attempted to use data with a byte order that does not match the required one")
+        }
+        MismatchedEntryLength {ty: Type, found: usize } {
+            display("the length of data is not a multiple of the size of the type {ty:?}, found {found}")
         }
     }
 }
