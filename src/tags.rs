@@ -432,9 +432,13 @@ impl ValueBuffer {
         }
     }
 
+    /// Internal method to change the type and count while re-interpreting the byte buffer.
+    ///
+    /// Should only be called after writing bytes to the internal buffer prepared with
+    /// `Self::prepare_length`.
     pub(crate) fn assume_type(&mut self, ty: Type, count: u64, bo: ByteOrder) {
         debug_assert!({
-            ty.value_bytes(self.count)
+            ty.value_bytes(count)
                 .is_ok_and(|n| n < self.bytes.len() as u64)
         });
 
