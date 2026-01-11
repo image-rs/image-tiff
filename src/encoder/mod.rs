@@ -291,21 +291,6 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         })
     }
 
-    /// Write a tag-value pair with prepared byte data.
-    ///
-    /// Note that the library will _not_ attempt to verify that the data type or the count of the
-    /// buffered value is permissible for the given tag. The data will be associated with the tag
-    /// exactly as-is.
-    ///
-    /// An error is returned if the byte order of the presented value does not match the byte order
-    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
-    pub fn write_tag_value(&mut self, tag: Tag, value: &ValueBuffer) -> TiffResult<()> {
-        let entry = self.write_entry_buf(value)?;
-        self.directory.extend([(tag, entry)]);
-
-        Ok(())
-    }
-
     /// Write a single ifd tag.
     pub fn write_tag<T: TiffValue>(&mut self, tag: Tag, value: T) -> TiffResult<()> {
         // Encodes the value if necessary. In the current bytes all integers are taken as native
@@ -325,6 +310,21 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             },
         )?;
 
+        self.directory.extend([(tag, entry)]);
+
+        Ok(())
+    }
+
+    /// Write a tag-value pair with prepared byte data.
+    ///
+    /// Note that the library will _not_ attempt to verify that the data type or the count of the
+    /// buffered value is permissible for the given tag. The data will be associated with the tag
+    /// exactly as-is.
+    ///
+    /// An error is returned if the byte order of the presented value does not match the byte order
+    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
+    pub fn write_tag_buf(&mut self, tag: Tag, value: &ValueBuffer) -> TiffResult<()> {
+        let entry = self.write_entry_buf(value)?;
         self.directory.extend([(tag, entry)]);
 
         Ok(())
