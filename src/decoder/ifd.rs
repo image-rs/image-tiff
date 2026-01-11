@@ -773,6 +773,58 @@ impl Entry {
         Ok(())
     }
 
+    pub(crate) fn raw_value_at<R: Read + Seek>(
+        &self,
+        buf: &mut [u8],
+        bigtiff: bool,
+        reader: &mut EndianReader<R>,
+        at: u64,
+    ) -> TiffResult<usize> {
+        if self.count == 0 {
+            return Ok(0);
+        }
+
+        // We have no limits to handle, we do not allocate.
+        let value_bytes = self.type_.value_bytes(self.count)?;
+
+        // No bytes to fill into the buffer.
+        if at >= value_bytes {
+            return Ok(0);
+        }
+
+        // Case 1: the value fits in the offset field.
+        if value_bytes <= 4 || bigtiff && value_bytes <= 8 {
+            // `at < value_bytes` and `value_bytes <= 8` so casting is mathematical
+            let src = &self.offset[..value_bytes as usize][at as usize..];
+            let len = src.len().min(buf.len());
+            buf[..len].copy_from_slice(&src[..len]);
+            return Ok(value_bytes as usize);
+        }
+
+        // Case 2: the value is stored in the reader at an offset. We will find the offset
+        // encoded in the entry, apply the relative start position and seek there.
+        self.set_reader_offset_relative(bigtiff, reader, at)?;
+
+        let remainder = value_bytes - at;
+        let len = usize::try_from(remainder)
+            .unwrap_or(usize::MAX)
+            .min(buf.len());
+
+        let target = &mut buf[..len];
+        reader.inner().read_exact(target)?;
+
+        // Design note: in a previous draft we would consume the rest of the bytes of this value
+        // here (into a stack buffer if need be) to verify the stream itself. But in the end we
+        // have `Seek` so we better verify this by seeking over the rest of the bytes, finding if
+        // the stream continues that far. Even that is maybe bad if we wanted to provide a
+        // async-adaptor that `WouldBlock` errors to fill back a read window then the seek is
+        // poison to that, too.
+
+        // So a really simple choice: The caller is responsible for handling the fact that this did
+        // not verify the whole value. Attempt a 1-byte read at the end of the value instead?
+        Ok(len)
+    }
+
     // Returns `Ok(bytes)` if our value's bytes through type and count fit into `usize` and are
     // within the limits. Extends the buffer to that many bytes.
     fn buffer_with_capacity(

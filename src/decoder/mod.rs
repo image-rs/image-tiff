@@ -1742,6 +1742,16 @@ impl IfdDecoder<'_> {
         self.inner.find_tag_buf(tag, buf)
     }
 
+    /// Read bytes of a tag's value into a byte buffer.
+    pub fn find_tag_bytes(
+        &mut self,
+        tag: Tag,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> TiffResult<Option<usize>> {
+        self.inner.find_tag_raw(tag, buf, offset)
+    }
+
     /// Tries to retrieve a tag and convert it to the desired unsigned type.
     pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
         self.find_tag(tag)?

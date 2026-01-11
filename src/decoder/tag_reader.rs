@@ -18,6 +18,9 @@ pub(crate) trait EntryDecoder {
     fn entry_val(&mut self, entry: &Entry) -> TiffResult<Value>;
     /// Fill a  `ValueBuffer` by fetching the required bytes.
     fn entry_buf(&mut self, entry: &Entry, _: &mut ValueBuffer) -> TiffResult<()>;
+    /// Fill the prefix of the buffer and return the actual bytes. Start interpreting the inner
+    /// value at `offset`.
+    fn entry_raw(&mut self, entry: &Entry, _: &mut [u8], offset: u64) -> TiffResult<usize>;
 }
 
 impl<R: Seek + Read> EntryDecoder for ValueReader<R> {
@@ -27,6 +30,10 @@ impl<R: Seek + Read> EntryDecoder for ValueReader<R> {
 
     fn entry_buf(&mut self, entry: &Entry, buf: &mut ValueBuffer) -> TiffResult<()> {
         entry.buffered_value(buf, &self.limits, self.bigtiff, &mut self.reader)
+    }
+
+    fn entry_raw(&mut self, entry: &Entry, buf: &mut [u8], offset: u64) -> TiffResult<usize> {
+        entry.raw_value_at(buf, self.bigtiff, &mut self.reader, offset)
     }
 }
 
@@ -56,6 +63,21 @@ impl<'a, R: EntryDecoder + ?Sized> TagReader<'a, R> {
 
         self.decoder.entry_buf(&entry, buf)?;
         Ok(Some(entry))
+    }
+
+    pub(crate) fn find_tag_raw(
+        &mut self,
+        tag: Tag,
+        buf: &mut [u8],
+        at: u64,
+    ) -> TiffResult<Option<usize>> {
+        let entry = match self.ifd.get(tag) {
+            None => return Ok(None),
+            Some(entry) => entry.clone(),
+        };
+
+        let len = self.decoder.entry_raw(&entry, buf, at)?;
+        Ok(Some(len))
     }
 
     pub(crate) fn require_tag(&mut self, tag: Tag) -> TiffResult<Value> {
