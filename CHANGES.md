@@ -1,15 +1,33 @@
-# Version 0.11.1 (Unreleased)
+# Version 0.11.1
 
 Fixes:
 - The enumeration types in `tags` are now all marked with a representation of
   their underlying TIFF type (e.g. `repr(u16)`) and variants are explicitly
   assigned their corresponding values. That is you may _read_ the raw
   discriminant and interpret that as the value—except for `Unknown` variants.
+- The variants `RationalBig` and `SRationalBig` of `decoder::ifd::Value` are
+  deprecated as they have no corresponding TIFF type and were not constructed
+  during decoding.
 
 Additions:
 - Types in `tags` now generally implement `TiffValue` and can be handed to the
   `DirectoryEncoder::write_tag` method. Unlike primitive types they do _not_
   always implement the trait for slices of themselves.
+- Added `tags::ValueBuffer`, a byte-based buffer for tags with a runtime value
+  type and count.
+- Added `IfdDecoder::find_tag_{buf,bytes}` to read tag values into a
+  `ValueBuffer` or byte slice respectively without interpreting them
+  immediately within the Rust type system.
+- Added `DirectoryEncoder::write_{data,tag}_buf` that takes a `ValueBuffer`
+  instead of a statically typed argument.
+- Added `DirectoryEncoder::write_entry{,_buf,_bytes}` that encode their
+  argument into the file and return an `Entry` for later use, without
+  immediately adding a tag-entry pair to the directory.
+- The `TiffValue` trait is now implemented for several builtin `tags::*` types
+  or slices of them as appropriate for their use as values of their intended
+  TIFF tag.
+- The `TiffValue` trait is now implemented for `[T; N]` for all types that
+  implement it for slices.
 
 # Version 0.11.0
 
