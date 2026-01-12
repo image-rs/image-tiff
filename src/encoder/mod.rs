@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    decoder::ifd::Entry,
+    decoder::{ifd::Entry, IfdDecoder},
     error::{TiffResult, UsageError},
     tags::{
         ByteOrder, CompressionMethod, ExtraSamples, IfdPointer, PhotometricInterpretation,
@@ -22,6 +22,7 @@ pub mod colortype;
 pub mod compression;
 mod tiff_value;
 mod writer;
+mod tag_filter;
 
 use self::colortype::*;
 use self::compression::Compression as Comp;
@@ -39,6 +40,8 @@ use self::writer::*;
 pub type Predictor = crate::tags::Predictor;
 #[cfg(feature = "deflate")]
 pub type DeflateLevel = compression::DeflateLevel;
+
+pub use tag_filter::TagFilter;
 
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum Compression {
@@ -434,6 +437,22 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         self.directory.extend(entries);
     }
 
+    /// Copy metadata from the IFD that a decoder refers to.
+    pub fn write_metadata_from(
+        &mut self,
+        mut decoder: IfdDecoder<'_>,
+        options: EncodeMetadataOptions<'_>,
+    ) -> TiffResult<EncodeMetadataReport> {
+        let mut report = EncodeMetadataReport {
+        };
+
+        for tag in decoder.tag_iter() {
+            let (tag, entry) = tag?;
+        }
+
+        Ok(report)
+    }
+
     /// Define the parent directory.
     ///
     /// Each directory has an offset based link to its successor, forming a linked list in the
@@ -580,6 +599,34 @@ impl<'a, W: Write + Seek, K: TiffKind> Drop for DirectoryEncoder<'a, W, K> {
             let _ = self.finish_internal();
         }
     }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy)]
+pub struct EncodeMetadataOptions<'lt> {
+    /// Several metadata kinds contain additional tags in further, linked directories that are only
+    /// referenced with an `Ifd`/`Ifd8` tag. These directories may have their own semantics, e.g. a
+    /// different set of tags or even new value types.
+    ///
+    /// Since we know that the whole directory contains only metadata it would be possible to copy
+    /// all tags contained in it, however tags that can not be semantically validated might contain
+    /// data that is only valid within the original image or must be transformed during the copy.
+    /// For instance, JPEG thumbnails are embedded with separate offset and length fields (`0x0201`
+    /// and `0x202`). (This has caused the author mental harm, please do not consult me about it).
+    ///
+    /// Setting this flag will skip such unknown tags instead of attempting a potentially incorrect
+    /// copy. However the set of copied metadata is then dependent on the `tiff` library.
+    pub tag_filter: &'lt TagFilter,
+    /// Some tags are not allowed to be recorded or can be semantically validated. The library can
+    /// skip these tags while copying metadata. For instance, `YCbCrCoefficients` _may_ be
+    /// recorded for images in `YCbCr` photometric interpretation but _must not_ be recorded for
+    /// images in any other interpretation (colorspace conversion should have been done during the
+    /// transformation).
+    pub skip_invalid_tags: bool,
+}
+
+#[non_exhaustive]
+pub struct EncodeMetadataReport {
 }
 
 /// Type to encode images strip by strip.
