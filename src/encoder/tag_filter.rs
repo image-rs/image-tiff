@@ -24,18 +24,6 @@ impl TagFilter {
         &INSTANCE
     }
 
-    /// Return a filter that attempts to remove identifying tags. This is stricter than
-    /// [`Self::only_known_tags`] and excludes many tags except those describing the image data
-    /// layout.
-    ///
-    /// **Note that it comes with *no warranty*.** although this will remove tags with prejudice.
-    pub fn attempt_at_privacy() -> &'static TagFilter {
-        static INSTANCE: TagFilter = TagFilter {
-            filter_level: FilterLevel::Privacy,
-        };
-        &INSTANCE
-    }
-
     /// FIXME: take a configuration by which to filter out complete metadata kinds.
     /// FIXME: when we iterate over a whole directory of tags, this iteration is more expensive
     /// than necessary. Tags within a directory should be ordered. We can thus perform a binary set
@@ -168,32 +156,15 @@ impl TagFilter {
         }
     }
 
-    fn filter_interoperability(&self, tag: u16) -> Level {
-        match tag {
-            0x0001 => Level::Special(Special::CompressedExclusive),
-            _ => Level::Unknown,
-        }
-    }
-
-    pub(crate) fn filter_secondary_exif(&self, tag: u16) -> Level {
-        // No difference for now. The only tabular difference I could spot is the treatment of
-        // sample positioning which is mandatory in the primary IFD of YCbCr but optional for all
-        // following IFDs..
-        self.filter_primary_exif(tag)
-    }
-
-    pub(crate) fn filter_secondary_gps(&self, tag: u16) -> Level {
-        self.filter_primary_gps(tag)
-    }
-
-    pub(crate) fn should_keep_on_level(
+    pub(crate) fn should_keep_for_image_writer(
         &self,
         level: Level,
         target: &super::EncodeMetadataApplicability,
     ) -> Choice {
         match level {
-            Level::Unknown if matches!(self.filter_level, FilterLevel::All) => Choice::Ok,
-            Level::SampleLayout => Choice::Ok,
+            Level::Unknown if matches!(self.filter_level, FilterLevel::All) => Choice::Filtered,
+            // Sample Layout is controlled by the writer (dimensions, color type, …). Do not copy!
+            Level::SampleLayout => Choice::Discard,
             Level::Ifd(subifd_kind) => Choice::Descend(subifd_kind),
             Level::Photometric(photometric) => {
                 match (photometric, target.planar, target.photometric) {
@@ -213,15 +184,7 @@ impl TagFilter {
                     _ => Choice::Discard,
                 }
             }
-            Level::Value if matches!(self.filter_level, FilterLevel::Privacy) => Choice::Discard,
             Level::Value => Choice::Ok,
-            Level::Special(Special::JpegThumbnail)
-                if matches!(self.filter_level, FilterLevel::Privacy) =>
-            {
-                // Contains arbitrary unverified other data, so, no, we do not heed backward
-                // compatibility of a tag that should no longer be in active use if possible.
-                Choice::Discard
-            }
             Level::Special(special) => Choice::Special(special),
             _ => Choice::Discard,
         }
@@ -231,7 +194,10 @@ impl TagFilter {
 pub(crate) enum Choice {
     Ok,
     Descend(SubifdKind),
+    /// Tag is inapplicable to be copied.
     Discard,
+    /// Tag was chosen not to be copied.
+    Filtered,
     Special(Special),
 }
 
@@ -239,7 +205,6 @@ pub(crate) enum Choice {
 enum FilterLevel {
     All,
     Known,
-    Privacy,
 }
 
 /// The level of support for a value.
