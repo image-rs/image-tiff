@@ -407,6 +407,32 @@ impl ValueBuffer {
         &mut self.bytes[..len]
     }
 
+    /// See [`Value::into_ifd_pointer`](crate::decoder::ifd::Value::into_ifd_pointer).
+    pub(crate) fn as_ifd_pointer(&self) -> Option<IfdPointer> {
+        if self.count != 1 {
+            return None;
+        }
+
+        match self.ty {
+            // See [`ifd::Value::into_ifd_pointer`] there is enough legacy that uses `LONG` to
+            // refer to an offset into the file with the meaning of a directory pointer. That is
+            // rather annoying but legacy and not a big deal.
+            Type::IFD | Type::LONG => {
+                let mut buf = [0u8; 4];
+                buf.copy_from_slice(&self.bytes[..4]);
+                ByteOrder::native().convert(Type::IFD, &mut buf, self.byte_order);
+                Some(IfdPointer(u32::from_ne_bytes(buf).into()))
+            }
+            Type::IFD8 => {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&self.bytes[..8]);
+                ByteOrder::native().convert(Type::IFD8, &mut buf, self.byte_order);
+                Some(IfdPointer(u64::from_ne_bytes(buf)))
+            }
+            _ => None,
+        }
+    }
+
     /// Change the byte order of the value representation.
     pub fn set_byte_order(&mut self, byte_order: ByteOrder) {
         let len = self.assumed_len_from_count();
@@ -530,4 +556,36 @@ pub(crate) enum EndianBytes {
     Two,
     Four,
     Eight,
+}
+
+#[test]
+fn convert_ifd_u32() {
+    let mut value = ValueBuffer::from_value(&crate::encoder::Ifd(0x42));
+
+    for bo in [ByteOrder::BigEndian, ByteOrder::LittleEndian] {
+        value.set_byte_order(bo);
+
+        let ptr = value
+            .as_ifd_pointer()
+            .expect("Should be convertible to IfdPointer");
+
+        // Should be in host byte order again.
+        assert_eq!(ptr.0, 0x42);
+    }
+}
+
+#[test]
+fn convert_ifd_long8() {
+    let mut value = ValueBuffer::from_value(&crate::encoder::Ifd8(0x42));
+
+    for bo in [ByteOrder::BigEndian, ByteOrder::LittleEndian] {
+        value.set_byte_order(bo);
+
+        let ptr = value
+            .as_ifd_pointer()
+            .expect("Should be convertible to IfdPointer");
+
+        // Should be in host byte order again.
+        assert_eq!(ptr.0, 0x42);
+    }
 }
