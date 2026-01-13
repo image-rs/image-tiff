@@ -390,7 +390,7 @@ impl ValueBuffer {
         debug_assert!({
             self.ty
                 .value_bytes(self.count)
-                .is_ok_and(|n| n < self.bytes.len() as u64)
+                .is_ok_and(|n| n <= self.bytes.len() as u64)
         });
 
         self.count
@@ -439,7 +439,7 @@ impl ValueBuffer {
     pub(crate) fn assume_type(&mut self, ty: Type, count: u64, bo: ByteOrder) {
         debug_assert!({
             ty.value_bytes(count)
-                .is_ok_and(|n| n < self.bytes.len() as u64)
+                .is_ok_and(|n| n <= self.bytes.len() as u64)
         });
 
         self.byte_order = bo;
