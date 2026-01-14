@@ -777,7 +777,15 @@ impl Default for EncodeMetadataOptions<'_> {
 #[non_exhaustive]
 #[derive(Clone, Copy, Default)]
 pub struct EncodeMetadataApplicability {
+    /// The photometric interpretation of the image data.
+    ///
+    /// If `None` then metadata tags are not filtered, otherwise only tags applicable to the given
+    /// photometric interpretation are recorded.
     pub photometric: Option<PhotometricInterpretation>,
+    /// The planar configuration of the image data.
+    ///
+    /// If `None` then metadata tags are not filtered, otherwise only tags applicable to the given
+    /// configuration are recorded.
     pub planar: Option<PlanarConfiguration>,
 }
 

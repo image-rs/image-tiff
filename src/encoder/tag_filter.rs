@@ -169,16 +169,10 @@ impl TagFilter {
             Level::Photometric(photometric) => {
                 match (photometric, target.planar, target.photometric) {
                     (Photometric::All, _, _) => Choice::Ok,
-                    (Photometric::Planar, Some(PlanarConfiguration::Planar), _) => Choice::Ok,
-                    (Photometric::Planar, None, _)
-                        if matches!(self.filter_level, FilterLevel::All) =>
-                    {
+                    (Photometric::Planar, Some(PlanarConfiguration::Planar) | None, _) => {
                         Choice::Ok
                     }
-                    (Photometric::YCbCr, _, Some(PhotometricInterpretation::YCbCr)) => Choice::Ok,
-                    (Photometric::YCbCr, _, None)
-                        if matches!(self.filter_level, FilterLevel::All) =>
-                    {
+                    (Photometric::YCbCr, _, Some(PhotometricInterpretation::YCbCr) | None) => {
                         Choice::Ok
                     }
                     _ => Choice::Discard,
