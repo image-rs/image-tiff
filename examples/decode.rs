@@ -37,6 +37,7 @@ fn debug_planes(
     (width, height): (u32, u32),
 ) {
     let (depth, mut tupltype) = match colortype {
+        // Note: we will expand, so this is in fact not BLACKANDWHITE
         tiff::ColorType::Gray(_) => (1, "GRAYSCALE"),
         tiff::ColorType::RGB(_) => (3, "RGB"),
         tiff::ColorType::RGBA(_) => (4, "RGB_ALPHA"),
@@ -49,8 +50,57 @@ fn debug_planes(
         }
     };
 
+    // Number of samples in a line and number of sample lines in the image, depending on whether
+    // they are planar or not. This determines the layout of the image buffer when expanding bit
+    // packed samples to a full byte (we support power-of-two sample sizes, positive and negative,
+    // but only those).
+    let (swidth, sheight) = if layout.planes > 1 {
+        (
+            u64::from(width) * u64::from(colortype.num_samples()),
+            u64::from(height),
+        )
+    } else {
+        (
+            u64::from(width),
+            u64::from(height) * u64::from(colortype.num_samples()),
+        )
+    };
+
+    let mut fallback_buffer;
     let maxval = match data.as_buffer(0) {
-        DecodingBuffer::U8(_) => u64::from(u8::MAX),
+        // `U8` is also our representation of bit-packed color. PAM uses the smallest number of
+        // *bytes* needed to represent a sample but we must also adhere to maxval. We could explode
+        // them here (e.g. represent 1-bit as `{0, 1}`) but we'd also set `maxval` accordingly and
+        // this requires tupltype to be `BLACKANDWHITE` so introducing a bunch of complexity. If
+        // you want to do that in your real code, go ahead.
+        DecodingBuffer::U8(buf) => match colortype.bit_depth() {
+            8 => u64::from(u8::MAX),
+            4 => {
+                fallback_buffer = vec![0; (swidth * sheight) as usize];
+                expand_4bit(buf, swidth, &mut fallback_buffer);
+                *data = DecodingResult::U8(fallback_buffer);
+                u64::from(u8::MAX)
+            }
+            2 => {
+                fallback_buffer = vec![0; (swidth * sheight) as usize];
+                expand_2bit(buf, swidth, &mut fallback_buffer);
+                *data = DecodingResult::U8(fallback_buffer);
+                u64::from(u8::MAX)
+            }
+            1 => {
+                fallback_buffer = vec![0; (swidth * sheight) as usize];
+                expand_1bit(buf, swidth, &mut fallback_buffer);
+                *data = DecodingResult::U8(fallback_buffer);
+                u64::from(u8::MAX)
+            }
+            _ => {
+                eprintln!(
+                    "Unsupported bit depth for U8 buffer: {}",
+                    colortype.bit_depth()
+                );
+                return;
+            }
+        },
         DecodingBuffer::U16(_) => u64::from(u16::MAX),
         DecodingBuffer::U32(_) => u64::from(u32::MAX),
         DecodingBuffer::U64(_) => u64::MAX,
@@ -99,5 +149,58 @@ fn debug_planes(
             .expect("Failed to write PAM header");
         file.write_all(plane_data)
             .expect("Failed to write PAM data");
+    }
+}
+
+/// Put exactly the ith `SCALE`-bit chunk of `val` into the least significant bits.
+#[inline(always)]
+fn bits_extract<const SCALE: u8>(val: u8, i: u8) -> u8 {
+    // Shift left to discard high bits, then right to bring desired bits down. This way also
+    // conveniently avoids all cases of overflow.
+    (val << (i * SCALE)) >> (8 - SCALE)
+}
+
+fn expand_1bit(from: &[u8], samples_per_padded: u64, into: &mut [u8]) {
+    let stride = samples_per_padded.div_ceil(8);
+
+    let from_row = from.chunks_exact(stride as usize);
+    let into_row = into.chunks_exact_mut(samples_per_padded as usize);
+
+    for (from_row, into_row) in from_row.zip(into_row) {
+        for (into, &from) in into_row.chunks_mut(8).zip(from_row) {
+            let data =
+                core::array::from_fn::<u8, 8, _>(|i| 0xff * bits_extract::<1>(from, i as u8));
+            into.copy_from_slice(&data[..into.len()]);
+        }
+    }
+}
+
+fn expand_2bit(from: &[u8], samples_per_padded: u64, into: &mut [u8]) {
+    let stride = samples_per_padded.div_ceil(4);
+
+    let from_row = from.chunks_exact(stride as usize);
+    let into_row = into.chunks_exact_mut(samples_per_padded as usize);
+
+    for (from_row, into_row) in from_row.zip(into_row) {
+        for (into, &from) in into_row.chunks_mut(4).zip(from_row) {
+            let data =
+                core::array::from_fn::<u8, 4, _>(|i| 0xaa * bits_extract::<2>(from, i as u8));
+            into.copy_from_slice(&data[..into.len()]);
+        }
+    }
+}
+
+fn expand_4bit(from: &[u8], samples_per_padded: u64, into: &mut [u8]) {
+    let stride = samples_per_padded.div_ceil(2);
+
+    let from_row = from.chunks_exact(stride as usize);
+    let into_row = into.chunks_exact_mut(samples_per_padded as usize);
+
+    for (from_row, into_row) in from_row.zip(into_row) {
+        for (into, &from) in into_row.chunks_mut(2).zip(from_row) {
+            let data =
+                core::array::from_fn::<u8, 2, _>(|i| 0x88 * bits_extract::<4>(from, i as u8));
+            into.copy_from_slice(&data[..into.len()]);
+        }
     }
 }
