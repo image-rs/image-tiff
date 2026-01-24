@@ -1396,14 +1396,16 @@ impl<R: Read + Seek> Decoder<R> {
     /// # Bugs
     ///
     /// When the image is stored as a planar configuration, this method will currently only read
-    /// the first sample's plane. This will be fixed in a future major version of `tiff`.
+    /// the first sample's plane. This will be fixed in a future major version of `tiff`. To read
+    /// multiple planes, [`Self::read_image_to_buffer`] can be used instead.
     ///
     /// # Intent to deprecate
     ///
-    /// Use `DecodingResult::resize_to` and `read_image_bytes` instead where possible, preserving
-    /// the buffer across multiple calls. This old method will likely keep its bugged planar
-    /// behavior until it is fully replaced, to ensure that existing code will not run into
-    /// unexpectedly large allocations that will error on limits instead.
+    /// Use [`Self::read_image_to_buffer`] or a combination of [`DecodingResult::resize_to`] and
+    /// [`Self::read_image_bytes`] instead where possible, preserving the buffer across multiple
+    /// calls. This old method will likely keep its bugged planar behavior until it is fully
+    /// replaced, to ensure that existing code will not run into unexpectedly large allocations
+    /// that will error on limits instead.
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
         let readout = self.image().readout_for_image()?;
 
@@ -1421,6 +1423,30 @@ impl<R: Read + Seek> Decoder<R> {
     /// It will re-allocate the buffer into the correct type and size, within the decoder's
     /// configured limits, and then pass it to the underlying method. This is essentially a
     /// type-safe wrapper around the raw [`Self::read_image_bytes`] method.
+    ///
+    /// ## Planar behavior
+    ///
+    /// If the image is stored as a planar configuration, an attempt is made to resize the buffer
+    /// to hold all planes. If that does not fit then only the first plane is read. Check the
+    /// buffer size against [`BufferLayoutPreference::complete_len`] to ensure that all planes were
+    /// read:
+    ///
+    /// ```
+    /// use tiff::decoder::{Decoder, DecodingResult};
+    /// let mut result = DecodingResult::U8(vec![]);
+    ///
+    /// let mut reader = /* */
+    /// # Decoder::new(std::io::Cursor::new(include_bytes!(concat!(
+    /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
+    /// # )))).unwrap();
+    /// let layout = reader.read_image_to_buffer(&mut result)?;
+    ///
+    /// if result.as_buffer(0).as_bytes().len() < layout.complete_len {
+    ///    println!("Only the first plane was read");
+    /// }
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
+    /// ```
     ///
     /// # Examples
     ///
@@ -1443,12 +1469,20 @@ impl<R: Read + Seek> Decoder<R> {
         result: &mut DecodingResult,
     ) -> TiffResult<BufferLayoutPreference> {
         let readout = self.image().readout_for_image()?;
-
         let planes = readout.to_plane_layout()?;
-        let layout = BufferLayoutPreference::from_planes(&planes);
 
-        let extent = readout.result_extent_for_planes(0..1)?;
+        let num_planes = if planes.total_bytes <= self.value_reader.limits.decoding_buffer_size {
+            planes.plane_offsets.len() as u16
+        } else {
+            1
+        };
+
+        let layout = BufferLayoutPreference::from_planes(&planes);
+        let extent = readout.result_extent_for_planes(0..num_planes)?;
+        // Compatibility: if this extent is too large our configured limits we will fall back to
+        // reading only the first plane.
         result.resize_to_extent(extent, &self.value_reader.limits)?;
+
         self.read_image_bytes(result.as_buffer(0).as_bytes_mut())?;
 
         Ok(layout)
