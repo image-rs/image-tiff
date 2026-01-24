@@ -1,3 +1,20 @@
+# Version 0.11.2
+
+Changes:
+- Planar files can now be read with `Decoder::read_image_to_buffer` if the
+  limits allow for such a large buffer size. Previously only the first plane
+  was read and the decoder will attempt a fallback to this behavior if the
+  limits do not allow all planes to be allocated.
+
+Fixes:
+- An off-by-one error in a `debug_assert` of `ValueBuffer` caused its use in
+  `IfdDecoder::find_tag_buf` to panic outside release mode when the buffer
+  exactly matched the required size.
+
+Additions:
+- The methods `ColorType::{num_samples, bit_depth}` are now public. This
+  promises that we only have homogeneous color depths in this major version.
+
 # Version 0.11.1
 
 Fixes:
