@@ -1,4 +1,4 @@
-use tiff::decoder::{Decoder, TiffCodingUnit};
+use tiff::decoder::{Decoder, DecodingResult, Limits, TiffCodingUnit};
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -73,4 +73,51 @@ fn read_first_coding_unit() {
             assert_eq!(sum, expected);
         }
     }
+}
+
+#[test]
+fn read_planes_by_limits() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("planar-rgb-u8.tif");
+    let file = File::open(path).unwrap();
+    let io = std::io::BufReader::new(file);
+
+    let mut limits = Limits::default();
+    let mut buffer = DecodingResult::U8(vec![]);
+
+    // Make room for 1 plane.
+    let mut tif = Decoder::new(io).unwrap();
+    tif = tif.with_limits({
+        limits.decoding_buffer_size = 374 * 499;
+        limits.clone()
+    });
+
+    tif.read_image_to_buffer(&mut buffer).unwrap();
+    assert_eq!(buffer.as_buffer(0).byte_len(), 374 * 499);
+
+    // Make room for 2 planes.
+    tif = tif.with_limits({
+        limits.decoding_buffer_size = 374 * 499 * 2;
+        limits.clone()
+    });
+
+    tif.read_image_to_buffer(&mut buffer).unwrap();
+    assert_eq!(buffer.as_buffer(0).byte_len(), 374 * 499);
+
+    // Make room for 3 planes.
+    tif = tif.with_limits({
+        limits.decoding_buffer_size = 374 * 499 * 3;
+        limits.clone()
+    });
+
+    tif.read_image_to_buffer(&mut buffer).unwrap();
+    assert_eq!(buffer.as_buffer(0).byte_len(), 374 * 499 * 3);
+
+    // Make room for 4 planes?
+    tif = tif.with_limits({
+        limits.decoding_buffer_size = 374 * 499 * 4;
+        limits.clone()
+    });
+
+    tif.read_image_to_buffer(&mut buffer).unwrap();
+    assert_eq!(buffer.as_buffer(0).byte_len(), 374 * 499 * 3);
 }
