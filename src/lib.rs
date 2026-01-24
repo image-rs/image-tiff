@@ -51,7 +51,8 @@ pub enum ColorType {
     Multiband { bit_depth: u8, num_samples: u16 },
 }
 impl ColorType {
-    fn bit_depth(&self) -> u8 {
+    /// The number of bits used to store each sample.
+    pub fn bit_depth(&self) -> u8 {
         match *self {
             ColorType::Gray(b)
             | ColorType::RGB(b)
@@ -66,7 +67,8 @@ impl ColorType {
         }
     }
 
-    fn num_samples(&self) -> u16 {
+    /// The number of samples in each representation of a single color.
+    pub fn num_samples(&self) -> u16 {
         match *self {
             ColorType::Gray(_) => 1,
             ColorType::RGB(_) => 3,
