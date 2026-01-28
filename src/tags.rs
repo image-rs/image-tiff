@@ -267,6 +267,9 @@ pub enum CompressionMethod(u16) unknown(
 
     // Self-assigned by libtiff
     ZSTD = 0xC350,
+
+    // Self-assigned by libtiff
+    WebP = 0xC351,
 }
 }
 

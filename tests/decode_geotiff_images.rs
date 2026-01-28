@@ -7,7 +7,7 @@ use tiff::ColorType;
 use std::fs::File;
 use std::path::PathBuf;
 
-const TEST_IMAGE_DIR: &str = "./tests/images";
+const TEST_IMAGE_DIR: &str = "./tests/geotiff";
 
 #[test]
 fn test_geo_tiff() {
@@ -59,5 +59,28 @@ fn test_geo_tiff() {
             panic!("Cannot read band data")
         };
         assert_eq!(data.len(), 500);
+    }
+}
+
+#[cfg(feature = "webp")]
+#[test]
+fn test_webp_tiff() {
+    let filenames = ["usda_naip_256_webp_z3.tif"];
+    let mut buffer = DecodingResult::U8(vec![]);
+
+    for filename in filenames.iter() {
+        let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
+        let img_file = File::open(path).expect("Cannot find test image!");
+        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+
+        loop {
+            decoder.read_image_to_buffer(&mut buffer).unwrap();
+
+            if !decoder.more_images() {
+                break;
+            }
+
+            decoder.next_image().unwrap();
+        }
     }
 }

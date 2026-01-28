@@ -526,13 +526,14 @@ impl Image {
         }
     }
 
-    fn create_reader<'r, R: 'r + Read>(
+    fn create_reader<'r, R: 'r + Read + Seek>(
         reader: R,
         compression_method: CompressionMethod,
         compressed_length: u64,
         // FIXME: these should be `expect` attributes or we choose another way of passing them.
         #[cfg_attr(not(feature = "jpeg"), allow(unused_variables))] jpeg_tables: Option<&[u8]>,
         #[cfg_attr(not(feature = "fax"), allow(unused_variables))] dimensions: (u32, u32),
+        #[cfg_attr(not(feature = "webp"), allow(unused_variables))] samples: u16,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
@@ -607,6 +608,13 @@ impl Image {
                 reader,
                 compressed_length,
             )?),
+            #[cfg(feature = "webp")]
+            CompressionMethod::WebP => Box::new(super::stream::WebPReader::new(
+                reader,
+                compressed_length,
+                samples,
+            )?),
+
             method => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedCompressionMethod(method),
@@ -805,7 +813,7 @@ impl Image {
 
     pub(crate) fn expand_chunk(
         &self,
-        reader: &mut ValueReader<impl Read>,
+        reader: &mut ValueReader<impl Read + Seek>,
         buf: &mut [u8],
         layout: &ReadoutLayout,
         chunk_index: u32,
@@ -919,6 +927,7 @@ impl Image {
             *compressed_bytes,
             self.jpeg_tables.as_deref().map(|a| &**a),
             chunk_dims,
+            self.samples,
         )?;
 
         if is_output_chunk_rows && is_all_bits {
