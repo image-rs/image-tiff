@@ -26,6 +26,7 @@ flate2 = { version = "1.0.20", optional = true }
 weezl = { version = "0.1.10", optional = true }
 zstd = { version = "0.13", optional = true }
 zune-jpeg = { version = "0.5.1", optional = true }
+image-webp = {version = "0.2.4", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.1"
@@ -40,6 +41,7 @@ deflate = ["dep:flate2"]
 fax = ["dep:fax34"]
 jpeg = ["dep:zune-jpeg"]
 lzw = ["dep:weezl"]
+webp = ["dep:image-webp"]
 zstd = ["dep:zstd"]
 
 [[bench]]
