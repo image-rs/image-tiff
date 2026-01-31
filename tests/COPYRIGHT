@@ -6,3 +6,7 @@ usda/*.tif
   url: https://registry.opendata.aws/naip/index.html
   credit: NAIP on AWS was accessed on 2026-01-28 from https://registry.opendata.aws/naip.
   license: Public Domain
+libtiffpic/
+  url: https://download.osgeo.org/libtiff/
+  credit: libtiff
+  license: CC0
