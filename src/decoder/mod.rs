@@ -19,6 +19,7 @@ use self::stream::{ByteOrder, EndianReader};
 mod cycles;
 pub mod ifd;
 mod image;
+mod logluv;
 mod stream;
 mod tag_reader;
 

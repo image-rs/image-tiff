@@ -409,11 +409,29 @@ impl Image {
             }
         };
 
+        let mut sample_format = sample_format;
+        let mut bits_per_sample = bits_per_sample[0];
+
+        // These compression methods only work for specific sample types. They pack each pixel into
+        // a pixel format. And when we decompress them we run an inverse transform inside the
+        // decompression step because that makes sense. (Even for 'raw' data you will not be able
+        // to handle the samples well otherwise). All we are doing is setting up the internal
+        // buffer here. There's an additional transform before the color readout as yo will receive
+        // the color as 32-bit floats (the encoding relies on very specific quantization so
+        // everything else would be very lossy).
+        if let CompressionMethod::SgiLog = compression_method {
+            sample_format = SampleFormat::IEEEFP;
+            bits_per_sample = 32;
+        } else if let CompressionMethod::SgiLog24 = compression_method {
+            sample_format = SampleFormat::IEEEFP;
+            bits_per_sample = 32;
+        }
+
         Ok(Image {
             ifd: Some(ifd),
             width,
             height,
-            bits_per_sample: bits_per_sample[0],
+            bits_per_sample,
             samples,
             extra_samples,
             photometric_samples,
@@ -523,6 +541,46 @@ impl Image {
                     vec![self.bits_per_sample; self.samples as usize],
                 ),
             )),
+            PhotometricInterpretation::CIELogL => match self.samples {
+                1 if matches!(self.bits_per_sample, 32)
+                    && matches!(self.sample_format, SampleFormat::IEEEFP) =>
+                {
+                    // We do this transform internally while reading.
+                    Ok(ColorType::Gray(32))
+                }
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                )),
+            },
+            PhotometricInterpretation::CIELogLuv => match self.samples {
+                // Only fully supported for the compression format `SGILog`/`SGILog24` which must
+                // be used with 16-bit per sample.
+                //
+                // It's actually an interesting point what we should output here. Note that in
+                // libtiff there is a RAW mode (a single unsigned sample per pixel) as well as a
+                // 32-bit floating point mode for XYZ data. The `Lu'v'` variant is a heavily
+                // customized quantization so we should not return it directly. The format itself
+                // describes being based off `xyY` so that may make sense but there is a pole in
+                // the relation to `XYZ` (at y=0) which is absent in the chosen quantization since
+                // we assume a bias of `.5` so `v >= 1/820` and thus `y >= 0.49/820` in practice.
+                // Also we lose a bit of accuracy with just 16-bit precision.
+                //
+                // In `libtiff` data is always transformed through XYZ. So let's do that.
+                3 if matches!(self.bits_per_sample, 32)
+                    && matches!(self.sample_format, SampleFormat::IEEEFP) =>
+                {
+                    Ok(ColorType::RGB(32))
+                }
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                )),
+            },
             // Unsupported due to extra unfiltering and conversion steps. We need to find the
             // Decode tag (SRATIONAL; 2 * SamplesPerPixel) and apply the following conversion:
             //
@@ -554,11 +612,35 @@ impl Image {
         compressed_length: u64,
         // FIXME: these should be `expect` attributes or we choose another way of passing them.
         #[cfg_attr(not(feature = "jpeg"), allow(unused_variables))] jpeg_tables: Option<&[u8]>,
-        #[cfg_attr(not(feature = "fax"), allow(unused_variables))] dimensions: (u32, u32),
-        #[cfg_attr(not(feature = "webp"), allow(unused_variables))] samples: u16,
+        dimensions: (u32, u32),
+        samples: u16,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
+            CompressionMethod::SgiLog => match samples {
+                1 => Box::new(super::logluv::LogLuv16::new(
+                    reader,
+                    compressed_length,
+                    dimensions.0,
+                )?),
+                3 => Box::new(super::logluv::LogLuv32::new(
+                    reader,
+                    compressed_length,
+                    dimensions.0,
+                )?),
+                _ => {
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::UnsupportedCompressionMethod(
+                            CompressionMethod::SgiLog,
+                        ),
+                    ))
+                }
+            },
+            CompressionMethod::SgiLog24 => Box::new(super::logluv::LogLuv24::new(
+                reader,
+                compressed_length,
+                dimensions.0,
+            )?),
             #[cfg(feature = "lzw")]
             CompressionMethod::LZW => Box::new(super::stream::LZWReader::new(
                 reader,
