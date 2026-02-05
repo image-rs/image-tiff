@@ -1029,7 +1029,7 @@ impl Image {
 
             debug_assert!(bits_per_pixel >= photometric_bit_end);
 
-            if bits_per_pixel % 8 != 0 || photometric_bit_end % 8 != 0 {
+            if !bits_per_pixel.is_multiple_of(8) || !photometric_bit_end.is_multiple_of(8) {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
