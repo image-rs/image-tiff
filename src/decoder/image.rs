@@ -330,13 +330,26 @@ impl Image {
                 strip_decoder = Some(StripDecodeState { rows_per_strip });
                 tile_attributes = None;
 
-                if chunk_offsets.len() != chunk_bytes.len()
-                    || rows_per_strip == 0
-                    || u32::try_from(chunk_offsets.len())?
-                        != (height.saturating_sub(1) / rows_per_strip + 1) * planes as u32
-                {
+                if chunk_offsets.len() != chunk_bytes.len() {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+
+                if rows_per_strip == 0 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+
+                if u32::try_from(chunk_offsets.len())?
+                    != height.div_ceil(rows_per_strip) * planes as u32
+                {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::IncorrectChunkCount {
+                            expected: height.div_ceil(rows_per_strip) * planes as u32,
+                            found: chunk_offsets.len() as u32,
+                        },
                     ));
                 }
             }
@@ -371,12 +384,21 @@ impl Image {
                     .into_u64_vec()?;
 
                 let tile = tile_attributes.as_ref().unwrap();
-                if chunk_offsets.len() != chunk_bytes.len()
-                    || chunk_offsets.len()
-                        != tile.tiles_down() * tile.tiles_across() * planes as usize
-                {
+
+                if chunk_offsets.len() != chunk_bytes.len() {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+
+                if chunk_offsets.len() != tile.tiles_down() * tile.tiles_across() * planes as usize
+                {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::IncorrectChunkCount {
+                            expected: (tile.tiles_down() * tile.tiles_across() * planes as usize)
+                                as u32,
+                            found: chunk_offsets.len() as u32,
+                        },
                     ));
                 }
             }
