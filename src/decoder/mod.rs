@@ -27,7 +27,7 @@ mod tag_reader;
 pub struct TiffCodingUnit(pub u32);
 
 /// Result of a decoding process
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum DecodingResult {
     /// A vector of unsigned bytes
     U8(Vec<u8>),
@@ -521,6 +521,10 @@ where
     ifd_offsets: Vec<IfdPointer>,
     /// Map from the ifd into the `ifd_offsets` ordered list.
     seen_ifds: cycles::IfdCycles,
+    /// The directory, if we have not yet read it as an image.
+    /// This is prioritized _over_ the image. Hence it must _not_ be set if we are currently
+    /// reading a true image IFD that is instead stored in the `image` attribute.
+    non_image_ifd: Option<Directory>,
     image: Image,
 }
 
@@ -862,6 +866,7 @@ impl<R: Read + Seek> Decoder<R> {
                 chunk_bytes: Vec::new(),
                 chroma_subsampling: (2, 2),
             },
+            non_image_ifd: None,
         };
         decoder.next_image()?;
         Ok(decoder)
@@ -891,48 +896,85 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Loads the IFD at the specified index in the list, if one exists
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
-        // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
-        if ifd_index >= self.ifd_offsets.len() {
-            // We possibly need to load in the next IFD
-            if self.next_ifd.is_none() {
-                self.current_ifd = None;
+        let ifd = self.seek_to_directory(ifd_index)?;
+        self.non_image_ifd = None;
+        self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+        Ok(())
+    }
 
-                return Err(TiffError::FormatError(
-                    TiffFormatError::ImageFileDirectoryNotFound,
-                ));
-            }
+    fn seek_to_directory(&mut self, ifd_index: usize) -> TiffResult<Directory> {
+        if ifd_index < self.ifd_offsets.len() {
+            // If the index is within the list of ifds then we can load the selected image/IFD
+            let ifd_offset = self.ifd_offsets[ifd_index];
+            let ifd = self.value_reader.read_directory(ifd_offset)?;
 
-            loop {
-                // Follow the list until we find the one we want, or we reach the end, whichever happens first
-                let ifd = self.next_ifd()?;
-
-                if ifd.next().is_none() {
-                    break;
-                }
-
-                if ifd_index < self.ifd_offsets.len() {
-                    break;
-                }
-            }
-        }
-
-        // If the index is within the list of ifds then we can load the selected image/IFD
-        if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            let ifd = self.value_reader.read_directory(*ifd_offset)?;
             self.next_ifd = ifd.next();
-            self.current_ifd = Some(*ifd_offset);
-            self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+            self.current_ifd = Some(ifd_offset);
 
-            Ok(())
-        } else {
-            Err(TiffError::FormatError(
-                TiffFormatError::ImageFileDirectoryNotFound,
-            ))
+            return Ok(ifd);
         }
+
+        // Follow the list until we find the one we want, or we reach the end, whichever happens
+        // first. How many IFDs to read only for their `next` field?
+        let step_over = self.ifd_offsets.len() - ifd_index;
+
+        for _ in 0..step_over {
+            // FIXME: for optimization we only need to read the offset of this one, not its whole
+            // data. However on buffered files this should be a rather small difference unless
+            // you're traversing a lot of directories.
+
+            // Detecting an end-of-file is done by `next_ifd`. We ignore the IFD itself (but not
+            // via an ignore pattern to avoid silencing must_use accidentally).
+            self.next_ifd()?;
+        }
+
+        // self.next_ifd, self.current_ifd will be setup by `next_ifd`.
+        self.next_ifd()
+    }
+
+    /// Start the chain of image directories from a new location.
+    ///
+    /// This enters a new chain of image file directories with the indicated offset as the new root
+    /// (similar to the file having its initial offset at the given IFD position). After this call,
+    /// [`Self::seek_to_image`] has the new root at index `0` and works relative to the new root.
+    ///
+    /// This is not atomic with regards to errors. If the function returns an error, the decoder is
+    /// left in an intermediate state where it does not point to any image. A valid state can be
+    /// recovered by calling [`Self::restart_at_image`] with a valid offset and a successful seek.
+    pub fn restart_at_image(&mut self, offset: IfdPointer) -> TiffResult<()> {
+        let ifd = self.restart_at_offset(offset)?;
+        self.non_image_ifd = None;
+        self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+        Ok(())
+    }
+
+    /// Start the chain of non-image directories from a new location.
+    ///
+    /// See [`Self::restart_at_image`] for details, except this method does not attempt to
+    /// interpret the directory in the sequence as an image. Instead, it may be used to read a
+    /// sequence of auxiliary IFDs that are not necessarily images. For instance, a directory
+    /// referred to in the SubIfd tag may be a thumbnail
+    pub fn restart_at_directory(&mut self, offset: IfdPointer) -> TiffResult<()> {
+        let ifd = self.restart_at_offset(offset)?;
+        self.non_image_ifd = Some(ifd);
+        Ok(())
+    }
+
+    fn restart_at_offset(&mut self, offset: IfdPointer) -> TiffResult<Directory> {
+        self.ifd_offsets.clear();
+        self.ifd_offsets.push(offset);
+
+        self.next_ifd = Some(offset);
+        self.current_ifd = None;
+
+        self.next_ifd()
     }
 
     fn next_ifd(&mut self) -> TiffResult<Directory> {
         let Some(next_ifd) = self.next_ifd.take() else {
+            self.current_ifd = None;
+            self.non_image_ifd = None;
+
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
@@ -959,7 +1001,41 @@ impl<R: Read + Seek> Decoder<R> {
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
         let ifd = self.next_ifd()?;
+        self.non_image_ifd = None;
         self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+        Ok(())
+    }
+
+    /// Read the next directory without interpreting it as an image.
+    ///
+    /// If there is no further image in the TIFF file a format error is returned. To determine
+    /// whether there are more images call `TIFFDecoder::more_directories` instead.
+    pub fn next_directory(&mut self) -> TiffResult<()> {
+        let ifd = self.next_ifd()?;
+        self.non_image_ifd = Some(ifd);
+        Ok(())
+    }
+
+    /// Interpret the current directory as an image.
+    ///
+    /// This method is used after having called [`Self::restart_at`] or [`Self::next_directory`] to
+    /// iterate the sequence of image file directories, having read a directory without having read
+    /// its tags as image data.
+    pub fn current_directory_as_image(&mut self) -> TiffResult<()> {
+        let current_ifd = self.current_ifd.ok_or(TiffError::FormatError(
+            TiffFormatError::ImageFileDirectoryNotFound,
+        ))?;
+
+        if let Some(ifd) = &self.non_image_ifd {
+            self.image = Image::from_ref(&mut self.value_reader, ifd)?;
+            // Definitely sets an IFD but this works without unwraps.
+            self.image.ifd = self.non_image_ifd.take();
+        } else {
+            // Probably re-reading an image but that's fine.
+            let ifd = self.read_directory(current_ifd)?;
+            self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+        }
+
         Ok(())
     }
 
@@ -1538,11 +1614,22 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Get the IFD decoder for our current image IFD.
-    fn image_ifd(&mut self) -> IfdDecoder<'_> {
+    fn current_directory_ifd(&mut self) -> IfdDecoder<'_> {
+        // Special fallback. We do not want to error handle not having read a current directory, in
+        // particular as the behavior having a directory without tags will produce these errors
+        // anyways (most likely). Note that an empty directory is invalid in a TIFF.
+        static NO_IFD: Directory = Directory::empty();
+
+        let ifd = self
+            .non_image_ifd
+            .as_ref()
+            .or(self.image.ifd.as_ref())
+            .unwrap_or(&NO_IFD);
+
         IfdDecoder {
             inner: tag_reader::TagReader {
                 decoder: &mut self.value_reader,
-                ifd: self.image.ifd.as_ref().unwrap(),
+                ifd,
             },
         }
     }
@@ -1583,13 +1670,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag from the current image directory.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        self.image_ifd().find_tag(tag)
+        self.current_directory_ifd().find_tag(tag)
     }
 
     /// Tries to retrieve a tag in the current image directory and convert it to the desired
     /// unsigned type.
     pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
-        self.image_ifd().find_tag_unsigned(tag)
+        self.current_directory_ifd().find_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a vector of all a tag's values and convert them to the desired unsigned
@@ -1604,13 +1691,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag from the current image directory and convert it to the desired
     /// unsigned type. Returns an error if the tag is not present.
     pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
-        self.image_ifd().get_tag_unsigned(tag)
+        self.current_directory_ifd().get_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a tag from the current image directory.
     /// Returns an error if the tag is not present
     pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
-        self.image_ifd().get_tag(tag)
+        self.current_directory_ifd().get_tag(tag)
     }
 
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
@@ -1665,7 +1752,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
-        self.image_ifd().tag_iter()
+        self.current_directory_ifd().tag_iter()
     }
 }
 

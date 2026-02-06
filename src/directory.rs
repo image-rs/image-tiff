@@ -29,7 +29,7 @@ pub struct Directory {
 impl Directory {
     /// Create a directory in an initial state without entries. Note that an empty directory can
     /// not be encoded in a file, it must contain at least one entry.
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Directory {
             entries: BTreeMap::new(),
             next_ifd: None,
