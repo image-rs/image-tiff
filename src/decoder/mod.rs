@@ -1538,7 +1538,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Get the IFD decoder for our current image IFD.
-    fn image_ifd(&mut self) -> IfdDecoder<'_> {
+    pub fn image_ifd(&mut self) -> IfdDecoder<'_> {
         IfdDecoder {
             inner: tag_reader::TagReader {
                 decoder: &mut self.value_reader,
@@ -1884,6 +1884,11 @@ impl IfdDecoder<'_> {
     /// Tries to retrieve a tag and convert it to a ascii vector.
     pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
         self.get_tag(tag)?.into_string()
+    }
+
+    /// Inspect the raw underlying directory.
+    pub fn directory(&self) -> &Directory {
+        self.inner.ifd
     }
 }
 

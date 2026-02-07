@@ -1,4 +1,5 @@
 use crate::encoder::TiffValue;
+use core::fmt;
 
 macro_rules! tags {
     {
@@ -168,6 +169,18 @@ pub enum Tag(u16) unknown(
 // marker are imposed by the IFD. (It's unclear if Pointer tags such as Exif would allow `0` but in
 // practice it just returns garbage and the validity does not matter greatly to us).
 pub struct IfdPointer(pub u64);
+
+impl fmt::LowerHex for IfdPointer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl core::fmt::UpperHex for IfdPointer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::UpperHex::fmt(&self.0, f)
+    }
+}
 
 tags! {
 /// The type of an IFD entry (a 2 byte field).
