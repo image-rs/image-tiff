@@ -862,6 +862,7 @@ impl<R: Read + Seek> Decoder<R> {
                 chunk_offsets: Vec::new(),
                 chunk_bytes: Vec::new(),
                 chroma_subsampling: (2, 2),
+                decompression_to_host_endian: false,
             },
         };
         decoder.next_image()?;

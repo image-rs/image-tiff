@@ -4,8 +4,8 @@ use super::tag_reader::TagReader;
 use super::ChunkType;
 use super::{predict_f16, predict_f32, predict_f64, ValueReader};
 use crate::tags::{
-    CompressionMethod, ExtraSamples, PhotometricInterpretation, PlanarConfiguration, Predictor,
-    SampleFormat, Tag,
+    ByteOrder, CompressionMethod, ExtraSamples, PhotometricInterpretation, PlanarConfiguration,
+    Predictor, SampleFormat, Tag,
 };
 use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -86,6 +86,13 @@ pub(crate) struct Image {
     pub chunk_offsets: Vec<u64>,
     pub chunk_bytes: Vec<u64>,
     pub chroma_subsampling: (u16, u16),
+    /// Will decompression yield host-endian samples?
+    ///
+    /// Standard compression algorithms run on pure bytes, taking the sample slice as it would be
+    /// encoded in the file. However some compression algorithms (currently only SGILog/SGILog24)
+    /// run on samples directly and thus skip the outer byte order entirely, except potentially
+    /// they have interior byte order treatment.
+    pub decompression_to_host_endian: bool,
 }
 
 /// Describes how to read a tile-aligned portion of the image.
@@ -447,6 +454,10 @@ impl Image {
             chunk_offsets,
             chunk_bytes,
             chroma_subsampling,
+            decompression_to_host_endian: matches!(
+                compression_method,
+                CompressionMethod::SgiLog | CompressionMethod::SgiLog24
+            ),
         })
     }
 
@@ -928,7 +939,12 @@ impl Image {
             limits,
         } = reader;
 
-        let byte_order = reader.byte_order;
+        let decompressed_byte_order = if self.decompression_to_host_endian {
+            ByteOrder::native()
+        } else {
+            // Convert from the byte order of the file.
+            reader.byte_order
+        };
 
         // Validate that the color type is supported.
         let color_type = layout.color;
@@ -1044,7 +1060,7 @@ impl Image {
                     row,
                     color_type.bit_depth(),
                     samples,
-                    byte_order,
+                    decompressed_byte_order,
                     predictor,
                 );
             }
@@ -1090,7 +1106,7 @@ impl Image {
                     row,
                     color_type.bit_depth(),
                     samples,
-                    byte_order,
+                    decompressed_byte_order,
                     predictor,
                 );
 
@@ -1131,7 +1147,7 @@ impl Image {
                     row,
                     color_type.bit_depth(),
                     samples,
-                    byte_order,
+                    decompressed_byte_order,
                     predictor,
                 );
 
