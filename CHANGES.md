@@ -1,3 +1,14 @@
+# Version 0.11.3
+
+Additions:
+- Added support for `webp` compression (as per GDAL) under the `webp` feature flag (default: off).
+- Added `Decoder::image_ifd`, creating an `IfdDecoder` of the current IFD.
+- Added `IfdDecoder::directory`, returning the `Directory` underlying it.
+- Added `LowerHex` and `UpwerHex` implementations for `IfdPointer`.
+
+Notes:
+- A new example `tiff-ls` demonstrates use of the new features.
+
 # Version 0.11.2
 
 Changes:
