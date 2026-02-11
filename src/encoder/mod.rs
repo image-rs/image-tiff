@@ -2,24 +2,25 @@ pub use tiff_value::*;
 
 use std::{
     cmp,
-    io::{self, Seek, Write},
+    io::{self, Read, Seek, Write},
     marker::PhantomData,
     mem,
     num::{NonZeroU64, TryFromIntError},
 };
 
 use crate::{
-    decoder::ifd::Entry,
+    decoder::{ifd::Entry, Decoder},
     error::{TiffResult, UsageError},
     tags::{
         ByteOrder, CompressionMethod, ExtraSamples, IfdPointer, PhotometricInterpretation,
-        ResolutionUnit, SampleFormat, Tag, Type, ValueBuffer,
+        PlanarConfiguration, ResolutionUnit, SampleFormat, Tag, Type, ValueBuffer,
     },
     Directory, TiffError, TiffFormatError,
 };
 
 pub mod colortype;
 pub mod compression;
+mod tag_filter;
 mod tiff_value;
 mod writer;
 
@@ -39,6 +40,8 @@ use self::writer::*;
 pub type Predictor = crate::tags::Predictor;
 #[cfg(feature = "deflate")]
 pub type DeflateLevel = compression::DeflateLevel;
+
+pub use tag_filter::TagFilter;
 
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum Compression {
@@ -434,6 +437,148 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         self.directory.extend(entries);
     }
 
+    /// Copy metadata from the IFD that a decoder refers to.
+    ///
+    /// You generally want to use [`ImageEncoder::write_metadata_copy_from`] which automatically
+    /// fills out the [`EncodeMetadataApplicability`] as applicable to the chosen color space and
+    /// other sample configuration.
+    pub fn write_metadata_copy_from<R: Read + Seek>(
+        &mut self,
+        decoder: &mut Decoder<R>,
+        options: EncodeMetadataOptions<'_>,
+        kind: EncodeMetadataApplicability,
+    ) -> TiffResult<EncodeMetadataReport> {
+        let mut report = EncodeMetadataReport {
+            copied: 0,
+            filtered: 0,
+        };
+
+        enum Role {
+            Ifd,
+            ExifPrivate,
+            GpsPrivate,
+        }
+
+        let ptr = decoder.ifd_pointer().unwrap();
+        let mut stack = vec![(ptr, Role::Ifd, usize::MAX)];
+        let mut buf = ValueBuffer::empty(Type::UNDEFINED);
+
+        // Directories which we will later write in reverse-pre-order.
+        let mut pre_order_dirs: Vec<(Directory, usize, Tag)> = vec![];
+
+        while let Some((ifd, role, parent)) = stack.pop() {
+            let dir = decoder.read_directory(ifd)?;
+            let mut created_dir = Directory::empty();
+
+            let filter = match role {
+                Role::Ifd => TagFilter::filter_primary,
+                Role::ExifPrivate => TagFilter::filter_exif_private,
+                Role::GpsPrivate => TagFilter::filter_gps_private,
+            };
+
+            let mut ifd_reader = decoder.read_directory_tags(&dir);
+
+            for (tag, entry) in dir.iter() {
+                let level = filter(options.tag_filter, tag.to_u16());
+                match options
+                    .tag_filter
+                    .should_keep_for_image_writer(level, &kind)
+                {
+                    tag_filter::Choice::Ok => {}
+                    tag_filter::Choice::Descend(subifd_kind) => {
+                        // Only single pointers can be directories to descend to, avoid an overly
+                        // large read by pulling that value out of the file.
+                        if entry.count() != 1 {
+                            report.filtered = report.filtered.saturating_add(1);
+                            continue;
+                        }
+
+                        if ifd_reader.find_tag_buf(tag, &mut buf)?.is_none() {
+                            // Should not happen (we're iterating the dict already), but be robust.
+                            report.filtered = report.filtered.saturating_add(1);
+                            continue;
+                        };
+
+                        let Some(ifd) = buf.as_ifd_pointer() else {
+                            report.filtered = report.filtered.saturating_add(1);
+                            continue;
+                        };
+
+                        let role = match subifd_kind {
+                            tag_filter::SubifdKind::ExifPrivate => Role::ExifPrivate,
+                            tag_filter::SubifdKind::Gps => Role::GpsPrivate,
+                            tag_filter::SubifdKind::Interoperability => {
+                                // Only applicable to compressed images.
+                                report.filtered = report.filtered.saturating_add(1);
+                                continue;
+                            }
+                        };
+
+                        let this_as_parent = pre_order_dirs.len();
+                        stack.push((ifd, role, this_as_parent));
+                    }
+                    tag_filter::Choice::Discard => continue,
+                    tag_filter::Choice::Filtered
+                    // Not supported yet.
+                    | tag_filter::Choice::Special(tag_filter::Special::JpegThumbnail) => {
+                        // Not to be copied.
+                        report.filtered = report.filtered.saturating_add(1);
+                        continue;
+                    }
+                    tag_filter::Choice::Special(tag_filter::Special::CompressedExclusive) => {
+                        // We're not writing an App segment for a compressed file, are we?
+                        continue;
+                    }
+                }
+
+                if ifd_reader.find_tag_buf(tag, &mut buf)?.is_none() {
+                    report.filtered = report.filtered.saturating_add(1);
+                    continue;
+                }
+
+                // Re-encode the value to the target file.
+                buf.set_byte_order(ByteOrder::native());
+                let entry = self.write_entry_buf(&buf)?;
+                created_dir.extend([(tag, entry)]);
+                report.copied = report.copied.saturating_add(1);
+            }
+
+            let tag_in_parent = match role {
+                // should be unreachable? For now. But thumbnails would use this so we best be a
+                // little cautious here. Also thumbnails are weird, they do have image data but we
+                // would not copy that data itself with these methods. Just eh.
+                //
+                // Anyways the tree root will use this tag as a dummy.
+                Role::Ifd => Tag::SubIfd,
+                Role::ExifPrivate => Tag::ExifDirectory,
+                Role::GpsPrivate => Tag::GpsDirectory,
+            };
+
+            pre_order_dirs.push((created_dir, parent, tag_in_parent));
+        }
+
+        // Now post-order traverse the directory tree.
+        while let Some((directory, parent, tag)) = pre_order_dirs.pop() {
+            // The root is the items for the IFD itself.
+            if pre_order_dirs.is_empty() {
+                // We do not enter ourselves into a parent directory.
+                let _ = (parent, tag);
+
+                self.extend_from(&directory);
+                break;
+            }
+
+            let offset = Self::write_directory_inner(self.writer, &directory)?;
+            let offset = K::convert_offset(offset)?;
+            let entry = self.write_entry(offset)?;
+
+            let (parent_dir, _, _) = &mut pre_order_dirs[parent];
+            parent_dir.extend([(tag, entry)]);
+        }
+
+        Ok(report)
+    }
+
     /// Define the parent directory.
     ///
     /// Each directory has an offset based link to its successor, forming a linked list in the
@@ -460,17 +605,21 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
+        Self::write_directory_inner(self.writer, &self.directory)
+    }
+
+    fn write_directory_inner(writer: &mut TiffWriter<W>, directory: &Directory) -> TiffResult<u64> {
         // Start by turning all buffered unwritten values into entries.
-        let offset = self.writer.offset();
-        K::write_entry_count(self.writer, self.directory.len())?;
+        let offset = writer.offset();
+        K::write_entry_count(writer, directory.len())?;
 
         let offset_bytes = mem::size_of::<K::OffsetType>();
-        for (tag, entry) in self.directory.iter() {
-            self.writer.write_u16(tag.to_u16())?;
-            self.writer.write_u16(entry.field_type().to_u16())?;
+        for (tag, entry) in directory.iter() {
+            writer.write_u16(tag.to_u16())?;
+            writer.write_u16(entry.field_type().to_u16())?;
             let count = K::convert_offset(entry.count())?;
-            count.write(self.writer)?;
-            self.writer.write_bytes(&entry.offset()[..offset_bytes])?;
+            count.write(writer)?;
+            writer.write_bytes(&entry.offset()[..offset_bytes])?;
         }
 
         Ok(offset)
@@ -580,6 +729,72 @@ impl<'a, W: Write + Seek, K: TiffKind> Drop for DirectoryEncoder<'a, W, K> {
             let _ = self.finish_internal();
         }
     }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy)]
+pub struct EncodeMetadataOptions<'lt> {
+    /// Several metadata kinds contain additional tags in further, linked directories that are only
+    /// referenced with an `Ifd`/`Ifd8` tag. These directories may have their own semantics, e.g. a
+    /// different set of tags or even new value types.
+    ///
+    /// Since we know that the whole directory contains only metadata it would be possible to copy
+    /// all tags contained in it, however tags that can not be semantically validated might contain
+    /// data that is only valid within the original image or must be transformed during the copy.
+    /// For instance, JPEG thumbnails are embedded with separate offset and length fields (`0x0201`
+    /// and `0x202`). (This has caused the author mental harm, please do not consult me about it).
+    ///
+    /// Setting this flag will skip such unknown tags instead of attempting a potentially incorrect
+    /// copy. However the set of copied metadata is then dependent on the `tiff` library.
+    pub tag_filter: &'lt TagFilter,
+    // TODO:
+    // Some tags are not allowed to be recorded or can be semantically validated. The library can
+    // skip these tags while copying metadata. For instance, `YCbCrCoefficients` _may_ be
+    // recorded for images in `YCbCr` photometric interpretation but _must not_ be recorded for
+    // images in any other interpretation (colorspace conversion should have been done during the
+    // transformation).
+    // pub validate_tags: enum ValidateTags {
+    //   None,
+    //   Skip,
+    //   Error,
+    //   Strict /* Error but also do not allow anything that can not be validated */
+    // },
+}
+
+impl Default for EncodeMetadataOptions<'_> {
+    fn default() -> Self {
+        EncodeMetadataOptions {
+            tag_filter: TagFilter::only_known_tags(),
+        }
+    }
+}
+
+/// Describe the kind of image for which metadata is recorded.
+///
+/// Metadata that is not applicable to the color space or the layout may be skipped. For instance,
+/// subsampling basis position is only relevant on YCbCr / Chroma color photometric interpretation
+/// where subsampling is defined.
+#[non_exhaustive]
+#[derive(Clone, Copy, Default)]
+pub struct EncodeMetadataApplicability {
+    /// The photometric interpretation of the image data.
+    ///
+    /// If `None` then metadata tags are not filtered, otherwise only tags applicable to the given
+    /// photometric interpretation are recorded.
+    pub photometric: Option<PhotometricInterpretation>,
+    /// The planar configuration of the image data.
+    ///
+    /// If `None` then metadata tags are not filtered, otherwise only tags applicable to the given
+    /// configuration are recorded.
+    pub planar: Option<PlanarConfiguration>,
+}
+
+#[non_exhaustive]
+pub struct EncodeMetadataReport {
+    /// Number of tags transferred (recursively).
+    pub copied: u64,
+    /// Number of tags encountered that were skipped due to the provided filter.
+    pub filtered: u64,
 }
 
 /// Type to encode images strip by strip.
@@ -820,6 +1035,22 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         self.encoder.writer.reset_compression();
         self.finish()?;
         Ok(())
+    }
+
+    /// Copy metadata from the IFD that a decoder refers to.
+    pub fn write_metadata_copy_from<R: Read + Seek>(
+        &mut self,
+        decoder: &mut Decoder<R>,
+        options: EncodeMetadataOptions<'_>,
+    ) -> TiffResult<EncodeMetadataReport> {
+        self.encoder.write_metadata_copy_from(
+            decoder,
+            options,
+            EncodeMetadataApplicability {
+                photometric: Some(<T>::TIFF_VALUE),
+                planar: Some(PlanarConfiguration::Chunky),
+            },
+        )
     }
 
     /// Set image resolution
