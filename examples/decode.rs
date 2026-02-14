@@ -36,6 +36,31 @@ fn debug_planes(
     colortype: &tiff::ColorType,
     (width, height): (u32, u32),
 ) {
+    match data {
+        DecodingResult::F16(v) => {
+            let samples = v
+                .iter()
+                .map(|&f| (f64::from(f) * f64::from(u16::MAX)) as u16)
+                .collect::<Vec<_>>();
+            *data = DecodingResult::U16(samples);
+        }
+        DecodingResult::F32(v) => {
+            let samples = v
+                .iter()
+                .map(|&f| (f64::from(f) * f64::from(u16::MAX)) as u16)
+                .collect::<Vec<_>>();
+            *data = DecodingResult::U16(samples);
+        }
+        DecodingResult::F64(v) => {
+            let samples = v
+                .iter()
+                .map(|&f| (f * f64::from(u16::MAX)) as u16)
+                .collect::<Vec<_>>();
+            *data = DecodingResult::U16(samples);
+        }
+        _ => {}
+    }
+
     let (depth, mut tupltype) = match colortype {
         // Note: we will expand, so this is in fact not BLACKANDWHITE
         tiff::ColorType::Gray(_) => (1, "GRAYSCALE"),

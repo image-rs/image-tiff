@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 
 # note: when changed, also update test runner in `.github/workflows/rust.yml`
-rust-version = "1.85.0"
+rust-version = "1.88.0"
 
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
@@ -32,6 +32,8 @@ image-webp = {version = "0.2.4", optional = true }
 criterion = "0.3.1"
 # We may already depend on this via flate2
 crc32fast = "1.5"
+libtest-mimic = "0.8.1"
+walkdir = "2.5"
 
 [features]
 default = ["deflate", "fax", "jpeg", "lzw"]
@@ -46,4 +48,9 @@ zstd = ["dep:zstd"]
 
 [[bench]]
 name = "lzw"
+harness = false
+
+[[test]]
+name = "decode_libtiffpic"
+path = "tests/decode_libtiffpic.rs"
 harness = false

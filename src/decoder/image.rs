@@ -4,8 +4,8 @@ use super::tag_reader::TagReader;
 use super::ChunkType;
 use super::{predict_f16, predict_f32, predict_f64, ValueReader};
 use crate::tags::{
-    CompressionMethod, ExtraSamples, PhotometricInterpretation, PlanarConfiguration, Predictor,
-    SampleFormat, Tag,
+    ByteOrder, CompressionMethod, ExtraSamples, PhotometricInterpretation, PlanarConfiguration,
+    Predictor, SampleFormat, Tag,
 };
 use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -86,6 +86,13 @@ pub(crate) struct Image {
     pub chunk_offsets: Vec<u64>,
     pub chunk_bytes: Vec<u64>,
     pub chroma_subsampling: (u16, u16),
+    /// Will decompression yield host-endian samples?
+    ///
+    /// Standard compression algorithms run on pure bytes, taking the sample slice as it would be
+    /// encoded in the file. However some compression algorithms (currently only SGILog/SGILog24)
+    /// run on samples directly and thus skip the outer byte order entirely, except potentially
+    /// they have interior byte order treatment.
+    pub decompression_to_host_endian: bool,
 }
 
 /// Describes how to read a tile-aligned portion of the image.
@@ -330,13 +337,26 @@ impl Image {
                 strip_decoder = Some(StripDecodeState { rows_per_strip });
                 tile_attributes = None;
 
-                if chunk_offsets.len() != chunk_bytes.len()
-                    || rows_per_strip == 0
-                    || u32::try_from(chunk_offsets.len())?
-                        != (height.saturating_sub(1) / rows_per_strip + 1) * planes as u32
-                {
+                if chunk_offsets.len() != chunk_bytes.len() {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+
+                if rows_per_strip == 0 {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+
+                if u32::try_from(chunk_offsets.len())?
+                    != height.div_ceil(rows_per_strip) * planes as u32
+                {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::IncorrectChunkCount {
+                            expected: height.div_ceil(rows_per_strip) * planes as u32,
+                            found: chunk_offsets.len() as u32,
+                        },
                     ));
                 }
             }
@@ -371,12 +391,21 @@ impl Image {
                     .into_u64_vec()?;
 
                 let tile = tile_attributes.as_ref().unwrap();
-                if chunk_offsets.len() != chunk_bytes.len()
-                    || chunk_offsets.len()
-                        != tile.tiles_down() * tile.tiles_across() * planes as usize
-                {
+
+                if chunk_offsets.len() != chunk_bytes.len() {
                     return Err(TiffError::FormatError(
                         TiffFormatError::InconsistentSizesEncountered,
+                    ));
+                }
+
+                if chunk_offsets.len() != tile.tiles_down() * tile.tiles_across() * planes as usize
+                {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::IncorrectChunkCount {
+                            expected: (tile.tiles_down() * tile.tiles_across() * planes as usize)
+                                as u32,
+                            found: chunk_offsets.len() as u32,
+                        },
                     ));
                 }
             }
@@ -387,11 +416,29 @@ impl Image {
             }
         };
 
+        let mut sample_format = sample_format;
+        let mut bits_per_sample = bits_per_sample[0];
+
+        // These compression methods only work for specific sample types. They pack each pixel into
+        // a pixel format. And when we decompress them we run an inverse transform inside the
+        // decompression step because that makes sense. (Even for 'raw' data you will not be able
+        // to handle the samples well otherwise). All we are doing is setting up the internal
+        // buffer here. There's an additional transform before the color readout as yo will receive
+        // the color as 32-bit floats (the encoding relies on very specific quantization so
+        // everything else would be very lossy).
+        if let CompressionMethod::SgiLog = compression_method {
+            sample_format = SampleFormat::IEEEFP;
+            bits_per_sample = 32;
+        } else if let CompressionMethod::SgiLog24 = compression_method {
+            sample_format = SampleFormat::IEEEFP;
+            bits_per_sample = 32;
+        }
+
         Ok(Image {
             ifd: Some(ifd),
             width,
             height,
-            bits_per_sample: bits_per_sample[0],
+            bits_per_sample,
             samples,
             extra_samples,
             photometric_samples,
@@ -407,6 +454,10 @@ impl Image {
             chunk_offsets,
             chunk_bytes,
             chroma_subsampling,
+            decompression_to_host_endian: matches!(
+                compression_method,
+                CompressionMethod::SgiLog | CompressionMethod::SgiLog24
+            ),
         })
     }
 
@@ -501,6 +552,46 @@ impl Image {
                     vec![self.bits_per_sample; self.samples as usize],
                 ),
             )),
+            PhotometricInterpretation::CIELogL => match self.samples {
+                1 if matches!(self.bits_per_sample, 32)
+                    && matches!(self.sample_format, SampleFormat::IEEEFP) =>
+                {
+                    // We do this transform internally while reading.
+                    Ok(ColorType::Gray(32))
+                }
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                )),
+            },
+            PhotometricInterpretation::CIELogLuv => match self.samples {
+                // Only fully supported for the compression format `SGILog`/`SGILog24` which must
+                // be used with 16-bit per sample.
+                //
+                // It's actually an interesting point what we should output here. Note that in
+                // libtiff there is a RAW mode (a single unsigned sample per pixel) as well as a
+                // 32-bit floating point mode for XYZ data. The `Lu'v'` variant is a heavily
+                // customized quantization so we should not return it directly. The format itself
+                // describes being based off `xyY` so that may make sense but there is a pole in
+                // the relation to `XYZ` (at y=0) which is absent in the chosen quantization since
+                // we assume a bias of `.5` so `v >= 1/820` and thus `y >= 0.49/820` in practice.
+                // Also we lose a bit of accuracy with just 16-bit precision.
+                //
+                // In `libtiff` data is always transformed through XYZ. So let's do that.
+                3 if matches!(self.bits_per_sample, 32)
+                    && matches!(self.sample_format, SampleFormat::IEEEFP) =>
+                {
+                    Ok(ColorType::RGB(32))
+                }
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                )),
+            },
             // Unsupported due to extra unfiltering and conversion steps. We need to find the
             // Decode tag (SRATIONAL; 2 * SamplesPerPixel) and apply the following conversion:
             //
@@ -532,11 +623,35 @@ impl Image {
         compressed_length: u64,
         // FIXME: these should be `expect` attributes or we choose another way of passing them.
         #[cfg_attr(not(feature = "jpeg"), allow(unused_variables))] jpeg_tables: Option<&[u8]>,
-        #[cfg_attr(not(feature = "fax"), allow(unused_variables))] dimensions: (u32, u32),
-        #[cfg_attr(not(feature = "webp"), allow(unused_variables))] samples: u16,
+        dimensions: (u32, u32),
+        samples: u16,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
+            CompressionMethod::SgiLog => match samples {
+                1 => Box::new(super::logluv::LogLuv16::new(
+                    reader,
+                    compressed_length,
+                    dimensions.0,
+                )?),
+                3 => Box::new(super::logluv::LogLuv32::new(
+                    reader,
+                    compressed_length,
+                    dimensions.0,
+                )?),
+                _ => {
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::UnsupportedCompressionMethod(
+                            CompressionMethod::SgiLog,
+                        ),
+                    ))
+                }
+            },
+            CompressionMethod::SgiLog24 => Box::new(super::logluv::LogLuv24::new(
+                reader,
+                compressed_length,
+                dimensions.0,
+            )?),
             #[cfg(feature = "lzw")]
             CompressionMethod::LZW => Box::new(super::stream::LZWReader::new(
                 reader,
@@ -824,7 +939,12 @@ impl Image {
             limits,
         } = reader;
 
-        let byte_order = reader.byte_order;
+        let decompressed_byte_order = if self.decompression_to_host_endian {
+            ByteOrder::native()
+        } else {
+            // Convert from the byte order of the file.
+            reader.byte_order
+        };
 
         // Validate that the color type is supported.
         let color_type = layout.color;
@@ -940,7 +1060,7 @@ impl Image {
                     row,
                     color_type.bit_depth(),
                     samples,
-                    byte_order,
+                    decompressed_byte_order,
                     predictor,
                 );
             }
@@ -986,7 +1106,7 @@ impl Image {
                     row,
                     color_type.bit_depth(),
                     samples,
-                    byte_order,
+                    decompressed_byte_order,
                     predictor,
                 );
 
@@ -1007,7 +1127,7 @@ impl Image {
 
             debug_assert!(bits_per_pixel >= photometric_bit_end);
 
-            if bits_per_pixel % 8 != 0 || photometric_bit_end % 8 != 0 {
+            if !bits_per_pixel.is_multiple_of(8) || !photometric_bit_end.is_multiple_of(8) {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::InterpretationWithBits(
                         self.photometric_interpretation,
@@ -1027,7 +1147,7 @@ impl Image {
                     row,
                     color_type.bit_depth(),
                     samples,
-                    byte_order,
+                    decompressed_byte_order,
                     predictor,
                 );
 

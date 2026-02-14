@@ -403,7 +403,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     /// Returns an [`Entry`]. If the value is short enough it will *not* be written in the file but
     /// stored in the entry's offset field.
     pub fn write_entry_bytes(&mut self, ty: Type, data: &[u8]) -> TiffResult<Entry> {
-        if data.len() % usize::from(ty.byte_len()) != 0 {
+        if !data.len().is_multiple_of(usize::from(ty.byte_len())) {
             return Err(TiffError::UsageError(UsageError::MismatchedEntryLength {
                 ty,
                 found: data.len(),
