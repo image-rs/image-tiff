@@ -283,6 +283,14 @@ pub enum CompressionMethod(u16) unknown(
 
     // Self-assigned by libtiff
     WebP = 0xC351,
+
+    // Self-assigned by libtiff/SGI
+    // A packbit like scheme on specific 32-bit samples (16 sint luma, 8 sint u,v). Only really
+    // compatible with PhotometricInterpretation CIELogLuv.
+    SgiLog = 34676,
+    // A packbit like scheme on specific 24-bit samples (10 packed bits luma, 14-bit uv index).
+    // Only really compatible with PhotometricInterpretation CIELogLuv.
+    SgiLog24 = 34677,
 }
 }
 
@@ -295,9 +303,41 @@ pub enum PhotometricInterpretation(u16) {
     TransparencyMask = 4,
     CMYK = 5,
     YCbCr = 6,
+    /// Biased Lab with all coefficients stored as unsigned integers.
     CIELab = 8,
     IccLab = 9,
     ItuLab = 10,
+    /// Logarithmic L* color space,
+    ///
+    /// see: <https://web.archive.org/web/20250121120358/https://www.anyhere.com/gward/pixformat/tiffluv.html>
+    /// References: <https://doi.org/10.2352/CIC.1998.6.1.art00046>
+    ///
+    /// The `uv` coordinates are based on:
+    ///
+    /// ```text
+    /// (6*u - 16*v + 12) * (-2x + 12y + 3) = 36
+    ///
+    /// u' = 4x / ( -2x + 12y + 3 )
+    /// v' = 9y / ( -2x + 12y + 3 )
+    /// x = 9u' / (6u' - 16v' + 12)
+    /// y = 4v' / (6u' - 16v' + 12)
+    /// ```
+    ///
+    /// Since `(-2x + 12y + 3) <= 15` it holds `(6u' - 16v' + 12) >= 36/15` for all XYZ colors
+    /// which makes the back transform to `xyY` well-defined. Also `v' <= 9/15 = 0.6` and also
+    /// by practical means `u' <= 2/3`.
+    ///
+    /// The compression format that is supposed to be used with this constrains them as well. It
+    /// encodes each component as a 16-bit unsigned integer scaled and clamped to a quantization
+    /// using 256 out of 410 levels or an index into a table based on a quantization to 177 levels
+    /// each `0.0035` (~1/286) wide and 163 levels of `v` (same quantization width).
+    ///
+    /// > Larson, G.W., ``Overcoming Gamut and Dynamic Range Limitations in Digital Images,'' Proceedings of the Sixth Color Imaging Conference, November 1998.
+    CIELogL = 32844,
+    /// Logarithmic L*u'v' color space,
+    ///
+    /// See references under [`Self::CIELogL`].
+    CIELogLuv = 32845,
 }
 }
 
