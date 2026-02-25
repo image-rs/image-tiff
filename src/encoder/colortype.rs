@@ -1,5 +1,66 @@
 use crate::tags::{PhotometricInterpretation, SampleFormat};
 
+/// Apply floating-point predictor encoding to a row of f32 samples.
+///
+/// The floating-point predictor works by:
+/// 1. Converting each f32 to big-endian bytes
+/// 2. Shuffling bytes so all first bytes are together, all second bytes, etc.
+/// 3. Applying byte-level horizontal difference (wrapping_sub) across the entire buffer
+///
+/// The decoder reverses this by:
+/// 1. Applying cumulative sum (wrapping_add) on the entire byte stream
+/// 2. De-shuffling bytes back into f32 values
+fn fp_predict_f32(row: &[f32], samples: usize, result: &mut Vec<u8>) {
+    let num_values = row.len();
+    let byte_count = num_values * 4;
+    let start_len = result.len();
+
+    // Reserve space for the output
+    result.reserve(byte_count);
+
+    // Step 1 & 2: Convert to big-endian and shuffle bytes
+    // All first bytes, then all second bytes, etc.
+    for byte_idx in 0..4 {
+        for &value in row {
+            let bytes = value.to_be_bytes();
+            result.push(bytes[byte_idx]);
+        }
+    }
+
+    // Step 3: Apply byte-level horizontal difference across the entire buffer
+    // We iterate backwards so that when we compute output[i] - output[i-samples],
+    // output[i-samples] still has its original value.
+    // The prediction spans across quarter boundaries, just like the decoder's cumulative sum.
+    let output = &mut result[start_len..];
+    for i in (samples..byte_count).rev() {
+        output[i] = output[i].wrapping_sub(output[i - samples]);
+    }
+}
+
+/// Apply floating-point predictor encoding to a row of f64 samples.
+fn fp_predict_f64(row: &[f64], samples: usize, result: &mut Vec<u8>) {
+    let num_values = row.len();
+    let byte_count = num_values * 8;
+    let start_len = result.len();
+
+    // Reserve space for the output
+    result.reserve(byte_count);
+
+    // Step 1 & 2: Convert to big-endian and shuffle bytes
+    for byte_idx in 0..8 {
+        for &value in row {
+            let bytes = value.to_be_bytes();
+            result.push(bytes[byte_idx]);
+        }
+    }
+
+    // Step 3: Apply byte-level horizontal difference across the entire buffer
+    let output = &mut result[start_len..];
+    for i in (samples..byte_count).rev() {
+        output[i] = output[i].wrapping_sub(output[i - samples]);
+    }
+}
+
 macro_rules! integer_horizontal_predict {
     () => {
         fn horizontal_predict(row: &[Self::Inner], result: &mut Vec<Self::Inner>) {
@@ -23,6 +84,10 @@ macro_rules! integer_horizontal_predict {
                     .map(|(prev, current)| current.wrapping_sub(*prev)),
             );
         }
+
+        fn floating_point_predict(_: &[Self::Inner], _: &mut Vec<u8>) {
+            unreachable!("floating-point predictor is only valid for floating-point sample types")
+        }
     };
 }
 
@@ -38,6 +103,10 @@ pub trait ColorType {
     const SAMPLE_FORMAT: &'static [SampleFormat];
 
     fn horizontal_predict(row: &[Self::Inner], result: &mut Vec<Self::Inner>);
+
+    /// Apply floating-point predictor encoding to a row of samples.
+    /// This is only implemented for floating-point types; integer types will panic.
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>);
 }
 
 pub struct Gray8;
@@ -108,7 +177,11 @@ impl ColorType for Gray32Float {
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP];
 
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f32(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 
@@ -140,7 +213,11 @@ impl ColorType for Gray64Float {
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP];
 
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f64(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 
@@ -180,8 +257,13 @@ impl ColorType for RGB32Float {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[32, 32, 32];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 3];
+
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f32(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 
@@ -201,8 +283,13 @@ impl ColorType for RGB64Float {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[64, 64, 64];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 3];
+
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f64(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 
@@ -242,8 +329,13 @@ impl ColorType for RGBA32Float {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[32, 32, 32, 32];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 4];
+
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f32(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 
@@ -263,8 +355,13 @@ impl ColorType for RGBA64Float {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[64, 64, 64, 64];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 4];
+
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f64(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 
@@ -306,7 +403,11 @@ impl ColorType for CMYK32Float {
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 4];
 
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f32(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 
@@ -328,7 +429,11 @@ impl ColorType for CMYK64Float {
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 4];
 
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
-        unreachable!()
+        unreachable!("horizontal predictor is not valid for floating-point sample types")
+    }
+
+    fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>) {
+        fp_predict_f64(row, Self::SAMPLE_FORMAT.len(), result)
     }
 }
 

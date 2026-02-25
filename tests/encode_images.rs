@@ -1,7 +1,7 @@
 extern crate tiff;
 
 use tiff::decoder::{ifd, Decoder, DecodingResult};
-use tiff::encoder::{colortype, Ifd, Ifd8, SRational, TiffEncoder};
+use tiff::encoder::{colortype, Ifd, Ifd8, Predictor, SRational, TiffEncoder};
 use tiff::tags::Tag;
 use tiff::ColorType;
 
@@ -377,6 +377,141 @@ fn test_gray_f64_roundtrip() {
 #[test]
 fn test_ycbcr_u8_roundtrip() {
     test_u8_roundtrip::<colortype::YCbCr8>("tiled-jpeg-ycbcr.tif", ColorType::YCbCr(8));
+}
+
+/// Test that encoding with the floating-point predictor works correctly
+/// and can be decoded back to the original data.
+#[test]
+fn test_gray_f32_floating_point_predictor() {
+    // Generate test data: a gradient of f32 values
+    let width = 32u32;
+    let height = 32u32;
+    let mut image_data: Vec<f32> = Vec::with_capacity((width * height) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            // Create a gradient pattern
+            image_data.push((x as f32 + y as f32 * 0.1) / 100.0);
+        }
+    }
+
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut tiff = TiffEncoder::new(&mut file)
+            .unwrap()
+            .with_predictor(Predictor::FloatingPoint);
+        tiff.write_image::<colortype::Gray32Float>(width, height, &image_data)
+            .unwrap();
+    }
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(32));
+
+        let mut buffer = DecodingResult::F32(vec![]);
+        decoder.read_image_to_buffer(&mut buffer).unwrap();
+        if let DecodingResult::F32(img_res) = buffer {
+            assert_eq!(image_data.len(), img_res.len());
+            for (orig, decoded) in image_data.iter().zip(img_res.iter()) {
+                assert_eq!(
+                    *orig, *decoded,
+                    "Mismatch at value: orig={}, decoded={}",
+                    orig, decoded
+                );
+            }
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+/// Test floating-point predictor with RGB f32 data
+#[test]
+fn test_rgb_f32_floating_point_predictor() {
+    let width = 16u32;
+    let height = 16u32;
+    let mut image_data: Vec<f32> = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            // RGB pattern
+            image_data.push(x as f32 / width as f32); // R
+            image_data.push(y as f32 / height as f32); // G
+            image_data.push((x + y) as f32 / (width + height) as f32); // B
+        }
+    }
+
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut tiff = TiffEncoder::new(&mut file)
+            .unwrap()
+            .with_predictor(Predictor::FloatingPoint);
+        tiff.write_image::<colortype::RGB32Float>(width, height, &image_data)
+            .unwrap();
+    }
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(32));
+
+        let mut buffer = DecodingResult::F32(vec![]);
+        decoder.read_image_to_buffer(&mut buffer).unwrap();
+        if let DecodingResult::F32(img_res) = buffer {
+            assert_eq!(image_data.len(), img_res.len());
+            for (i, (orig, decoded)) in image_data.iter().zip(img_res.iter()).enumerate() {
+                assert_eq!(
+                    *orig, *decoded,
+                    "Mismatch at index {}: orig={}, decoded={}",
+                    i, orig, decoded
+                );
+            }
+        } else {
+            panic!("Wrong data type");
+        }
+    }
+}
+
+/// Test floating-point predictor with f64 data
+#[test]
+fn test_gray_f64_floating_point_predictor() {
+    let width = 16u32;
+    let height = 16u32;
+    let mut image_data: Vec<f64> = Vec::with_capacity((width * height) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            image_data.push((x as f64 + y as f64 * 0.1) / 100.0);
+        }
+    }
+
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut tiff = TiffEncoder::new(&mut file)
+            .unwrap()
+            .with_predictor(Predictor::FloatingPoint);
+        tiff.write_image::<colortype::Gray64Float>(width, height, &image_data)
+            .unwrap();
+    }
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    {
+        let mut decoder = Decoder::new(&mut file).unwrap();
+        assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(64));
+
+        let mut buffer = DecodingResult::F64(vec![]);
+        decoder.read_image_to_buffer(&mut buffer).unwrap();
+        if let DecodingResult::F64(img_res) = buffer {
+            assert_eq!(image_data.len(), img_res.len());
+            for (orig, decoded) in image_data.iter().zip(img_res.iter()) {
+                assert_eq!(
+                    *orig, *decoded,
+                    "Mismatch: orig={}, decoded={}",
+                    orig, decoded
+                );
+            }
+        } else {
+            panic!("Wrong data type");
+        }
+    }
 }
 
 trait AssertDecode {

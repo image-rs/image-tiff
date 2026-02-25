@@ -357,7 +357,9 @@ pub enum Predictor(u16) {
     /// This means that instead of having in order `[r1, g1. b1, r2, g2 ...]` you will find
     /// `[r1, g1, b1, r2-r1, g2-g1, b2-b1, r3-r2, g3-g2, ...]`
     Horizontal = 2,
-    /// Not currently supported
+    /// Floating-point predictor for IEEE floating-point sample types.
+    ///
+    /// This predictor byte-shuffles the data and applies byte-level horizontal differencing.
     FloatingPoint = 3,
 }
 }

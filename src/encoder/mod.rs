@@ -33,9 +33,10 @@ use self::writer::*;
 /// Image data can be very unpredictable, and thus very hard to compress. Predictors are simple
 /// passes ran over the image data to prepare it for compression. This is mostly used for LZW
 /// compression, where using [Predictor::Horizontal] we see a 35% improvement in compression
-/// ratio over the unpredicted compression !
+/// ratio over the unpredicted compression!
 ///
-/// [Predictor::FloatingPoint] is currently not supported.
+/// [Predictor::Horizontal] is for integer sample types.
+/// [Predictor::FloatingPoint] is for floating-point sample types (f32, f64).
 pub type Predictor = crate::tags::Predictor;
 #[cfg(feature = "deflate")]
 pub type DeflateLevel = compression::DeflateLevel;
@@ -635,11 +636,14 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
 impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T, K> {
     fn sanity_check(compression: Compression, predictor: Predictor) -> TiffResult<()> {
         match (predictor, compression, T::SAMPLE_FORMAT[0]) {
+            // Horizontal predictor is not valid for floating-point types
             (Predictor::Horizontal, _, SampleFormat::IEEEFP | SampleFormat::Void) => {
                 Err(TiffError::UsageError(UsageError::PredictorIncompatible))
             }
+            // Floating-point predictor is only valid for IEEEFP sample format
+            (Predictor::FloatingPoint, _, SampleFormat::IEEEFP) => Ok(()),
             (Predictor::FloatingPoint, _, _) => {
-                Err(TiffError::UsageError(UsageError::PredictorUnavailable))
+                Err(TiffError::UsageError(UsageError::PredictorIncompatible))
             }
             _ => Ok(()),
         }
@@ -773,7 +777,14 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
                 }
                 self.encoder.write_data(row_result.as_slice())?
             }
-            _ => unimplemented!(),
+            Predictor::FloatingPoint => {
+                let byte_size = mem::size_of::<T::Inner>();
+                let mut row_result = Vec::with_capacity(value.len() * byte_size);
+                for row in value.chunks_exact(self.row_samples as usize) {
+                    T::floating_point_predict(row, &mut row_result);
+                }
+                self.encoder.write_data(row_result.as_slice())?
+            }
         };
 
         let byte_count = self.encoder.last_written() as usize;
