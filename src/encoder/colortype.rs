@@ -1,65 +1,49 @@
 use crate::tags::{PhotometricInterpretation, SampleFormat};
 
-/// Apply floating-point predictor encoding to a row of f32 samples.
+/// Apply floating-point predictor encoding to a row of floating-point samples.
 ///
 /// The floating-point predictor works by:
-/// 1. Converting each f32 to big-endian bytes
+/// 1. Converting each value to big-endian bytes
 /// 2. Shuffling bytes so all first bytes are together, all second bytes, etc.
 /// 3. Applying byte-level horizontal difference (wrapping_sub) across the entire buffer
 ///
 /// The decoder reverses this by:
 /// 1. Applying cumulative sum (wrapping_add) on the entire byte stream
-/// 2. De-shuffling bytes back into f32 values
-fn fp_predict_f32(row: &[f32], samples: usize, result: &mut Vec<u8>) {
-    let num_values = row.len();
-    let byte_count = num_values * 4;
-    let start_len = result.len();
+/// 2. De-shuffling bytes back into float values
+macro_rules! fp_predict {
+    ($name:ident, $float_type:ty) => {
+        fn $name(row: &[$float_type], samples: usize, result: &mut Vec<u8>) {
+            const BYTE_SIZE: usize = core::mem::size_of::<$float_type>();
+            let num_values = row.len();
+            let byte_count = num_values * BYTE_SIZE;
+            let start_len = result.len();
 
-    // Reserve space for the output
-    result.reserve(byte_count);
+            // Reserve space for the output
+            result.reserve(byte_count);
 
-    // Step 1 & 2: Convert to big-endian and shuffle bytes
-    // All first bytes, then all second bytes, etc.
-    for byte_idx in 0..4 {
-        for &value in row {
-            let bytes = value.to_be_bytes();
-            result.push(bytes[byte_idx]);
+            // Step 1 & 2: Convert to big-endian and shuffle bytes
+            // All first bytes, then all second bytes, etc.
+            for byte_idx in 0..BYTE_SIZE {
+                for &value in row {
+                    let bytes = value.to_be_bytes();
+                    result.push(bytes[byte_idx]);
+                }
+            }
+
+            // Step 3: Apply byte-level horizontal difference across the entire buffer
+            // We iterate backwards so that when we compute output[i] - output[i-samples],
+            // output[i-samples] still has its original value.
+            // The prediction spans across quarter boundaries, just like the decoder's cumulative sum.
+            let output = &mut result[start_len..];
+            for i in (samples..byte_count).rev() {
+                output[i] = output[i].wrapping_sub(output[i - samples]);
+            }
         }
-    }
-
-    // Step 3: Apply byte-level horizontal difference across the entire buffer
-    // We iterate backwards so that when we compute output[i] - output[i-samples],
-    // output[i-samples] still has its original value.
-    // The prediction spans across quarter boundaries, just like the decoder's cumulative sum.
-    let output = &mut result[start_len..];
-    for i in (samples..byte_count).rev() {
-        output[i] = output[i].wrapping_sub(output[i - samples]);
-    }
+    };
 }
 
-/// Apply floating-point predictor encoding to a row of f64 samples.
-fn fp_predict_f64(row: &[f64], samples: usize, result: &mut Vec<u8>) {
-    let num_values = row.len();
-    let byte_count = num_values * 8;
-    let start_len = result.len();
-
-    // Reserve space for the output
-    result.reserve(byte_count);
-
-    // Step 1 & 2: Convert to big-endian and shuffle bytes
-    for byte_idx in 0..8 {
-        for &value in row {
-            let bytes = value.to_be_bytes();
-            result.push(bytes[byte_idx]);
-        }
-    }
-
-    // Step 3: Apply byte-level horizontal difference across the entire buffer
-    let output = &mut result[start_len..];
-    for i in (samples..byte_count).rev() {
-        output[i] = output[i].wrapping_sub(output[i - samples]);
-    }
-}
+fp_predict!(fp_predict_f32, f32);
+fp_predict!(fp_predict_f64, f64);
 
 macro_rules! integer_horizontal_predict {
     () => {
