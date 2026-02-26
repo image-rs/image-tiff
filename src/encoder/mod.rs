@@ -778,8 +778,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
                 self.encoder.write_data(row_result.as_slice())?
             }
             Predictor::FloatingPoint => {
-                let byte_size = mem::size_of::<T::Inner>();
-                let mut row_result = Vec::with_capacity(value.len() * byte_size);
+                let mut row_result = Vec::with_capacity(std::mem::size_of_val(value));
                 for row in value.chunks_exact(self.row_samples as usize) {
                     T::floating_point_predict(row, &mut row_result);
                 }
