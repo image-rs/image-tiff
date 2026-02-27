@@ -18,15 +18,46 @@ macro_rules! fp_predict {
             let byte_count = num_values * BYTE_SIZE;
             let start_len = result.len();
 
-            // Reserve space for the output
-            result.reserve(byte_count);
+            // Allocate zeroed space so we can write to arbitrary positions
+            result.resize(start_len + byte_count, 0);
+            let output = &mut result[start_len..];
 
             // Step 1 & 2: Convert to big-endian and shuffle bytes
             // All first bytes, then all second bytes, etc.
-            for byte_idx in 0..BYTE_SIZE {
-                for &value in row {
+            //
+            // We process the input in chunks of 4 floats/doubles at a time.
+            // For each chunk we shuffle the bytes into a stack buffer, then
+            // copy each byte-lane's portion into the output. This turns
+            // single-byte pushes into 16-byte (for f32) or 32-byte (for f64)
+            // memcpy-like stores that the compiler can vectorize.
+            const CHUNK: usize = 4;
+            let chunks = num_values / CHUNK;
+            let remainder = num_values % CHUNK;
+
+            let mut scratch = [[0u8; CHUNK]; BYTE_SIZE];
+            for c in 0..chunks {
+                let src = &row[c * CHUNK..][..CHUNK];
+                for j in 0..CHUNK {
+                    let bytes = src[j].to_be_bytes();
+                    for b in 0..BYTE_SIZE {
+                        scratch[b][j] = bytes[b];
+                    }
+                }
+                for b in 0..BYTE_SIZE {
+                    let dest_offset = b * num_values + c * CHUNK;
+                    output[dest_offset..dest_offset + CHUNK]
+                        .copy_from_slice(&scratch[b]);
+                }
+            }
+
+            // Handle the remaining elements that don't fill a full chunk
+            if remainder > 0 {
+                let src = &row[chunks * CHUNK..];
+                for (j, &value) in src.iter().enumerate() {
                     let bytes = value.to_be_bytes();
-                    result.push(bytes[byte_idx]);
+                    for b in 0..BYTE_SIZE {
+                        output[b * num_values + chunks * CHUNK + j] = bytes[b];
+                    }
                 }
             }
 
