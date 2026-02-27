@@ -18,15 +18,15 @@ macro_rules! fp_predict {
             let byte_count = num_values * BYTE_SIZE;
             let start_len = result.len();
 
-            // Reserve space for the output
-            result.reserve(byte_count);
+            // Allocate zeroed space so we can write to arbitrary positions
+            result.resize(start_len + byte_count, 0);
+            let output = &mut result[start_len..];
 
-            // Step 1 & 2: Convert to big-endian and shuffle bytes
-            // All first bytes, then all second bytes, etc.
-            for byte_idx in 0..BYTE_SIZE {
-                for &value in row {
-                    let bytes = value.to_be_bytes();
-                    result.push(bytes[byte_idx]);
+            // Step 1 & 2: Convert to big-endian and scatter bytes
+            for (i, &value) in row.iter().enumerate() {
+                let bytes = value.to_be_bytes();
+                for b in 0..BYTE_SIZE {
+                    output[b * num_values + i] = bytes[b];
                 }
             }
 
