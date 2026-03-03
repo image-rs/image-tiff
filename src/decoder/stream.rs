@@ -260,9 +260,9 @@ impl<R: Read> Read for PackBitsReader<R> {
 pub struct Group4Reader<R: Read> {
     decoder: fax34::decoder::Group4Decoder<io::Bytes<io::BufReader<io::Take<R>>>>,
     line_buf: io::Cursor<Vec<u8>>,
-    height: u16,
+    height: u32,
     width: u16,
-    y: u16,
+    y: u32,
 }
 
 #[cfg(feature = "fax")]
@@ -273,7 +273,7 @@ impl<R: Read> Group4Reader<R> {
         compressed_length: u64,
     ) -> crate::TiffResult<Self> {
         let width = u16::try_from(dimensions.0)?;
-        let height = u16::try_from(dimensions.1)?;
+        let height = dimensions.1;
 
         Ok(Self {
             decoder: fax34::decoder::Group4Decoder::new(
