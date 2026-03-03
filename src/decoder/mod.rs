@@ -717,34 +717,17 @@ fn invert_colors(
     sample_format: SampleFormat,
 ) -> TiffResult<()> {
     match (color_type, sample_format) {
-        // Where pixels do not cross a byte boundary
-        (ColorType::Gray(1 | 2 | 4 | 8), SampleFormat::Uint) => {
+        (ColorType::Gray(1 | 2 | 4 | 8 | 16 | 32 | 64), SampleFormat::Uint) => {
+            // It's guaranteed that pixels do not cross a byte boundary.
+            // To invert a single N-bit pixel, we can calculate:
+            //   (2^N - 1) - x = (2^N - 1) + !x + 1  (because -x = !x + 1)
+            //                 = 2^n + !x
+            //                 = !x                  (because modular arithmetic)
+            //
+            // Further, since !x operates on bits independently, negating bytes
+            // also works for multi-byte pixels.
             for x in buf {
-                // Equivalent to both of the following:
-                //
-                // *x = 0xff - *x
-                // *x = !*x
-                //
-                // since -x = !x+1
                 *x = !*x;
-            }
-        }
-        (ColorType::Gray(16), SampleFormat::Uint) => {
-            for x in buf.as_chunks_mut::<2>().0 {
-                let v = u16::from_ne_bytes(*x);
-                *x = (0xffff - v).to_ne_bytes();
-            }
-        }
-        (ColorType::Gray(32), SampleFormat::Uint) => {
-            for x in buf.as_chunks_mut::<4>().0 {
-                let v = u32::from_ne_bytes(*x);
-                *x = (0xffff_ffff - v).to_ne_bytes();
-            }
-        }
-        (ColorType::Gray(64), SampleFormat::Uint) => {
-            for x in buf.as_chunks_mut::<8>().0 {
-                let v = u64::from_ne_bytes(*x);
-                *x = (0xffff_ffff_ffff_ffff - v).to_ne_bytes();
             }
         }
         (ColorType::Gray(32), SampleFormat::IEEEFP) => {
