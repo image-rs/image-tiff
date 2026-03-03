@@ -730,33 +730,33 @@ fn invert_colors(
             }
         }
         (ColorType::Gray(16), SampleFormat::Uint) => {
-            for x in buf.chunks_mut(2) {
-                let v = u16::from_ne_bytes(x.try_into().unwrap());
-                x.copy_from_slice(&(0xffff - v).to_ne_bytes());
+            for x in buf.as_chunks_mut::<2>().0 {
+                let v = u16::from_ne_bytes(*x);
+                *x = (0xffff - v).to_ne_bytes();
             }
         }
         (ColorType::Gray(32), SampleFormat::Uint) => {
-            for x in buf.chunks_mut(4) {
-                let v = u32::from_ne_bytes(x.try_into().unwrap());
-                x.copy_from_slice(&(0xffff_ffff - v).to_ne_bytes());
+            for x in buf.as_chunks_mut::<4>().0 {
+                let v = u32::from_ne_bytes(*x);
+                *x = (0xffff_ffff - v).to_ne_bytes();
             }
         }
         (ColorType::Gray(64), SampleFormat::Uint) => {
-            for x in buf.chunks_mut(8) {
-                let v = u64::from_ne_bytes(x.try_into().unwrap());
-                x.copy_from_slice(&(0xffff_ffff_ffff_ffff - v).to_ne_bytes());
+            for x in buf.as_chunks_mut::<8>().0 {
+                let v = u64::from_ne_bytes(*x);
+                *x = (0xffff_ffff_ffff_ffff - v).to_ne_bytes();
             }
         }
         (ColorType::Gray(32), SampleFormat::IEEEFP) => {
-            for x in buf.chunks_mut(4) {
-                let v = f32::from_ne_bytes(x.try_into().unwrap());
-                x.copy_from_slice(&(1.0 - v).to_ne_bytes());
+            for x in buf.as_chunks_mut::<4>().0 {
+                let v = f32::from_ne_bytes(*x);
+                *x = (1.0 - v).to_ne_bytes();
             }
         }
         (ColorType::Gray(64), SampleFormat::IEEEFP) => {
-            for x in buf.chunks_mut(8) {
-                let v = f64::from_ne_bytes(x.try_into().unwrap());
-                x.copy_from_slice(&(1.0 - v).to_ne_bytes());
+            for x in buf.as_chunks_mut::<8>().0 {
+                let v = f64::from_ne_bytes(*x);
+                *x = (1.0 - v).to_ne_bytes();
             }
         }
         _ => {
