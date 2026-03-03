@@ -721,7 +721,6 @@ fn extra_bits_rgb() {
     test_image_sum_u8("extra_bits_rgb_8b.tiff", ColorType::RGB(8), 0);
 }
 
-
 #[test]
 #[cfg(feature = "fax")]
 fn test_decode_huge_g4() {
@@ -730,10 +729,16 @@ fn test_decode_huge_g4() {
     let mut decoder = tiff::decoder::Decoder::new(img_file).expect("failed to create decoder");
 
     let (width, height) = decoder.dimensions().expect("failed to get dimensions");
-    
-    assert!(height > u16::MAX as u32, "Test image height {} is not large enough to test u16 overflow", height);
 
-    let result = decoder.read_image().expect("failed to decode huge G4 image");
+    assert!(
+        height > u16::MAX as u32,
+        "Test image height {} is not large enough to test u16 overflow",
+        height
+    );
+
+    let result = decoder
+        .read_image()
+        .expect("failed to decode huge G4 image");
 
     if let tiff::decoder::DecodingResult::U8(data) = result {
         assert_eq!(data.len(), (width as usize * height as usize));
