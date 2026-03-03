@@ -115,9 +115,10 @@ fn main() {
         let Some(path) = entry.path().to_str() else {
             continue;
         };
+        let path = path.replace(std::path::MAIN_SEPARATOR, "/"); // always use UNIX path separators
 
         // Mark this path as consumed in either case by removing it.
-        let Some(should_decode) = candidates.remove(path) else {
+        let Some(should_decode) = candidates.remove(path.as_str()) else {
             panic!("File {} not in reference list", path);
         };
 
