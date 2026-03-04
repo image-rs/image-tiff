@@ -827,30 +827,34 @@ impl<R: Read + Seek> Decoder<R> {
             current_ifd_pointer: None,
             directory: Directory::empty(),
             seen_ifds: cycles::IfdCycles::new(),
-            image: Image {
-                width: 0,
-                height: 0,
-                bits_per_sample: 1,
-                samples: 1,
-                extra_samples: vec![],
-                photometric_samples: 1,
-                sample_format: SampleFormat::Uint,
-                photometric_interpretation: PhotometricInterpretation::BlackIsZero,
-                compression_method: CompressionMethod::None,
-                jpeg_tables: None,
-                predictor: Predictor::None,
-                chunk_type: ChunkType::Strip,
-                planar_config: PlanarConfiguration::Chunky,
-                strip_decoder: None,
-                tile_attributes: None,
-                chunk_offsets: Vec::new(),
-                chunk_bytes: Vec::new(),
-                chroma_subsampling: (2, 2),
-                decompression_to_host_endian: false,
-            },
+            image: Self::no_image(),
         };
         decoder.next_image()?;
         Ok(decoder)
+    }
+
+    fn no_image() -> Image {
+        Image {
+            width: 0,
+            height: 0,
+            bits_per_sample: 1,
+            samples: 1,
+            extra_samples: vec![],
+            photometric_samples: 1,
+            sample_format: SampleFormat::Uint,
+            photometric_interpretation: PhotometricInterpretation::BlackIsZero,
+            compression_method: CompressionMethod::None,
+            jpeg_tables: None,
+            predictor: Predictor::None,
+            chunk_type: ChunkType::Strip,
+            planar_config: PlanarConfiguration::Chunky,
+            strip_decoder: None,
+            tile_attributes: None,
+            chunk_offsets: Vec::new(),
+            chunk_bytes: Vec::new(),
+            chroma_subsampling: (2, 2),
+            decompression_to_host_endian: false,
+        }
     }
 
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
@@ -859,11 +863,11 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
-        Ok((self.image().width, self.image().height))
+        Ok((self.image.width, self.image.height))
     }
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
-        self.image().colortype()
+        self.image.colortype()
     }
 
     /// The offset of the directory representing the current image.
@@ -871,12 +875,21 @@ impl<R: Read + Seek> Decoder<R> {
         self.current_ifd_pointer
     }
 
-    fn image(&self) -> &Image {
-        &self.image
+    /// Loads the IFD at the specified index in the list, if one exists
+    pub fn seek_to_directory(&mut self, ifd_index: usize) -> TiffResult<()> {
+        self.seek_to_ifd(ifd_index)
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
+    ///
+    /// The directory is then decoded as an image.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
+        self.seek_to_ifd(ifd_index)?;
+        self.image = Image::from_reader(&mut self.value_reader, &self.directory)?;
+        Ok(())
+    }
+
+    fn seek_to_ifd(&mut self, ifd_index: usize) -> TiffResult<()> {
         // Check whether we have seen this IFD before, if so then the index will be less than the
         // length of the list of ifd offsets If the index is within the list of ifds then we can
         // load the selected image/IFD. Otherwise we iterate the chain until the selected index.
@@ -906,7 +919,6 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         // Reaching this point implies `self.directory` represents the selected ifd.
-        self.image = Image::from_reader(&mut self.value_reader, &self.directory)?;
         Ok(())
     }
 
@@ -934,7 +946,17 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    /// Reads the next IFD.
+    ///
+    /// If there is no further image in the TIFF file a format error is returned.
+    /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
+    pub fn next_directory(&mut self) -> TiffResult<()> {
+        self.image = Self::no_image();
+        self.read_next_ifd_pointer()
+    }
+
     /// Reads in the next image.
+    ///
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
@@ -1094,10 +1116,10 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
-        if expected != self.image().chunk_type {
+        if expected != self.image.chunk_type {
             return Err(TiffError::UsageError(UsageError::InvalidChunkType(
                 expected,
-                self.image().chunk_type,
+                self.image.chunk_type,
             )));
         }
 
@@ -1106,27 +1128,27 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// The chunk type (Strips / Tiles) of the image
     pub fn get_chunk_type(&self) -> ChunkType {
-        self.image().chunk_type
+        self.image.chunk_type
     }
 
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Strip)?;
-        let rows_per_strip = self.image().strip_decoder.as_ref().unwrap().rows_per_strip;
+        let rows_per_strip = self.image.strip_decoder.as_ref().unwrap().rows_per_strip;
 
         if rows_per_strip == 0 {
             return Ok(0);
         }
 
         // rows_per_strip - 1 can never fail since we know it's at least 1
-        let height = match self.image().height.checked_add(rows_per_strip - 1) {
+        let height = match self.image.height.checked_add(rows_per_strip - 1) {
             Some(h) => h,
             None => return Err(TiffError::IntSizeError),
         };
 
-        let strips = match self.image().planar_config {
+        let strips = match self.image.planar_config {
             PlanarConfiguration::Chunky => height / rows_per_strip,
-            PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
+            PlanarConfiguration::Planar => height / rows_per_strip * self.image.samples as u32,
         };
 
         Ok(strips)
@@ -1135,7 +1157,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Number of tiles in image
     pub fn tile_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Tile)?;
-        Ok(u32::try_from(self.image().chunk_offsets.len())?)
+        Ok(u32::try_from(self.image.chunk_offsets.len())?)
     }
 
     fn read_chunk_to_bytes(
@@ -1164,8 +1186,8 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         chunk_index: u32,
     ) -> TiffResult<BufferLayoutPreference> {
-        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
-        let readout = self.image().readout_for_size(data_dims.0, data_dims.1)?;
+        let data_dims = self.image.chunk_data_dimensions(chunk_index)?;
+        let readout = self.image.readout_for_size(data_dims.0, data_dims.1)?;
 
         let extent = readout.result_extent_for_planes(0..1)?;
         let sample_type = extent.sample_type();
@@ -1180,7 +1202,7 @@ impl<R: Read + Seek> Decoder<R> {
             planes: 1,
             plane_stride,
             complete_len: layout.size(),
-            sample_format: self.image().sample_format,
+            sample_format: self.image.sample_format,
             sample_type: Some(sample_type),
         })
     }
@@ -1197,15 +1219,15 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         code_unit: TiffCodingUnit,
     ) -> TiffResult<BufferLayoutPreference> {
-        match self.image().planar_config {
+        match self.image.planar_config {
             PlanarConfiguration::Chunky => return self.image_chunk_buffer_layout(code_unit.0),
             PlanarConfiguration::Planar => {}
         }
 
-        let (width, height) = self.image().chunk_data_dimensions(code_unit.0)?;
+        let (width, height) = self.image.chunk_data_dimensions(code_unit.0)?;
 
         let layout = self
-            .image()
+            .image
             .readout_for_size(width, height)?
             .to_plane_layout()?;
 
@@ -1223,9 +1245,9 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// Note that for planar images each chunk contains only one sample of the underlying data.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
-        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
+        let (width, height) = self.image.chunk_data_dimensions(chunk_index)?;
 
-        let readout = self.image().readout_for_size(width, height)?;
+        let readout = self.image.readout_for_size(width, height)?;
 
         let mut result = readout
             .result_extent_for_planes(0..1)?
@@ -1244,9 +1266,9 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// Note that for planar images each chunk contains only one sample of the underlying data.
     pub fn read_chunk_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
-        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
+        let (width, height) = self.image.chunk_data_dimensions(chunk_index)?;
 
-        let layout = self.image().readout_for_size(width, height)?;
+        let layout = self.image.readout_for_size(width, height)?;
         layout.assert_min_layout(buffer)?;
 
         self.read_chunk_to_bytes(buffer, chunk_index, &layout)?;
@@ -1267,9 +1289,9 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
-        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
+        let (width, height) = self.image.chunk_data_dimensions(chunk_index)?;
 
-        let mut layout = self.image().readout_for_size(width, height)?;
+        let mut layout = self.image.readout_for_size(width, height)?;
         layout.set_row_stride(output_width)?;
 
         let extent = layout.result_extent_for_planes(0..1)?;
@@ -1299,8 +1321,8 @@ impl<R: Read + Seek> Decoder<R> {
         slice: TiffCodingUnit,
         buffer: &mut [u8],
     ) -> TiffResult<()> {
-        let (width, height) = self.image().chunk_data_dimensions(slice.0)?;
-        let readout = self.image().readout_for_size(width, height)?;
+        let (width, height) = self.image.chunk_data_dimensions(slice.0)?;
+        let readout = self.image.readout_for_size(width, height)?;
 
         let ref layout @ image::PlaneLayout {
             ref plane_offsets,
@@ -1322,7 +1344,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
             let chunk = slice.0 + idx as u32 * readout.chunks_per_plane;
-            self.goto_offset_u64(self.image().chunk_offsets[chunk as usize])?;
+            self.goto_offset_u64(self.image.chunk_offsets[chunk as usize])?;
 
             self.image.expand_chunk(
                 &mut self.value_reader,
@@ -1338,13 +1360,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
     /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
     pub fn chunk_dimensions(&self) -> (u32, u32) {
-        self.image().chunk_dimensions().unwrap()
+        self.image.chunk_dimensions().unwrap()
     }
 
     /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
     /// minus any padding.
     pub fn chunk_data_dimensions(&self, chunk_index: u32) -> (u32, u32) {
-        self.image()
+        self.image
             .chunk_data_dimensions(chunk_index)
             .expect("invalid chunk_index")
     }
@@ -1363,7 +1385,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// indicate the layout needed to read the first data plane. This will be fixed in a future
     /// major version of `tiff`.
     pub fn image_buffer_layout(&mut self) -> TiffResult<BufferLayoutPreference> {
-        let layout = self.image().readout_for_image()?.to_plane_layout()?;
+        let layout = self.image.readout_for_image()?.to_plane_layout()?;
         Ok(BufferLayoutPreference::from_planes(&layout))
     }
 
@@ -1387,7 +1409,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// replaced, to ensure that existing code will not run into unexpectedly large allocations
     /// that will error on limits instead.
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        let readout = self.image().readout_for_image()?;
+        let readout = self.image.readout_for_image()?;
 
         let mut result = readout
             .result_extent_for_planes(0..1)?
@@ -1448,7 +1470,7 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         result: &mut DecodingResult,
     ) -> TiffResult<BufferLayoutPreference> {
-        let readout = self.image().readout_for_image()?;
+        let readout = self.image.readout_for_image()?;
         let planes = readout.to_plane_layout()?;
 
         let num_planes = if planes.total_bytes <= self.value_reader.limits.decoding_buffer_size {
@@ -1479,7 +1501,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns an error if the buffer fits less than one plane. In particular, for non-planar
     /// images returns an error if the buffer does not fit the required size.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
-        let readout = self.image().readout_for_image()?;
+        let readout = self.image.readout_for_image()?;
 
         let ref layout @ image::PlaneLayout {
             ref plane_offsets,
@@ -1503,7 +1525,7 @@ impl<R: Read + Seek> Decoder<R> {
 
             for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
                 let chunk = chunk + idx as u32 * readout.chunks_per_plane;
-                self.goto_offset_u64(self.image().chunk_offsets[chunk as usize])?;
+                self.goto_offset_u64(self.image.chunk_offsets[chunk as usize])?;
 
                 self.image.expand_chunk(
                     &mut self.value_reader,
