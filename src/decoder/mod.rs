@@ -516,8 +516,9 @@ where
     /// There are grouped for borrow checker reasons. This allows us to implement methods that
     /// borrow the stream access and the other fields mutably at the same time.
     value_reader: ValueReader<R>,
-    current_ifd: Option<IfdPointer>,
-    next_ifd: Option<IfdPointer>,
+    current_ifd_pointer: Option<IfdPointer>,
+    next_ifd_pointer: Option<IfdPointer>,
+    directory: Directory,
     /// The IFDs we visited already in this chain of IFDs.
     ifd_offsets: Vec<IfdPointer>,
     /// Map from the ifd into the `ifd_offsets` ordered list.
@@ -821,12 +822,12 @@ impl<R: Read + Seek> Decoder<R> {
                 bigtiff,
                 limits: Default::default(),
             },
-            next_ifd,
+            next_ifd_pointer: next_ifd,
             ifd_offsets,
-            current_ifd: None,
+            current_ifd_pointer: None,
+            directory: Directory::empty(),
             seen_ifds: cycles::IfdCycles::new(),
             image: Image {
-                ifd: None,
                 width: 0,
                 height: 0,
                 bits_per_sample: 1,
@@ -867,7 +868,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// The offset of the directory representing the current image.
     pub fn ifd_pointer(&mut self) -> Option<IfdPointer> {
-        self.current_ifd
+        self.current_ifd_pointer
     }
 
     fn image(&self) -> &Image {
@@ -879,8 +880,8 @@ impl<R: Read + Seek> Decoder<R> {
         // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
         if ifd_index >= self.ifd_offsets.len() {
             // We possibly need to load in the next IFD
-            if self.next_ifd.is_none() {
-                self.current_ifd = None;
+            if self.next_ifd_pointer.is_none() {
+                self.current_ifd_pointer = None;
 
                 return Err(TiffError::FormatError(
                     TiffFormatError::ImageFileDirectoryNotFound,
@@ -903,10 +904,10 @@ impl<R: Read + Seek> Decoder<R> {
 
         // If the index is within the list of ifds then we can load the selected image/IFD
         if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            let ifd = self.value_reader.read_directory(*ifd_offset)?;
-            self.next_ifd = ifd.next();
-            self.current_ifd = Some(*ifd_offset);
-            self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+            self.directory = self.value_reader.read_directory(*ifd_offset)?;
+            self.next_ifd_pointer = self.directory.next();
+            self.current_ifd_pointer = Some(*ifd_offset);
+            self.image = Image::from_reader(&mut self.value_reader, &self.directory)?;
 
             Ok(())
         } else {
@@ -917,7 +918,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn next_ifd(&mut self) -> TiffResult<Directory> {
-        let Some(next_ifd) = self.next_ifd.take() else {
+        let Some(next_ifd) = self.next_ifd_pointer.take() else {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
@@ -929,12 +930,12 @@ impl<R: Read + Seek> Decoder<R> {
         self.seen_ifds.insert_next(next_ifd, ifd.next())?;
 
         // Extend the list of known IFD offsets in this chain, if needed.
-        if self.ifd_offsets.last().copied() == self.current_ifd {
+        if self.ifd_offsets.last().copied() == self.current_ifd_pointer {
             self.ifd_offsets.push(next_ifd);
         }
 
-        self.current_ifd = Some(next_ifd);
-        self.next_ifd = ifd.next();
+        self.current_ifd_pointer = Some(next_ifd);
+        self.next_ifd_pointer = ifd.next();
 
         Ok(ifd)
     }
@@ -944,13 +945,14 @@ impl<R: Read + Seek> Decoder<R> {
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
         let ifd = self.next_ifd()?;
-        self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+        self.directory = ifd;
+        self.image = Image::from_reader(&mut self.value_reader, &self.directory)?;
         Ok(())
     }
 
     /// Returns `true` if there is at least one more image available.
     pub fn more_images(&self) -> bool {
-        self.next_ifd.is_some()
+        self.next_ifd_pointer.is_some()
     }
 
     /// Returns the byte_order of the file.
@@ -1527,7 +1529,7 @@ impl<R: Read + Seek> Decoder<R> {
         IfdDecoder {
             inner: tag_reader::TagReader {
                 decoder: &mut self.value_reader,
-                ifd: self.image.ifd.as_ref().unwrap(),
+                ifd: &self.directory,
             },
         }
     }

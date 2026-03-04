@@ -64,7 +64,6 @@ impl TileAttributes {
 
 #[derive(Debug)]
 pub(crate) struct Image {
-    pub ifd: Option<Directory>,
     pub width: u32,
     pub height: u32,
     pub bits_per_sample: u8,
@@ -149,9 +148,9 @@ pub(crate) struct ReadoutLayout {
 impl Image {
     pub fn from_reader<R: Read + Seek>(
         decoder: &mut ValueReader<R>,
-        ifd: Directory,
+        ifd: &Directory,
     ) -> TiffResult<Image> {
-        let mut tag_reader = TagReader { decoder, ifd: &ifd };
+        let mut tag_reader = TagReader { decoder, ifd };
 
         let width = tag_reader.require_tag(Tag::ImageWidth)?.into_u32()?;
         let height = tag_reader.require_tag(Tag::ImageLength)?.into_u32()?;
@@ -435,7 +434,6 @@ impl Image {
         }
 
         Ok(Image {
-            ifd: Some(ifd),
             width,
             height,
             bits_per_sample,
