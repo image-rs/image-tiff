@@ -29,9 +29,7 @@ impl Deflate {
             level: FlateCompression::new(level as u32),
         }
     }
-}
 
-impl Deflate {
     /// Create a new deflate compressor an exact level of compression.
     ///
     /// `0` stands for uncompressed
