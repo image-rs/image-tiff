@@ -9,7 +9,7 @@ mod packbits;
 mod uncompressed;
 
 #[cfg(feature = "deflate")]
-pub use self::deflate::{Deflate, DeflateLevel};
+pub use self::deflate::Deflate;
 
 #[cfg(feature = "lzw")]
 pub use self::lzw::Lzw;

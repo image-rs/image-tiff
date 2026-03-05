@@ -5,7 +5,6 @@ use tiff::{
     decoder::{Decoder, DecodingResult},
     encoder::{
         colortype::{self, ColorType},
-        compression::*,
         Compression, TiffEncoder, TiffValue,
     },
 };
@@ -147,9 +146,9 @@ fn encode_decode_with_lzw() {
 #[test]
 #[cfg(feature = "deflate")]
 fn encode_decode_with_deflate() {
-    encode_decode_with_compression(Compression::Deflate(DeflateLevel::Fast));
-    encode_decode_with_compression(Compression::Deflate(DeflateLevel::Balanced));
-    encode_decode_with_compression(Compression::Deflate(DeflateLevel::Best));
+    encode_decode_with_compression(Compression::Deflate(1));
+    encode_decode_with_compression(Compression::Deflate(6));
+    encode_decode_with_compression(Compression::Deflate(9));
 }
 
 #[test]

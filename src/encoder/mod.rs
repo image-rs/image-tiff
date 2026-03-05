@@ -38,8 +38,6 @@ use self::writer::*;
 /// [Predictor::Horizontal] is for integer sample types.
 /// [Predictor::FloatingPoint] is for floating-point sample types (f32, f64).
 pub type Predictor = crate::tags::Predictor;
-#[cfg(feature = "deflate")]
-pub type DeflateLevel = compression::DeflateLevel;
 
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum Compression {
@@ -48,7 +46,7 @@ pub enum Compression {
     #[cfg(feature = "lzw")]
     Lzw,
     #[cfg(feature = "deflate")]
-    Deflate(DeflateLevel),
+    Deflate(u8),
     Packbits,
 }
 
