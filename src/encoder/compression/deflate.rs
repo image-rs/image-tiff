@@ -30,7 +30,7 @@ impl Deflate {
         }
     }
 
-    /// Create a new deflate compressor an exact level of compression.
+    /// Create a new deflate compressor with an exact level of compression.
     ///
     /// `0` stands for uncompressed
     /// `1` stands for light but fast compression
