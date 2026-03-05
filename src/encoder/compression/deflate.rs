@@ -29,6 +29,18 @@ impl Deflate {
             level: FlateCompression::new(level as u32),
         }
     }
+
+    /// Create a new deflate compressor with an exact level of compression.
+    ///
+    /// `0` stands for uncompressed
+    /// `1` stands for light but fast compression
+    /// `6` is the recommended balanced default
+    /// `9` is maximum compression ratio at the cost of slow encoding
+    pub fn exact_level(level: u8) -> Self {
+        Self {
+            level: FlateCompression::new(level as u32),
+        }
+    }
 }
 
 impl Default for Deflate {
