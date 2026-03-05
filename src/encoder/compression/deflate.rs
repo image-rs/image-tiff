@@ -7,24 +7,15 @@ pub struct Deflate {
     level: FlateCompression,
 }
 
-/// The level of compression used by the Deflate algorithm.
-/// It allows trading compression ratio for compression speed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
-#[derive(Default)]
-pub enum DeflateLevel {
-    /// The fastest possible compression mode.
-    Fast = 1,
-    /// The conserative choice between speed and ratio.
-    #[default]
-    Balanced = 6,
-    /// The best compression available with Deflate.
-    Best = 9,
-}
-
 impl Deflate {
     /// Create a new deflate compressor with a specific level of compression.
-    pub fn with_level(level: DeflateLevel) -> Self {
+    ///
+    /// The valid levels are 1 through 9 inclusive. The default level is 6.
+    ///
+    /// - `1` stands for light but fast compression
+    /// - `6` is the recommended balanced default
+    /// - `9` is maximum compression ratio at the cost of slow encoding
+    pub fn with_level(level: u8) -> Self {
         Self {
             level: FlateCompression::new(level as u32),
         }
@@ -33,7 +24,7 @@ impl Deflate {
 
 impl Default for Deflate {
     fn default() -> Self {
-        Self::with_level(DeflateLevel::default())
+        Self::with_level(6)
     }
 }
 
