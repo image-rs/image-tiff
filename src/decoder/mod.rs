@@ -857,25 +857,69 @@ impl TiffHeader {
 }
 
 impl<R: Read + Seek> Decoder<R> {
+    /// Parse the image header from the underlying file and create a decoder positioned before its
+    /// first directory.
+    ///
+    /// This method opens the file in a state _before_ the first (image) directory. You need to
+    /// call one of [`Self::next_image`], [`Self::next_directory`] or [`Self::seek_to_directory`]
+    /// to choose a directory before interacting with the tag methods.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tiff::decoder::{Decoder, DecodingResult};
+    ///
+    /// let buffered_file = /* */
+    /// # std::io::Cursor::new(include_bytes!(concat!(
+    /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
+    /// # )));
+    ///
+    /// let mut decoder =  Decoder::open(buffered_file)?;
+    /// let mut img_buffer = DecodingResult::U8(vec![]);
+    ///
+    /// while decoder.more_images() {
+    ///     decoder.next_image()?;
+    ///     decoder.read_image_to_buffer(&mut img_buffer)?;
+    /// }
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
+    /// ```
+    ///
+    /// # Relations
+    ///
+    /// The [`TiffHeader`] type allows opening a file with a custom offset.
+    pub fn open(mut r: R) -> TiffResult<Decoder<R>> {
+        let header = TiffHeader::parse(&mut r)?;
+        Ok(header.open(r))
+    }
+
     /// Create a decoder and attempt to parse the first image directory.
     ///
     /// To open a file without parsing any directory yet (for instance to retain a [`Decoder`] on
-    /// errors in the directory), use [`TiffHeader::parse`] and [`TiffHeader::open`] instead..
-    #[deprecated = "Prefer `Decoder::open`. These methods will become aliases in a future major release."]
+    /// errors in the directory), use [`TiffHeader::parse`] and [`TiffHeader::open`] instead.
+    ///
+    /// This method is equivalent to [`Decoder::open`] except it provides no decoder when the first
+    /// IFD errors due to not being an image or an IO problem. It can be replaced precisely with
+    /// this sequence:
+    ///
+    /// ```no_run
+    /// # use tiff::decoder::Decoder;
+    /// # let r = std::io::BufReader::new(std::io::empty());
+    /// let decoder = {
+    ///     let mut tmp = Decoder::open(r)?;
+    ///     tmp.next_image()?;
+    ///     tmp
+    /// };
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
+    /// ```
+    ///
+    #[deprecated = "Prefer `Decoder::open` followed by an explicit `next_image` call. These methods will become aliases in a future major release."]
     pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
         let header = TiffHeader::parse(&mut r)?;
         let mut decoder = header.open(r);
         decoder.next_image()?;
         Ok(decoder)
-    }
-
-    /// Parse the image header from the underlying file and create a decoder positioned before its
-    /// first directory.
-    ///
-    /// The [`TiffHeader`] type allows opening a file with a custom.
-    pub fn open(mut r: R) -> TiffResult<Decoder<R>> {
-        let header = TiffHeader::parse(&mut r)?;
-        Ok(header.open(r))
     }
 
     /// Configure allocation limits for all subsequent operations.
