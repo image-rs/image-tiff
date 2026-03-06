@@ -665,22 +665,22 @@ impl_tiff_value_for_contiguous_sequence!(Rational; 8; Type::RATIONAL);
 impl_tiff_value_for_contiguous_sequence!(SRational; 8; Type::SRATIONAL);
 
 /// Type to represent tiff values of type `IFD`
-#[derive(Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Ifd(pub u32);
 
 /// Type to represent tiff values of type `IFD8`
-#[derive(Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Ifd8(pub u64);
 
 /// Type to represent tiff values of type `RATIONAL`
-#[derive(Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Rational {
     pub n: u32,
     pub d: u32,
 }
 
 /// Type to represent tiff values of type `SRATIONAL`
-#[derive(Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SRational {
     pub n: i32,
     pub d: i32,
