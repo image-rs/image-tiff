@@ -1,3 +1,16 @@
+# Version 0.12.0 (unreleased)
+
+Additions:
+- Added the `TiffHeader` type. It can be used to create a `Decoder` in a state
+  before the first IFD and allows opening files at an arbitrary first IFD
+  offset rather than one indicated by an encoded header at the start.
+
+Changes:
+- The IFD iteration methods on `Decoder` (`next_image`, `seek_to_image`, etc)
+  now come with a strong error guarantee. They will not modify the current
+  directory state if they fail. This includes the failure to interpret an IFD
+  as a supported image in the case of `*_image` variants.
+
 # Version 0.11.3
 
 Additions:
