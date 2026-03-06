@@ -902,53 +902,66 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
     pub fn seek_to_directory(&mut self, ifd_index: usize) -> TiffResult<()> {
-        self.seek_to_ifd(ifd_index)
+        let (offset, directory) = self.find_nth_ifd(ifd_index)?;
+        self.image = Image::no_image();
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
+        Ok(())
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
     ///
     /// The directory is then decoded as an image.
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
-        self.seek_to_ifd(ifd_index)?;
-        self.image = Image::from_reader(&mut self.value_reader, &self.directory)?;
+        let (offset, directory) = self.find_nth_ifd(ifd_index)?;
+        self.image = Image::from_reader(&mut self.value_reader, &directory)?;
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
         Ok(())
     }
 
-    fn seek_to_ifd(&mut self, ifd_index: usize) -> TiffResult<()> {
+    /// Change the directory to the nth in the linked-list chain of IFDs.
+    fn find_nth_ifd(&mut self, ifd_index: usize) -> TiffResult<(IfdPointer, Directory)> {
         // Check whether we have seen this IFD before, if so then the index will be less than the
         // length of the list of ifd offsets If the index is within the list of ifds then we can
         // load the selected image/IFD. Otherwise we iterate the chain until the selected index.
         if let Some(&ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            self.directory = self.value_reader.read_directory(ifd_offset)?;
-            self.current_ifd_pointer = Some(ifd_offset);
+            let directory = self.value_reader.read_directory(ifd_offset)?;
+            Ok((ifd_offset, directory))
         } else {
             // We do not know if we are at the last IFD in the chain if we previous did seek back.
             // The `read_next_ifd_pointer` correctly handles this.
+            let mut chained_ifd = self.current_ifd_pointer;
+            let mut next_ifd = self.directory.next();
+
             loop {
                 // Follow the list until we find the one we want, or we reach the end, whichever happens first
-                self.read_next_ifd_pointer()?;
-
-                if self.directory.next().is_none() {
-                    break;
-                }
+                let (ifd_pointer, ifd) = self.read_chained_ifd(chained_ifd, next_ifd)?;
+                chained_ifd = Some(ifd_pointer);
+                next_ifd = ifd.next();
 
                 if ifd_index < self.ifd_offsets.len() {
                     // We only end up here if initially `ifd_index >= self.ifd_offsets.len()` and
                     // each loop iteration increases the length of `self.ifd_offsets` by (at most)
                     // one.
                     debug_assert!(ifd_index + 1 == self.ifd_offsets.len());
-                    break;
+                    return Ok((ifd_pointer, ifd));
                 }
             }
         }
-
-        // Reaching this point implies `self.directory` represents the selected ifd.
-        Ok(())
     }
 
-    fn read_next_ifd_pointer(&mut self) -> TiffResult<()> {
-        let Some(next_ifd) = self.directory.next() else {
+    fn read_chained_ifd(
+        &mut self,
+        current_ifd_pointer: Option<IfdPointer>,
+        next_ifd: Option<IfdPointer>,
+    ) -> TiffResult<(IfdPointer, Directory)> {
+        let Some(next_ifd) = next_ifd else {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
@@ -960,33 +973,40 @@ impl<R: Read + Seek> Decoder<R> {
         self.seen_ifds.insert_next(next_ifd, ifd.next())?;
 
         // Extend the list of known IFD offsets in this chain, if needed.
-        if self.ifd_offsets.last().copied() == self.current_ifd_pointer {
+        if self.ifd_offsets.last().copied() == current_ifd_pointer {
             self.ifd_offsets.push(next_ifd);
         }
 
-        self.current_ifd_pointer = Some(next_ifd);
-        self.directory = ifd;
-
-        Ok(())
+        Ok((next_ifd, ifd))
     }
 
     /// Reads the next IFD.
     ///
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
     pub fn next_directory(&mut self) -> TiffResult<()> {
+        let next_ifd = self.directory.next();
+        let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
         self.image = Image::no_image();
-        self.read_next_ifd_pointer()
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
+        Ok(())
     }
 
     /// Reads in the next image.
     ///
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
     pub fn next_image(&mut self) -> TiffResult<()> {
-        self.image = Image::no_image();
-        self.read_next_ifd_pointer()?;
-        self.image = Image::from_reader(&mut self.value_reader, &self.directory)?;
+        let next_ifd = self.directory.next();
+        let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
+        self.image = Image::from_reader(&mut self.value_reader, &directory)?;
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
         Ok(())
     }
 
@@ -2014,21 +2034,65 @@ mod tests {
         }
 
         cursor.set_position(0);
+        let (first_ptr, second_ptr, third_ptr);
 
-        let mut decoder = Decoder::new(cursor).unwrap();
-        let first_ifd = decoder.image_ifd();
-        assert!(first_ifd.directory().get(Tag::ImageWidth).is_some());
-        assert!(decoder.more_images());
+        {
+            let mut decoder = Decoder::new(&mut cursor).unwrap();
+            first_ptr = decoder.ifd_pointer();
+            let first_ifd = decoder.image_ifd();
+            assert!(first_ifd.directory().get(Tag::ImageWidth).is_some());
+            assert!(decoder.more_images());
 
-        assert!(decoder.next_image().is_err());
-        let second_ifd = decoder.image_ifd();
-        assert!(second_ifd.directory().get(Tag::ImageWidth).is_none());
-        assert!(decoder.more_images());
+            assert!(decoder.next_image().is_err());
+            let broken_ifd = decoder.image_ifd();
+            assert!(broken_ifd.directory().get(Tag::ImageWidth).is_some());
 
-        assert!(decoder.next_image().is_ok());
-        let third_ifd = decoder.image_ifd();
-        assert!(third_ifd.directory().get(Tag::ImageWidth).is_some());
-        assert!(!decoder.more_images());
+            assert!(decoder.next_directory().is_ok());
+            second_ptr = decoder.ifd_pointer();
+            let second_ifd = decoder.image_ifd();
+            assert!(second_ifd.directory().get(Tag::ImageWidth).is_none());
+            assert!(decoder.more_images());
+
+            assert!(decoder.next_image().is_ok());
+            third_ptr = decoder.ifd_pointer();
+            let third_ifd = decoder.image_ifd();
+            assert!(third_ifd.directory().get(Tag::ImageWidth).is_some());
+            assert!(!decoder.more_images());
+
+            assert!(decoder.seek_to_image(1).is_err());
+            assert_eq!(decoder.ifd_pointer(), third_ptr);
+
+            assert!(decoder.seek_to_directory(1).is_ok());
+            assert_eq!(decoder.ifd_pointer(), second_ptr);
+        }
+
+        cursor.set_position(0);
+
+        {
+            let mut seek_immediately = Decoder::new(&mut cursor).unwrap();
+            assert_eq!(seek_immediately.ifd_pointer(), first_ptr);
+            assert!(seek_immediately.seek_to_image(1).is_err());
+            assert!(seek_immediately.seek_to_image(2).is_ok());
+            assert_eq!(seek_immediately.ifd_pointer(), third_ptr);
+            assert!(seek_immediately
+                .image_ifd()
+                .directory()
+                .get(Tag::ImageWidth)
+                .is_some());
+        }
+
+        cursor.set_position(0);
+
+        {
+            let mut seek_immediately = Decoder::new(&mut cursor).unwrap();
+            assert!(seek_immediately.seek_to_directory(1).is_ok());
+            assert_eq!(seek_immediately.ifd_pointer(), second_ptr);
+            assert!(seek_immediately
+                .image_ifd()
+                .directory()
+                .get(Tag::ImageWidth)
+                .is_none());
+        }
     }
 
     #[test]
