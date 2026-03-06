@@ -42,12 +42,22 @@ pub type Predictor = crate::tags::Predictor;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Compression {
+    /// No compression whatsoever. Fastest but produces large files.
     #[default]
     Uncompressed,
+    /// Legacy [LZW](https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Welch) algorithm. Not recommended, use DEFLATE instead.
     #[cfg(feature = "lzw")]
     Lzw,
+    /// [DEFLATE](https://en.wikipedia.org/wiki/DEFLATE) algorithm with the specified compression level.
+    ///
+    /// The valid levels are 1 through 9 inclusive. The default level is 6.
+    ///
+    /// - `1` stands for light but fast compression
+    /// - `6` is the recommended balanced default
+    /// - `9` is maximum compression ratio at the cost of slow encoding
     #[cfg(feature = "deflate")]
     Deflate(u8),
+    /// [PackBits](https://en.wikipedia.org/wiki/PackBits) compression, a variant of RLE compression scheme. Fast, primitive compression with a poor compression ratio.
     Packbits,
 }
 
@@ -153,7 +163,15 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     /// Set the predictor to use
     ///
     /// A predictor is used to simplify the file before writing it. This is very
-    /// useful when writing a file compressed using LZW as it can improve efficiency
+    /// useful when writing a file compressed using LZW or DEFLATE as it can improve compression ratio
+    ///
+    /// The floating-point predictor is not universally supported. While most software can handle it,
+    /// Safari, Mac OS Preview and ImageJ Java library cannot. Don't use a predictor for float data
+    /// for maximum compatibility at the cost of compression ratio.
+    ///
+    /// The chosen predictor should match the data type being encoded.
+    /// Encoding floating-point data with `Predictor::Horizontal` is technically possible,
+    /// but rarely beneficial, and some decoders may reject such files.
     pub fn with_predictor(mut self, predictor: Predictor) -> Self {
         self.predictor = predictor;
 
