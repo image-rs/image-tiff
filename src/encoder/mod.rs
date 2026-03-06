@@ -39,7 +39,7 @@ use self::writer::*;
 /// [Predictor::FloatingPoint] is for floating-point sample types (f32, f64).
 pub type Predictor = crate::tags::Predictor;
 
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Compression {
     #[default]
     Uncompressed,
