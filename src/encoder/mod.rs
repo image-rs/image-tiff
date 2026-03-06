@@ -836,7 +836,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             .write_tag(Tag::ResolutionUnit, unit.to_u16())
             .unwrap();
         self.encoder
-            .write_tag(Tag::XResolution, value.clone())
+            .write_tag(Tag::XResolution, value)
             .unwrap();
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
