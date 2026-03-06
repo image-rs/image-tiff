@@ -47,8 +47,8 @@ lzw = ["dep:weezl"]
 webp = ["dep:image-webp"]
 zstd = ["dep:zstd"]
 # Fully safe Rust but much slower Zstd decoding.
-# When both zstd and safe-rust-zstd are enabled, zstd takes precedence.
-safe-rust-zstd = ["dep:ruzstd"]
+# When both zstd and zstd-safe-rust are enabled, zstd takes precedence.
+zstd-safe-rust = ["dep:ruzstd"]
 
 [[bench]]
 name = "lzw"

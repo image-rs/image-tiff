@@ -659,7 +659,7 @@ impl Image {
             )),
             #[cfg(feature = "zstd")]
             CompressionMethod::ZSTD => Box::new(zstd::Decoder::new(reader)?),
-            #[cfg(all(not(feature = "zstd"), feature = "safe-rust-zstd"))]
+            #[cfg(all(not(feature = "zstd"), feature = "zstd-safe-rust"))]
             CompressionMethod::ZSTD => Box::new(
                 ruzstd::decoding::StreamingDecoder::new(reader)
                     .map_err(|e| std::io::Error::other(e))?,
