@@ -673,14 +673,14 @@ pub struct Ifd(pub u32);
 pub struct Ifd8(pub u64);
 
 /// Type to represent tiff values of type `RATIONAL`
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone)]
 pub struct Rational {
     pub n: u32,
     pub d: u32,
 }
 
 /// Type to represent tiff values of type `SRATIONAL`
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone)]
 pub struct SRational {
     pub n: i32,
     pub d: i32,
