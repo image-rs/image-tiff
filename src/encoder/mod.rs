@@ -165,9 +165,13 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     /// A predictor is used to simplify the file before writing it. This is very
     /// useful when writing a file compressed using LZW or DEFLATE as it can improve compression ratio
     ///
+    /// The floating-point predictor is not universally supported. While most software can handle it,
+    /// Safari, Mac OS Preview and ImageJ Java library cannot. Don't use a predictor for float data
+    /// for maximum compatibility at the cost of compression ratio.
+    ///
     /// The chosen predictor should match the data type being encoded.
     /// Encoding floating-point data with `Predictor::Horizontal` is technically possible,
-    /// but the compression is less efficient, and some decoders may reject such files.
+    /// but rarely beneficial, and some decoders may reject such files.
     pub fn with_predictor(mut self, predictor: Predictor) -> Self {
         self.predictor = predictor;
 
