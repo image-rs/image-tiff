@@ -4,8 +4,8 @@ use std::io::{self, Read, Seek};
 use std::num::NonZeroUsize;
 
 use crate::tags::{
-    CompressionMethod, IfdPointer, PhotometricInterpretation, PlanarConfiguration, Predictor,
-    SampleFormat, Tag, Type, ValueBuffer,
+    ByteOrder, IfdPointer, PlanarConfiguration, Predictor, SampleFormat, Tag, TiffVariant, Type,
+    ValueBuffer,
 };
 use crate::{
     bytecast, ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError,
@@ -14,7 +14,7 @@ use crate::{
 use half::f16;
 
 use self::image::Image;
-use self::stream::{ByteOrder, EndianReader};
+use self::stream::EndianReader;
 
 mod cycles;
 pub mod ifd;
@@ -505,6 +505,14 @@ impl Default for Limits {
     }
 }
 
+/// Describe the header of TIFF file, including where to find the first image directory.
+#[derive(Debug)]
+pub struct TiffHeader {
+    pub byte_order: ByteOrder,
+    pub variant: TiffVariant,
+    pub first_ifd: IfdPointer,
+}
+
 /// The representation of a TIFF decoder
 ///
 /// Currently does not support decoding of interlaced images
@@ -516,8 +524,8 @@ where
     /// There are grouped for borrow checker reasons. This allows us to implement methods that
     /// borrow the stream access and the other fields mutably at the same time.
     value_reader: ValueReader<R>,
-    current_ifd: Option<IfdPointer>,
-    next_ifd: Option<IfdPointer>,
+    current_ifd_pointer: Option<IfdPointer>,
+    directory: Directory,
     /// The IFDs we visited already in this chain of IFDs.
     ifd_offsets: Vec<IfdPointer>,
     /// Map from the ifd into the `ifd_offsets` ordered list.
@@ -766,8 +774,8 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     host.convert_endian_bytes(class, buf, byte_order);
 }
 
-impl<R: Read + Seek> Decoder<R> {
-    pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
+impl TiffHeader {
+    pub fn parse<R: Read + Seek>(mut r: R) -> TiffResult<Self> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
@@ -779,6 +787,7 @@ impl<R: Read + Seek> Decoder<R> {
                 ))
             }
         };
+
         let mut reader = EndianReader::new(r, byte_order);
 
         let bigtiff = match reader.read_u16()? {
@@ -805,49 +814,71 @@ impl<R: Read + Seek> Decoder<R> {
             }
         };
 
-        let next_ifd = if bigtiff {
-            Some(reader.read_u64()?)
+        let next_ifd = IfdPointer(if bigtiff {
+            reader.read_u64()?
         } else {
-            Some(u64::from(reader.read_u32()?))
-        }
-        .map(IfdPointer);
+            u64::from(reader.read_u32()?)
+        });
 
-        let current_ifd = *next_ifd.as_ref().unwrap();
-        let ifd_offsets = vec![current_ifd];
+        Ok(TiffHeader {
+            byte_order,
+            variant: if bigtiff {
+                TiffVariant::BigTiff
+            } else {
+                TiffVariant::Standard
+            },
+            first_ifd: next_ifd,
+        })
+    }
+
+    /// Open a file, without seeking to any IFD yet.
+    pub fn open<R: Read + Seek>(&self, r: R) -> Decoder<R> {
+        let reader = EndianReader::new(r, self.byte_order);
+
+        Decoder {
+            value_reader: ValueReader {
+                reader,
+                bigtiff: matches!(self.variant, TiffVariant::BigTiff),
+                limits: Default::default(),
+            },
+            ifd_offsets: vec![],
+            current_ifd_pointer: None,
+            directory: {
+                let mut dir = Directory::empty();
+                dir.set_next(Some(self.first_ifd));
+                dir
+            },
+            seen_ifds: cycles::IfdCycles::new(),
+            image: Image::no_image(),
+        }
+    }
+}
+
+impl<R: Read + Seek> Decoder<R> {
+    pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
+        let header = TiffHeader::parse(&mut r)?;
+        let reader = EndianReader::new(r, header.byte_order);
+
+        let first_ifd = header.first_ifd;
+        let ifd_offsets = vec![first_ifd];
 
         let mut decoder = Decoder {
             value_reader: ValueReader {
                 reader,
-                bigtiff,
+                bigtiff: matches!(header.variant, TiffVariant::BigTiff),
                 limits: Default::default(),
             },
-            next_ifd,
             ifd_offsets,
-            current_ifd: None,
-            seen_ifds: cycles::IfdCycles::new(),
-            image: Image {
-                ifd: None,
-                width: 0,
-                height: 0,
-                bits_per_sample: 1,
-                samples: 1,
-                extra_samples: vec![],
-                photometric_samples: 1,
-                sample_format: SampleFormat::Uint,
-                photometric_interpretation: PhotometricInterpretation::BlackIsZero,
-                compression_method: CompressionMethod::None,
-                jpeg_tables: None,
-                predictor: Predictor::None,
-                chunk_type: ChunkType::Strip,
-                planar_config: PlanarConfiguration::Chunky,
-                strip_decoder: None,
-                tile_attributes: None,
-                chunk_offsets: Vec::new(),
-                chunk_bytes: Vec::new(),
-                chroma_subsampling: (2, 2),
-                decompression_to_host_endian: false,
+            current_ifd_pointer: None,
+            directory: {
+                let mut dir = Directory::empty();
+                dir.set_next(Some(first_ifd));
+                dir
             },
+            seen_ifds: cycles::IfdCycles::new(),
+            image: Image::no_image(),
         };
+
         decoder.next_image()?;
         Ok(decoder)
     }
@@ -858,66 +889,79 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
-        Ok((self.image().width, self.image().height))
+        Ok((self.image.width, self.image.height))
     }
 
     pub fn colortype(&mut self) -> TiffResult<ColorType> {
-        self.image().colortype()
+        self.image.colortype()
     }
 
     /// The offset of the directory representing the current image.
     pub fn ifd_pointer(&mut self) -> Option<IfdPointer> {
-        self.current_ifd
-    }
-
-    fn image(&self) -> &Image {
-        &self.image
+        self.current_ifd_pointer
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
-    pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
-        // Check whether we have seen this IFD before, if so then the index will be less than the length of the list of ifd offsets
-        if ifd_index >= self.ifd_offsets.len() {
-            // We possibly need to load in the next IFD
-            if self.next_ifd.is_none() {
-                self.current_ifd = None;
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    pub fn seek_to_directory(&mut self, ifd_index: usize) -> TiffResult<()> {
+        let (offset, directory) = self.find_nth_ifd(ifd_index)?;
+        self.image = Image::no_image();
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
+        Ok(())
+    }
 
-                return Err(TiffError::FormatError(
-                    TiffFormatError::ImageFileDirectoryNotFound,
-                ));
-            }
+    /// Loads the IFD at the specified index in the list, if one exists
+    ///
+    /// The directory is then decoded as an image.
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
+        let (offset, directory) = self.find_nth_ifd(ifd_index)?;
+        self.image = Image::from_reader(&mut self.value_reader, &directory)?;
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
+        Ok(())
+    }
+
+    /// Change the directory to the nth in the linked-list chain of IFDs.
+    fn find_nth_ifd(&mut self, ifd_index: usize) -> TiffResult<(IfdPointer, Directory)> {
+        // Check whether we have seen this IFD before, if so then the index will be less than the
+        // length of the list of ifd offsets If the index is within the list of ifds then we can
+        // load the selected image/IFD. Otherwise we iterate the chain until the selected index.
+        if let Some(&ifd_offset) = self.ifd_offsets.get(ifd_index) {
+            let directory = self.value_reader.read_directory(ifd_offset)?;
+            Ok((ifd_offset, directory))
+        } else {
+            // We do not know if we are at the last IFD in the chain if we previous did seek back.
+            // The `read_next_ifd_pointer` correctly handles this.
+            let mut chained_ifd = self.current_ifd_pointer;
+            let mut next_ifd = self.directory.next();
 
             loop {
                 // Follow the list until we find the one we want, or we reach the end, whichever happens first
-                let ifd = self.next_ifd()?;
-
-                if ifd.next().is_none() {
-                    break;
-                }
+                let (ifd_pointer, ifd) = self.read_chained_ifd(chained_ifd, next_ifd)?;
+                chained_ifd = Some(ifd_pointer);
+                next_ifd = ifd.next();
 
                 if ifd_index < self.ifd_offsets.len() {
-                    break;
+                    // We only end up here if initially `ifd_index >= self.ifd_offsets.len()` and
+                    // each loop iteration increases the length of `self.ifd_offsets` by (at most)
+                    // one.
+                    debug_assert!(ifd_index + 1 == self.ifd_offsets.len());
+                    return Ok((ifd_pointer, ifd));
                 }
             }
         }
-
-        // If the index is within the list of ifds then we can load the selected image/IFD
-        if let Some(ifd_offset) = self.ifd_offsets.get(ifd_index) {
-            let ifd = self.value_reader.read_directory(*ifd_offset)?;
-            self.next_ifd = ifd.next();
-            self.current_ifd = Some(*ifd_offset);
-            self.image = Image::from_reader(&mut self.value_reader, ifd)?;
-
-            Ok(())
-        } else {
-            Err(TiffError::FormatError(
-                TiffFormatError::ImageFileDirectoryNotFound,
-            ))
-        }
     }
 
-    fn next_ifd(&mut self) -> TiffResult<Directory> {
-        let Some(next_ifd) = self.next_ifd.take() else {
+    fn read_chained_ifd(
+        &mut self,
+        current_ifd_pointer: Option<IfdPointer>,
+        next_ifd: Option<IfdPointer>,
+    ) -> TiffResult<(IfdPointer, Directory)> {
+        let Some(next_ifd) = next_ifd else {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
@@ -929,28 +973,46 @@ impl<R: Read + Seek> Decoder<R> {
         self.seen_ifds.insert_next(next_ifd, ifd.next())?;
 
         // Extend the list of known IFD offsets in this chain, if needed.
-        if self.ifd_offsets.last().copied() == self.current_ifd {
+        if self.ifd_offsets.last().copied() == current_ifd_pointer {
             self.ifd_offsets.push(next_ifd);
         }
 
-        self.current_ifd = Some(next_ifd);
-        self.next_ifd = ifd.next();
+        Ok((next_ifd, ifd))
+    }
 
-        Ok(ifd)
+    /// Reads the next IFD.
+    ///
+    /// If there is no further image in the TIFF file a format error is returned.
+    /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    pub fn next_directory(&mut self) -> TiffResult<()> {
+        let next_ifd = self.directory.next();
+        let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
+        self.image = Image::no_image();
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
+        Ok(())
     }
 
     /// Reads in the next image.
+    ///
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
+    ///
+    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
     pub fn next_image(&mut self) -> TiffResult<()> {
-        let ifd = self.next_ifd()?;
-        self.image = Image::from_reader(&mut self.value_reader, ifd)?;
+        let next_ifd = self.directory.next();
+        let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
+        self.image = Image::from_reader(&mut self.value_reader, &directory)?;
+        self.current_ifd_pointer = Some(offset);
+        self.directory = directory;
         Ok(())
     }
 
     /// Returns `true` if there is at least one more image available.
     pub fn more_images(&self) -> bool {
-        self.next_ifd.is_some()
+        self.directory.next().is_some()
     }
 
     /// Returns the byte_order of the file.
@@ -1099,10 +1161,10 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
-        if expected != self.image().chunk_type {
+        if expected != self.image.chunk_type {
             return Err(TiffError::UsageError(UsageError::InvalidChunkType(
                 expected,
-                self.image().chunk_type,
+                self.image.chunk_type,
             )));
         }
 
@@ -1111,27 +1173,27 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// The chunk type (Strips / Tiles) of the image
     pub fn get_chunk_type(&self) -> ChunkType {
-        self.image().chunk_type
+        self.image.chunk_type
     }
 
     /// Number of strips in image
     pub fn strip_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Strip)?;
-        let rows_per_strip = self.image().strip_decoder.as_ref().unwrap().rows_per_strip;
+        let rows_per_strip = self.image.strip_decoder.as_ref().unwrap().rows_per_strip;
 
         if rows_per_strip == 0 {
             return Ok(0);
         }
 
         // rows_per_strip - 1 can never fail since we know it's at least 1
-        let height = match self.image().height.checked_add(rows_per_strip - 1) {
+        let height = match self.image.height.checked_add(rows_per_strip - 1) {
             Some(h) => h,
             None => return Err(TiffError::IntSizeError),
         };
 
-        let strips = match self.image().planar_config {
+        let strips = match self.image.planar_config {
             PlanarConfiguration::Chunky => height / rows_per_strip,
-            PlanarConfiguration::Planar => height / rows_per_strip * self.image().samples as u32,
+            PlanarConfiguration::Planar => height / rows_per_strip * self.image.samples as u32,
         };
 
         Ok(strips)
@@ -1140,7 +1202,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Number of tiles in image
     pub fn tile_count(&mut self) -> TiffResult<u32> {
         self.check_chunk_type(ChunkType::Tile)?;
-        Ok(u32::try_from(self.image().chunk_offsets.len())?)
+        Ok(u32::try_from(self.image.chunk_offsets.len())?)
     }
 
     fn read_chunk_to_bytes(
@@ -1169,8 +1231,8 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         chunk_index: u32,
     ) -> TiffResult<BufferLayoutPreference> {
-        let data_dims = self.image().chunk_data_dimensions(chunk_index)?;
-        let readout = self.image().readout_for_size(data_dims.0, data_dims.1)?;
+        let data_dims = self.image.chunk_data_dimensions(chunk_index)?;
+        let readout = self.image.readout_for_size(data_dims.0, data_dims.1)?;
 
         let extent = readout.result_extent_for_planes(0..1)?;
         let sample_type = extent.sample_type();
@@ -1185,7 +1247,7 @@ impl<R: Read + Seek> Decoder<R> {
             planes: 1,
             plane_stride,
             complete_len: layout.size(),
-            sample_format: self.image().sample_format,
+            sample_format: self.image.sample_format,
             sample_type: Some(sample_type),
         })
     }
@@ -1202,15 +1264,15 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         code_unit: TiffCodingUnit,
     ) -> TiffResult<BufferLayoutPreference> {
-        match self.image().planar_config {
+        match self.image.planar_config {
             PlanarConfiguration::Chunky => return self.image_chunk_buffer_layout(code_unit.0),
             PlanarConfiguration::Planar => {}
         }
 
-        let (width, height) = self.image().chunk_data_dimensions(code_unit.0)?;
+        let (width, height) = self.image.chunk_data_dimensions(code_unit.0)?;
 
         let layout = self
-            .image()
+            .image
             .readout_for_size(width, height)?
             .to_plane_layout()?;
 
@@ -1228,9 +1290,9 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// Note that for planar images each chunk contains only one sample of the underlying data.
     pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
-        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
+        let (width, height) = self.image.chunk_data_dimensions(chunk_index)?;
 
-        let readout = self.image().readout_for_size(width, height)?;
+        let readout = self.image.readout_for_size(width, height)?;
 
         let mut result = readout
             .result_extent_for_planes(0..1)?
@@ -1249,9 +1311,9 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// Note that for planar images each chunk contains only one sample of the underlying data.
     pub fn read_chunk_bytes(&mut self, chunk_index: u32, buffer: &mut [u8]) -> TiffResult<()> {
-        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
+        let (width, height) = self.image.chunk_data_dimensions(chunk_index)?;
 
-        let layout = self.image().readout_for_size(width, height)?;
+        let layout = self.image.readout_for_size(width, height)?;
         layout.assert_min_layout(buffer)?;
 
         self.read_chunk_to_bytes(buffer, chunk_index, &layout)?;
@@ -1272,9 +1334,9 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
-        let (width, height) = self.image().chunk_data_dimensions(chunk_index)?;
+        let (width, height) = self.image.chunk_data_dimensions(chunk_index)?;
 
-        let mut layout = self.image().readout_for_size(width, height)?;
+        let mut layout = self.image.readout_for_size(width, height)?;
         layout.set_row_stride(output_width)?;
 
         let extent = layout.result_extent_for_planes(0..1)?;
@@ -1304,8 +1366,8 @@ impl<R: Read + Seek> Decoder<R> {
         slice: TiffCodingUnit,
         buffer: &mut [u8],
     ) -> TiffResult<()> {
-        let (width, height) = self.image().chunk_data_dimensions(slice.0)?;
-        let readout = self.image().readout_for_size(width, height)?;
+        let (width, height) = self.image.chunk_data_dimensions(slice.0)?;
+        let readout = self.image.readout_for_size(width, height)?;
 
         let ref layout @ image::PlaneLayout {
             ref plane_offsets,
@@ -1327,7 +1389,7 @@ impl<R: Read + Seek> Decoder<R> {
 
         for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
             let chunk = slice.0 + idx as u32 * readout.chunks_per_plane;
-            self.goto_offset_u64(self.image().chunk_offsets[chunk as usize])?;
+            self.goto_offset_u64(self.image.chunk_offsets[chunk as usize])?;
 
             self.image.expand_chunk(
                 &mut self.value_reader,
@@ -1343,13 +1405,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns the default chunk size for the current image. Any given chunk in the image is at most as large as
     /// the value returned here. For the size of the data (chunk minus padding), use `chunk_data_dimensions`.
     pub fn chunk_dimensions(&self) -> (u32, u32) {
-        self.image().chunk_dimensions().unwrap()
+        self.image.chunk_dimensions().unwrap()
     }
 
     /// Returns the size of the data in the chunk with the specified index. This is the default size of the chunk,
     /// minus any padding.
     pub fn chunk_data_dimensions(&self, chunk_index: u32) -> (u32, u32) {
-        self.image()
+        self.image
             .chunk_data_dimensions(chunk_index)
             .expect("invalid chunk_index")
     }
@@ -1368,7 +1430,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// indicate the layout needed to read the first data plane. This will be fixed in a future
     /// major version of `tiff`.
     pub fn image_buffer_layout(&mut self) -> TiffResult<BufferLayoutPreference> {
-        let layout = self.image().readout_for_image()?.to_plane_layout()?;
+        let layout = self.image.readout_for_image()?.to_plane_layout()?;
         Ok(BufferLayoutPreference::from_planes(&layout))
     }
 
@@ -1392,7 +1454,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// replaced, to ensure that existing code will not run into unexpectedly large allocations
     /// that will error on limits instead.
     pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
-        let readout = self.image().readout_for_image()?;
+        let readout = self.image.readout_for_image()?;
 
         let mut result = readout
             .result_extent_for_planes(0..1)?
@@ -1453,7 +1515,7 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         result: &mut DecodingResult,
     ) -> TiffResult<BufferLayoutPreference> {
-        let readout = self.image().readout_for_image()?;
+        let readout = self.image.readout_for_image()?;
         let planes = readout.to_plane_layout()?;
 
         let num_planes = if planes.total_bytes <= self.value_reader.limits.decoding_buffer_size {
@@ -1484,7 +1546,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns an error if the buffer fits less than one plane. In particular, for non-planar
     /// images returns an error if the buffer does not fit the required size.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
-        let readout = self.image().readout_for_image()?;
+        let readout = self.image.readout_for_image()?;
 
         let ref layout @ image::PlaneLayout {
             ref plane_offsets,
@@ -1508,7 +1570,7 @@ impl<R: Read + Seek> Decoder<R> {
 
             for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
                 let chunk = chunk + idx as u32 * readout.chunks_per_plane;
-                self.goto_offset_u64(self.image().chunk_offsets[chunk as usize])?;
+                self.goto_offset_u64(self.image.chunk_offsets[chunk as usize])?;
 
                 self.image.expand_chunk(
                     &mut self.value_reader,
@@ -1527,7 +1589,7 @@ impl<R: Read + Seek> Decoder<R> {
         IfdDecoder {
             inner: tag_reader::TagReader {
                 decoder: &mut self.value_reader,
-                ifd: self.image.ifd.as_ref().unwrap(),
+                ifd: &self.directory,
             },
         }
     }
@@ -1894,7 +1956,7 @@ impl<'l> IfdDecoder<'l> {
 mod tests {
     use super::Decoder;
     use crate::{
-        bytecast,
+        bytecast, encoder,
         tags::{ByteOrder, Tag, ValueBuffer},
     };
 
@@ -1954,5 +2016,112 @@ mod tests {
             );
             assert_eq!(&by_bytes[..3], &[8, 8, 8]);
         }
+    }
+
+    #[test]
+    fn non_image_directory_between() {
+        let mut cursor = std::io::Cursor::new(vec![]);
+
+        {
+            let mut encoder = encoder::TiffEncoder::new(&mut cursor).unwrap();
+            encoder
+                .write_image::<encoder::colortype::Gray8>(1, 1, &[0])
+                .unwrap();
+            encoder.image_directory().unwrap().finish().unwrap();
+            encoder
+                .write_image::<encoder::colortype::Gray8>(1, 1, &[0])
+                .unwrap();
+        }
+
+        cursor.set_position(0);
+        let (first_ptr, second_ptr, third_ptr);
+
+        {
+            let mut decoder = Decoder::new(&mut cursor).unwrap();
+            first_ptr = decoder.ifd_pointer();
+            let first_ifd = decoder.image_ifd();
+            assert!(first_ifd.directory().get(Tag::ImageWidth).is_some());
+            assert!(decoder.more_images());
+
+            assert!(decoder.next_image().is_err());
+            let broken_ifd = decoder.image_ifd();
+            assert!(broken_ifd.directory().get(Tag::ImageWidth).is_some());
+
+            assert!(decoder.next_directory().is_ok());
+            second_ptr = decoder.ifd_pointer();
+            let second_ifd = decoder.image_ifd();
+            assert!(second_ifd.directory().get(Tag::ImageWidth).is_none());
+            assert!(decoder.more_images());
+
+            assert!(decoder.next_image().is_ok());
+            third_ptr = decoder.ifd_pointer();
+            let third_ifd = decoder.image_ifd();
+            assert!(third_ifd.directory().get(Tag::ImageWidth).is_some());
+            assert!(!decoder.more_images());
+
+            assert!(decoder.seek_to_image(1).is_err());
+            assert_eq!(decoder.ifd_pointer(), third_ptr);
+
+            assert!(decoder.seek_to_directory(1).is_ok());
+            assert_eq!(decoder.ifd_pointer(), second_ptr);
+        }
+
+        cursor.set_position(0);
+
+        {
+            let mut seek_immediately = Decoder::new(&mut cursor).unwrap();
+            assert_eq!(seek_immediately.ifd_pointer(), first_ptr);
+            assert!(seek_immediately.seek_to_image(1).is_err());
+            assert!(seek_immediately.seek_to_image(2).is_ok());
+            assert_eq!(seek_immediately.ifd_pointer(), third_ptr);
+            assert!(seek_immediately
+                .image_ifd()
+                .directory()
+                .get(Tag::ImageWidth)
+                .is_some());
+        }
+
+        cursor.set_position(0);
+
+        {
+            let mut seek_immediately = Decoder::new(&mut cursor).unwrap();
+            assert!(seek_immediately.seek_to_directory(1).is_ok());
+            assert_eq!(seek_immediately.ifd_pointer(), second_ptr);
+            assert!(seek_immediately
+                .image_ifd()
+                .directory()
+                .get(Tag::ImageWidth)
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn non_image_directory_start() {
+        let mut cursor = std::io::Cursor::new(vec![]);
+
+        {
+            let mut encoder = encoder::TiffEncoder::new(&mut cursor).unwrap();
+            encoder.image_directory().unwrap().finish().unwrap();
+            encoder
+                .write_image::<encoder::colortype::Gray8>(1, 1, &[0])
+                .unwrap();
+        }
+
+        cursor.set_position(0);
+
+        let header = super::TiffHeader::parse(&mut cursor).unwrap();
+        let mut decoder = header.open(cursor);
+        assert!(decoder.more_images());
+
+        assert_eq!(decoder.ifd_pointer(), None);
+        assert!(decoder.next_directory().is_ok());
+        let first_ifd = decoder.image_ifd();
+        assert!(first_ifd.directory().get(Tag::ImageWidth).is_none());
+        assert!(decoder.more_images());
+
+        assert!(decoder.next_image().is_ok());
+        let second_ifd = decoder.image_ifd();
+        assert!(second_ifd.directory().get(Tag::ImageWidth).is_some());
+        assert!(!decoder.more_images());
     }
 }
