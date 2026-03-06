@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let file = std::fs::File::open(image)?;
     let io = std::io::BufReader::new(file);
-    let mut reader = Decoder::new(io)?;
+    let mut reader = Decoder::open(io)?;
 
     let mut data = DecodingResult::I8(vec![]);
 

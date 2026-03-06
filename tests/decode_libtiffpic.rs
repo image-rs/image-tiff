@@ -153,17 +153,12 @@ fn decode_libtiffpic(path: &str) -> Result<(), tiff::TiffError> {
     let path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
 
     let img_file = File::open(path)?;
-    let mut decoder = Decoder::new(img_file)?;
+    let mut decoder = Decoder::open(img_file)?;
+
     let mut buffer = DecodingResult::U8(vec![]);
-
-    loop {
-        let _layout = decoder.read_image_to_buffer(&mut buffer);
-
-        if !decoder.more_images() {
-            break;
-        }
-
+    while decoder.more_images() {
         decoder.next_image()?;
+        let _layout = decoder.read_image_to_buffer(&mut buffer);
     }
 
     Ok(())
