@@ -152,7 +152,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
     /// Set the predictor to use
     ///
     /// A predictor is used to simplify the file before writing it. This is very
-    /// useful when writing a file compressed using LZW as it can improve efficiency
+    /// useful when writing a file compressed using LZW or DEFLATE as it can improve compression ratio
     pub fn with_predictor(mut self, predictor: Predictor) -> Self {
         self.predictor = predictor;
 
