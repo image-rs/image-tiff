@@ -40,7 +40,7 @@ use self::writer::*;
 pub type Predictor = crate::tags::Predictor;
 
 #[non_exhaustive]
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Compression {
     #[default]
     Uncompressed,
@@ -840,9 +840,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         self.encoder
             .write_tag(Tag::ResolutionUnit, unit.to_u16())
             .unwrap();
-        self.encoder
-            .write_tag(Tag::XResolution, value.clone())
-            .unwrap();
+        self.encoder.write_tag(Tag::XResolution, value).unwrap();
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
