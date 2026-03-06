@@ -525,7 +525,6 @@ where
     /// borrow the stream access and the other fields mutably at the same time.
     value_reader: ValueReader<R>,
     current_ifd_pointer: Option<IfdPointer>,
-    next_ifd_pointer: Option<IfdPointer>,
     directory: Directory,
     /// The IFDs we visited already in this chain of IFDs.
     ifd_offsets: Vec<IfdPointer>,
@@ -842,10 +841,13 @@ impl TiffHeader {
                 bigtiff: matches!(self.variant, TiffVariant::BigTiff),
                 limits: Default::default(),
             },
-            next_ifd_pointer: Some(self.first_ifd),
             ifd_offsets: vec![],
             current_ifd_pointer: None,
-            directory: Directory::empty(),
+            directory: {
+                let mut dir = Directory::empty();
+                dir.set_next(Some(self.first_ifd));
+                dir
+            },
             seen_ifds: cycles::IfdCycles::new(),
             image: Image::no_image(),
         }
@@ -866,10 +868,13 @@ impl<R: Read + Seek> Decoder<R> {
                 bigtiff: matches!(header.variant, TiffVariant::BigTiff),
                 limits: Default::default(),
             },
-            next_ifd_pointer: Some(first_ifd),
             ifd_offsets,
             current_ifd_pointer: None,
-            directory: Directory::empty(),
+            directory: {
+                let mut dir = Directory::empty();
+                dir.set_next(Some(first_ifd));
+                dir
+            },
             seen_ifds: cycles::IfdCycles::new(),
             image: Image::no_image(),
         };
@@ -917,7 +922,6 @@ impl<R: Read + Seek> Decoder<R> {
         if let Some(&ifd_offset) = self.ifd_offsets.get(ifd_index) {
             self.directory = self.value_reader.read_directory(ifd_offset)?;
             self.current_ifd_pointer = Some(ifd_offset);
-            self.next_ifd_pointer = self.directory.next();
         } else {
             // We do not know if we are at the last IFD in the chain if we previous did seek back.
             // The `read_next_ifd_pointer` correctly handles this.
@@ -944,7 +948,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     fn read_next_ifd_pointer(&mut self) -> TiffResult<()> {
-        let Some(next_ifd) = self.next_ifd_pointer.take() else {
+        let Some(next_ifd) = self.directory.next() else {
             return Err(TiffError::FormatError(
                 TiffFormatError::ImageFileDirectoryNotFound,
             ));
@@ -961,7 +965,6 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         self.current_ifd_pointer = Some(next_ifd);
-        self.next_ifd_pointer = ifd.next();
         self.directory = ifd;
 
         Ok(())
@@ -989,7 +992,7 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Returns `true` if there is at least one more image available.
     pub fn more_images(&self) -> bool {
-        self.next_ifd_pointer.is_some()
+        self.directory.next().is_some()
     }
 
     /// Returns the byte_order of the file.
