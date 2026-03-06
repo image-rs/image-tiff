@@ -8,13 +8,12 @@ use tiff::decoder::Decoder;
 
 fn read_image(image: &[u8]) {
     let image = std::io::Cursor::new(image);
-    let decoder = Decoder::new(black_box(image));
-    let mut reader = decoder.unwrap();
+    let decoder = Decoder::open(black_box(image));
 
-    while {
+    let mut reader = decoder.unwrap();
+    while reader.more_images() {
         reader.read_image().unwrap();
-        reader.more_images()
-    } {}
+    }
 }
 
 fn main() {

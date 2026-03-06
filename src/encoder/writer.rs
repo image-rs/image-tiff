@@ -241,7 +241,9 @@ fn encoder_on_short_writes() {
         }
 
         write.inner.set_position(0);
-        let mut tiff_reader = crate::decoder::Decoder::new(&mut write.inner).unwrap();
+
+        let mut tiff_reader = crate::decoder::Decoder::open(&mut write.inner).unwrap();
+        tiff_reader.next_image().unwrap();
         let _layout = tiff_reader.read_image_to_buffer(&mut data).unwrap();
 
         assert!(

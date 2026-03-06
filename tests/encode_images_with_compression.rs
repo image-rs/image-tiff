@@ -109,7 +109,8 @@ fn encode_decode_with_compression(compression: Compression) {
     // Decode tiff
     data.set_position(0);
     {
-        let mut decoder = Decoder::new(data).unwrap();
+        let mut decoder = Decoder::open(data).unwrap();
+        decoder.next_image().unwrap();
 
         // Check the RGB image
         assert_eq!(

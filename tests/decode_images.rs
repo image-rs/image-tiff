@@ -14,7 +14,9 @@ macro_rules! test_image_sum {
         fn $name(file: &str, expected_type: ColorType, expected_sum: $sum_ty) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let img_file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+            let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+
+            decoder.next_image().expect("Cannot read image IFD");
             assert_eq!(decoder.colortype().unwrap(), expected_type);
             let img_res = decoder.read_image().unwrap();
 
@@ -44,7 +46,9 @@ test_image_sum!(test_image_sum_f64, F64, f64);
 fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = File::open(path).expect("Cannot find test image!");
-    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
+
     assert_eq!(decoder.colortype().unwrap(), expected_type);
     assert!(matches!(
         decoder.read_image(),
@@ -166,7 +170,8 @@ fn test_string_tags() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+        decoder.next_image().expect("Cannot read image IFD");
         let software = decoder.get_tag(tiff::tags::Tag::Software).unwrap();
         match software {
             ifd::Value::Ascii(s) => assert_eq!(
@@ -190,7 +195,8 @@ fn test_decode_data() {
         }
     }
     let file = File::open("./tests/decodedata-rgb-3c-8b.tiff").unwrap();
-    let mut decoder = Decoder::new(file).unwrap();
+    let mut decoder = Decoder::open(file).unwrap();
+    decoder.next_image().expect("Cannot read image IFD");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
     assert_eq!(decoder.dimensions().unwrap(), (100, 100));
     if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
@@ -236,7 +242,8 @@ fn test_tiled_rect_rgb_u8() {
 fn test_inner_access() {
     let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-rect-rgb-u8.tif");
     let img_file = File::open(path).expect("Cannot find test image!");
-    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
 
     let c = decoder
@@ -322,7 +329,8 @@ fn test_tiled_incremental() {
 
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = File::open(path).expect("Cannot find test image!");
-    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
     assert_eq!(decoder.colortype().unwrap(), expected_type);
 
     let tiles = decoder.tile_count().unwrap();
@@ -352,7 +360,8 @@ fn test_read_planar_bands() {
 
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = File::open(path).expect("Cannot find test image!");
-    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
     assert_eq!(decoder.colortype().unwrap(), expected_type);
 
     let chunks = decoder.strip_count().unwrap();
@@ -396,7 +405,8 @@ fn test_div_zero() {
         178, 178, 178,
     ];
 
-    let err = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let err = decoder.next_image().unwrap_err();
 
     match err {
         TiffError::FormatError(TiffFormatError::StripTileTagConflict) => {}
@@ -414,7 +424,8 @@ fn test_too_many_value_bytes() {
         0, 89, 89, 89, 89, 89, 89, 89, 89, 96, 1, 20, 89, 89, 89, 89, 18,
     ];
 
-    let error = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let error = decoder.next_image().unwrap_err();
 
     match error {
         tiff::TiffError::LimitsExceeded => {}
@@ -432,7 +443,8 @@ fn fuzzer_testcase5() {
         178, 178, 178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -445,7 +457,8 @@ fn fuzzer_testcase1() {
         178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -458,7 +471,8 @@ fn fuzzer_testcase6() {
         178, 178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -470,7 +484,8 @@ fn oom() {
         0, 0, 0, 40, 0, 0, 0, 23, 1, 4, 0, 1, 0, 0, 0, 178, 48, 178, 178, 178, 178, 162, 178,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -482,7 +497,8 @@ fn fuzzer_testcase4() {
         0, 0, 0, 40, 0, 0, 0, 23, 1, 4, 0, 1, 0, 0, 0, 48, 178, 178, 178, 0, 1, 0, 13, 13,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -498,7 +514,8 @@ fn fuzzer_testcase2() {
         73,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -514,7 +531,8 @@ fn invalid_jpeg_tag_2() {
         0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 36, 73, 73, 0, 42, 36, 36, 36, 36, 0, 0, 8, 0,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -527,7 +545,8 @@ fn fuzzer_testcase3() {
         255, 255,
     ];
 
-    let _ = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let _ = decoder.next_image().unwrap_err();
 }
 
 #[test]
@@ -545,7 +564,8 @@ fn timeout() {
         0, 0, 73, 73, 42, 0, 8, 0, 0, 0, 0, 0, 32,
     ];
 
-    let error = tiff::decoder::Decoder::new(std::io::Cursor::new(&image)).unwrap_err();
+    let mut decoder = Decoder::open(std::io::Cursor::new(&image)).unwrap();
+    let error = decoder.next_image().unwrap_err();
 
     match error {
         TiffError::FormatError(TiffFormatError::CycleInOffsets) => {}
@@ -583,7 +603,8 @@ fn test_image_bytes(
 ) {
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = File::open(path).expect("Cannot find test image!");
-    let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().unwrap();
 
     let mut buffer = vec![0u8; 0];
     for (idx, &(expected_type, expected_crc)) in expected.iter().enumerate() {
@@ -726,8 +747,9 @@ fn extra_bits_rgb() {
 fn test_decode_huge_g4() {
     let path = PathBuf::from(TEST_IMAGE_DIR).join("big_g4.tif");
     let img_file = File::open(path).expect("failed to open large G4 test image");
-    let mut decoder = tiff::decoder::Decoder::new(img_file).expect("failed to create decoder");
+    let mut decoder = Decoder::open(img_file).expect("failed to create decoder");
 
+    decoder.next_image().expect("failed to read image IFD");
     let (width, height) = decoder.dimensions().expect("failed to get dimensions");
 
     assert!(

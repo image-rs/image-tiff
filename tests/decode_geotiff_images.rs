@@ -15,8 +15,9 @@ fn test_geo_tiff() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
         decoder = decoder.with_limits(tiff::decoder::Limits::unlimited());
+        decoder.next_image().expect("Cannot read image");
 
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
@@ -71,16 +72,11 @@ fn test_webp_tiff() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
 
-        loop {
-            decoder.read_image_to_buffer(&mut buffer).unwrap();
-
-            if !decoder.more_images() {
-                break;
-            }
-
+        while decoder.more_images() {
             decoder.next_image().unwrap();
+            decoder.read_image_to_buffer(&mut buffer).unwrap();
         }
     }
 }

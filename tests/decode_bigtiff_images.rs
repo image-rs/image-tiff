@@ -15,7 +15,9 @@ fn test_big_tiff() {
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);
         let img_file = File::open(path).expect("Cannot find test image!");
-        let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+        let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+        decoder.next_image().expect("Cannot read image");
+
         assert_eq!(
             decoder.dimensions().expect("Cannot get dimensions"),
             (64, 64)

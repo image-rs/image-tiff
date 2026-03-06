@@ -544,6 +544,8 @@ struct ValueReader<R> {
 }
 
 /// Reads a directory's tag values from an underlying stream.
+///
+/// Created by [`Decoder::current_ifd`] and [`Decoder::read_directory_tags`].
 pub struct IfdDecoder<'lt> {
     inner: tag_reader::TagReader<'lt, dyn tag_reader::EntryDecoder + 'lt>,
 }
@@ -855,34 +857,33 @@ impl TiffHeader {
 }
 
 impl<R: Read + Seek> Decoder<R> {
+    /// Create a decoder and attempt to parse the first image directory.
+    ///
+    /// To open a file without parsing any directory yet (for instance to retain a [`Decoder`] on
+    /// errors in the directory), use [`TiffHeader::parse`] and [`TiffHeader::open`] instead..
+    #[deprecated = "Prefer `Decoder::open`. These methods will become aliases in a future major release."]
     pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
         let header = TiffHeader::parse(&mut r)?;
-        let reader = EndianReader::new(r, header.byte_order);
-
-        let first_ifd = header.first_ifd;
-        let ifd_offsets = vec![first_ifd];
-
-        let mut decoder = Decoder {
-            value_reader: ValueReader {
-                reader,
-                bigtiff: matches!(header.variant, TiffVariant::BigTiff),
-                limits: Default::default(),
-            },
-            ifd_offsets,
-            current_ifd_pointer: None,
-            directory: {
-                let mut dir = Directory::empty();
-                dir.set_next(Some(first_ifd));
-                dir
-            },
-            seen_ifds: cycles::IfdCycles::new(),
-            image: Image::no_image(),
-        };
-
+        let mut decoder = header.open(r);
         decoder.next_image()?;
         Ok(decoder)
     }
 
+    /// Parse the image header from the underlying file and create a decoder positioned before its
+    /// first directory.
+    ///
+    /// The [`TiffHeader`] type allows opening a file with a custom.
+    pub fn open(mut r: R) -> TiffResult<Decoder<R>> {
+        let header = TiffHeader::parse(&mut r)?;
+        Ok(header.open(r))
+    }
+
+    /// Configure allocation limits for all subsequent operations.
+    ///
+    /// Limits apply to allocated return values such as from [`Decoder::read_image`] and
+    /// reallocations on [`ValueBuffer`] and [`DecodingResult`] arguments when they are passed as
+    /// mutable references to methods such as [`Decoder::read_image_to_buffer`]. They carry over to
+    /// the decoder returned form [`Self::current_ifd`].
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
         self.value_reader.limits = limits;
         self
@@ -903,7 +904,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Loads the IFD at the specified index in the list, if one exists
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an
+    /// error is returned.
     pub fn seek_to_directory(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
         self.image = Image::no_image();
@@ -916,7 +918,8 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// The directory is then decoded as an image.
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an
+    /// error is returned.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
         self.image = Image::from_reader(&mut self.value_reader, &directory)?;
@@ -985,7 +988,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an error is
+    /// returned.
     pub fn next_directory(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
@@ -1000,7 +1004,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an error is
+    /// returned.
     pub fn next_image(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
@@ -1483,9 +1488,10 @@ impl<R: Read + Seek> Decoder<R> {
     /// let mut result = DecodingResult::U8(vec![]);
     ///
     /// let mut reader = /* */
-    /// # Decoder::new(std::io::Cursor::new(include_bytes!(concat!(
+    /// # Decoder::open(std::io::Cursor::new(include_bytes!(concat!(
     /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
     /// # )))).unwrap();
+    /// # reader.next_image().unwrap();
     /// let layout = reader.read_image_to_buffer(&mut result)?;
     ///
     /// if result.as_buffer(0).as_bytes().len() < layout.complete_len {
@@ -1503,10 +1509,10 @@ impl<R: Read + Seek> Decoder<R> {
     /// let mut result = DecodingResult::I8(vec![]);
     ///
     /// let mut reader = /* */
-    /// # Decoder::new(std::io::Cursor::new(include_bytes!(concat!(
+    /// # Decoder::open(std::io::Cursor::new(include_bytes!(concat!(
     /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
     /// # )))).unwrap();
-    ///
+    /// # reader.next_image().unwrap();
     /// reader.read_image_to_buffer(&mut result)?;
     ///
     /// # Ok::<_, tiff::TiffError>(())
@@ -1584,8 +1590,12 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    /// Get the IFD decoder for our current image IFD.
-    pub fn image_ifd(&mut self) -> IfdDecoder<'_> {
+    /// Get the IFD decoder for our current IFD.
+    ///
+    /// This may be used with any directory, valid image or otherwise. When the decoder has not
+    /// read a directory yet (a state after [`TiffHeader::open`]) the decoder will represent an
+    /// empty directory with only the next pointer set.
+    pub fn current_ifd(&mut self) -> IfdDecoder<'_> {
         IfdDecoder {
             inner: tag_reader::TagReader {
                 decoder: &mut self.value_reader,
@@ -1607,7 +1617,9 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// # use std::io::Cursor;
     /// # let mut data = Cursor::new(vec![0]);
-    /// let mut decoder = Decoder::new(&mut data).unwrap();
+    /// let mut decoder = Decoder::open(&mut data)?;
+    ///
+    /// decoder.next_directory()?;
     /// let sub_ifds = decoder.get_tag(Tag::SubIfd)?.into_ifd_vec()?;
     ///
     /// for ifd in sub_ifds {
@@ -1630,13 +1642,13 @@ impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag from the current image directory.
     /// Return `Ok(None)` if the tag is not present.
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
-        self.image_ifd().find_tag(tag)
+        self.current_ifd().find_tag(tag)
     }
 
     /// Tries to retrieve a tag in the current image directory and convert it to the desired
     /// unsigned type.
     pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
-        self.image_ifd().find_tag_unsigned(tag)
+        self.current_ifd().find_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a vector of all a tag's values and convert them to the desired unsigned
@@ -1645,19 +1657,19 @@ impl<R: Read + Seek> Decoder<R> {
         &mut self,
         tag: Tag,
     ) -> TiffResult<Option<Vec<T>>> {
-        self.image_ifd().find_tag_unsigned_vec(tag)
+        self.current_ifd().find_tag_unsigned_vec(tag)
     }
 
     /// Tries to retrieve a tag from the current image directory and convert it to the desired
     /// unsigned type. Returns an error if the tag is not present.
     pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
-        self.image_ifd().get_tag_unsigned(tag)
+        self.current_ifd().get_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a tag from the current image directory.
     /// Returns an error if the tag is not present
     pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
-        self.image_ifd().get_tag(tag)
+        self.current_ifd().get_tag(tag)
     }
 
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
@@ -1712,7 +1724,7 @@ impl<R: Read + Seek> Decoder<R> {
     }
 
     pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
-        self.image_ifd().tag_iter()
+        self.current_ifd().tag_iter()
     }
 }
 
@@ -1968,9 +1980,11 @@ mod tests {
         ))
         .unwrap();
 
-        let mut decoder = Decoder::new(file).unwrap();
+        let mut decoder = Decoder::open(file).unwrap();
         let file_bo = decoder.byte_order();
-        let mut ifd = decoder.image_ifd();
+
+        decoder.next_image().unwrap();
+        let mut ifd = decoder.current_ifd();
 
         {
             let value = ifd
@@ -2037,25 +2051,26 @@ mod tests {
         let (first_ptr, second_ptr, third_ptr);
 
         {
-            let mut decoder = Decoder::new(&mut cursor).unwrap();
+            let mut decoder = Decoder::open(&mut cursor).unwrap();
+            decoder.next_image().unwrap();
             first_ptr = decoder.ifd_pointer();
-            let first_ifd = decoder.image_ifd();
+            let first_ifd = decoder.current_ifd();
             assert!(first_ifd.directory().get(Tag::ImageWidth).is_some());
             assert!(decoder.more_images());
 
             assert!(decoder.next_image().is_err());
-            let broken_ifd = decoder.image_ifd();
+            let broken_ifd = decoder.current_ifd();
             assert!(broken_ifd.directory().get(Tag::ImageWidth).is_some());
 
             assert!(decoder.next_directory().is_ok());
             second_ptr = decoder.ifd_pointer();
-            let second_ifd = decoder.image_ifd();
+            let second_ifd = decoder.current_ifd();
             assert!(second_ifd.directory().get(Tag::ImageWidth).is_none());
             assert!(decoder.more_images());
 
             assert!(decoder.next_image().is_ok());
             third_ptr = decoder.ifd_pointer();
-            let third_ifd = decoder.image_ifd();
+            let third_ifd = decoder.current_ifd();
             assert!(third_ifd.directory().get(Tag::ImageWidth).is_some());
             assert!(!decoder.more_images());
 
@@ -2069,13 +2084,14 @@ mod tests {
         cursor.set_position(0);
 
         {
-            let mut seek_immediately = Decoder::new(&mut cursor).unwrap();
+            let mut seek_immediately = Decoder::open(&mut cursor).unwrap();
+            assert!(seek_immediately.seek_to_image(0).is_ok());
             assert_eq!(seek_immediately.ifd_pointer(), first_ptr);
             assert!(seek_immediately.seek_to_image(1).is_err());
             assert!(seek_immediately.seek_to_image(2).is_ok());
             assert_eq!(seek_immediately.ifd_pointer(), third_ptr);
             assert!(seek_immediately
-                .image_ifd()
+                .current_ifd()
                 .directory()
                 .get(Tag::ImageWidth)
                 .is_some());
@@ -2084,11 +2100,11 @@ mod tests {
         cursor.set_position(0);
 
         {
-            let mut seek_immediately = Decoder::new(&mut cursor).unwrap();
+            let mut seek_immediately = Decoder::open(&mut cursor).unwrap();
             assert!(seek_immediately.seek_to_directory(1).is_ok());
             assert_eq!(seek_immediately.ifd_pointer(), second_ptr);
             assert!(seek_immediately
-                .image_ifd()
+                .current_ifd()
                 .directory()
                 .get(Tag::ImageWidth)
                 .is_none());
@@ -2111,16 +2127,19 @@ mod tests {
 
         let header = super::TiffHeader::parse(&mut cursor).unwrap();
         let mut decoder = header.open(cursor);
-        assert!(decoder.more_images());
+        let indicated_next = decoder.current_ifd().directory().next();
 
+        assert!(decoder.more_images());
         assert_eq!(decoder.ifd_pointer(), None);
+
         assert!(decoder.next_directory().is_ok());
-        let first_ifd = decoder.image_ifd();
+        let first_ifd = decoder.current_ifd();
         assert!(first_ifd.directory().get(Tag::ImageWidth).is_none());
         assert!(decoder.more_images());
+        assert_eq!(decoder.ifd_pointer(), indicated_next);
 
         assert!(decoder.next_image().is_ok());
-        let second_ifd = decoder.image_ifd();
+        let second_ifd = decoder.current_ifd();
         assert!(second_ifd.directory().get(Tag::ImageWidth).is_some());
         assert!(!decoder.more_images());
     }

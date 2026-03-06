@@ -10,14 +10,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let file = std::fs::File::open(image)?;
     let io = std::io::BufReader::new(file);
-    let mut reader = Decoder::new(io)?;
+    let mut reader = Decoder::open(io)?;
 
-    loop {
+    while reader.more_images() {
+        reader.next_directory()?;
         ls_dir(&mut reader);
-
-        if !reader.more_images() {
-            break;
-        }
     }
 
     Ok(())
@@ -29,7 +26,7 @@ fn ls_dir<R: std::io::Read + std::io::Seek>(reader: &mut Decoder<R>) {
     }
 
     println!("Name\tHex\tType\tCount");
-    let ifd = reader.image_ifd();
+    let ifd = reader.current_ifd();
 
     for (tag, entry) in ifd.directory().iter() {
         let name: &'static str = match tag {

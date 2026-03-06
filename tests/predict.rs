@@ -18,8 +18,9 @@ macro_rules! test_predict {
         ) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::new(file).expect("Cannot create decoder!");
+            let mut decoder = Decoder::open(file).expect("Cannot create decoder!");
 
+            decoder.next_image().unwrap();
             assert_eq!(decoder.colortype().unwrap(), expected_type);
             let image_data = match decoder.read_image().unwrap() {
                 DecodingResult::$buffer(res) => res,
@@ -123,7 +124,9 @@ macro_rules! test_predict_roundtrip {
         ) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let img_file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+            let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+
+            decoder.next_image().unwrap();
             assert_eq!(decoder.colortype().unwrap(), expected_type);
 
             let image_data = match decoder.read_image().unwrap() {
@@ -142,7 +145,8 @@ macro_rules! test_predict_roundtrip {
             }
             file.seek(SeekFrom::Start(0)).unwrap();
             {
-                let mut decoder = Decoder::new(&mut file).unwrap();
+                let mut decoder = Decoder::open(&mut file).unwrap();
+                decoder.next_image().unwrap();
                 if let DecodingResult::$buffer(img_res) =
                     decoder.read_image().expect("Decoding image failed")
                 {

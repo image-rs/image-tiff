@@ -33,7 +33,9 @@ fn encode_decode() {
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = Decoder::open(&mut file).unwrap();
+        decoder.next_image().unwrap();
+
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
 
@@ -116,7 +118,9 @@ fn encode_decode_big() {
     }
     {
         file.seek(SeekFrom::Start(0)).unwrap();
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = Decoder::open(&mut file).unwrap();
+        decoder.next_image().unwrap();
+
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
 
@@ -207,8 +211,10 @@ fn test_encode_ifd() {
 
     // Rewind the cursor for reading
     data.set_position(0);
+
     {
-        let mut decoder = Decoder::new(&mut data).unwrap();
+        let mut decoder = Decoder::open(&mut data).unwrap();
+        decoder.next_image().unwrap();
 
         assert_eq!(decoder.assert_tag_u32(65000), 42);
         assert_eq!(decoder.assert_tag_u32_vec(65000), [42]);
@@ -247,7 +253,9 @@ macro_rules! test_roundtrip {
         ) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let img_file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
+            let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+            decoder.next_image().unwrap();
+
             assert_eq!(decoder.colortype().unwrap(), expected_type);
 
             let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
@@ -268,7 +276,8 @@ macro_rules! test_roundtrip {
             file.seek(SeekFrom::Start(0)).unwrap();
             {
                 let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
-                let mut decoder = Decoder::new(&mut file).unwrap();
+                let mut decoder = Decoder::open(&mut file).unwrap();
+                decoder.next_image().unwrap();
                 decoder.read_image_to_buffer(&mut buffer).unwrap();
                 if let DecodingResult::$buffer(img_res) = buffer {
                     assert_eq!(*image_data, img_res);
@@ -405,7 +414,8 @@ fn test_gray_f32_floating_point_predictor() {
 
     file.seek(SeekFrom::Start(0)).unwrap();
     {
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = Decoder::open(&mut file).unwrap();
+        decoder.next_image().unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(32));
 
         let mut buffer = DecodingResult::F32(vec![]);
@@ -451,7 +461,8 @@ fn test_rgb_f32_floating_point_predictor() {
 
     file.seek(SeekFrom::Start(0)).unwrap();
     {
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = Decoder::open(&mut file).unwrap();
+        decoder.next_image().unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(32));
 
         let mut buffer = DecodingResult::F32(vec![]);
@@ -494,7 +505,8 @@ fn test_gray_f64_floating_point_predictor() {
 
     file.seek(SeekFrom::Start(0)).unwrap();
     {
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = Decoder::open(&mut file).unwrap();
+        decoder.next_image().unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(64));
 
         let mut buffer = DecodingResult::F64(vec![]);
@@ -591,7 +603,8 @@ fn test_multiple_byte() {
 
     data.set_position(0);
     {
-        let mut decoder = Decoder::new(&mut data).unwrap();
+        let mut decoder = Decoder::open(&mut data).unwrap();
+        decoder.next_image().unwrap();
 
         assert_eq!(decoder.assert_tag_u32_vec(65000), [1]);
         assert_eq!(decoder.assert_tag_u32_vec(65001), [1, 2]);
@@ -672,7 +685,8 @@ fn test_signed() {
     //Rewind the cursor for reading
     data.set_position(0);
     {
-        let mut decoder = Decoder::new(&mut data).unwrap();
+        let mut decoder = Decoder::open(&mut data).unwrap();
+        decoder.next_image().unwrap();
 
         assert_eq!(decoder.assert_tag_i32(65000), -1);
         assert_eq!(decoder.assert_tag_i32_vec(65001), [-1]);
@@ -724,13 +738,14 @@ fn test_multipage_image() {
     img_file.seek(SeekFrom::Start(0)).unwrap();
 
     {
-        let mut img_decoder = Decoder::new(&mut img_file).unwrap();
+        let mut decoder = Decoder::open(&mut img_file).unwrap();
+        decoder.next_image().unwrap();
 
         // check the dimensions of the image in the first page
-        assert_eq!(img_decoder.dimensions().unwrap(), (2, 2));
-        img_decoder.next_image().unwrap();
+        assert_eq!(decoder.dimensions().unwrap(), (2, 2));
+        decoder.next_image().unwrap();
         // check the dimensions of the image in the second page
-        assert_eq!(img_decoder.dimensions().unwrap(), (3, 3));
+        assert_eq!(decoder.dimensions().unwrap(), (3, 3));
     }
 }
 
@@ -759,7 +774,8 @@ fn test_rows_per_strip() {
 
     file.seek(SeekFrom::Start(0)).unwrap();
     {
-        let mut decoder = Decoder::new(&mut file).unwrap();
+        let mut decoder = Decoder::open(&mut file).unwrap();
+        decoder.next_image().unwrap();
         assert_eq!(decoder.get_tag_u64(Tag::RowsPerStrip).unwrap(), 2);
         assert_eq!(decoder.strip_count().unwrap(), 50);
 
@@ -799,9 +815,10 @@ fn test_auxiliary_directory() {
     }
 
     data.set_position(0);
-    let mut decoder = Decoder::new(&mut data).unwrap();
+    let mut decoder = Decoder::open(&mut data).unwrap();
 
     {
+        decoder.next_image().unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (1, 1));
         let _ = decoder.read_image().unwrap();
     }
