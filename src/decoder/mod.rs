@@ -544,6 +544,8 @@ struct ValueReader<R> {
 }
 
 /// Reads a directory's tag values from an underlying stream.
+///
+/// Created by [`Decoder::current_ifd`] and [`Decoder::read_directory_tags`].
 pub struct IfdDecoder<'lt> {
     inner: tag_reader::TagReader<'lt, dyn tag_reader::EntryDecoder + 'lt>,
 }
@@ -857,32 +859,26 @@ impl TiffHeader {
 impl<R: Read + Seek> Decoder<R> {
     pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
         let header = TiffHeader::parse(&mut r)?;
-        let reader = EndianReader::new(r, header.byte_order);
-
-        let first_ifd = header.first_ifd;
-        let ifd_offsets = vec![first_ifd];
-
-        let mut decoder = Decoder {
-            value_reader: ValueReader {
-                reader,
-                bigtiff: matches!(header.variant, TiffVariant::BigTiff),
-                limits: Default::default(),
-            },
-            ifd_offsets,
-            current_ifd_pointer: None,
-            directory: {
-                let mut dir = Directory::empty();
-                dir.set_next(Some(first_ifd));
-                dir
-            },
-            seen_ifds: cycles::IfdCycles::new(),
-            image: Image::no_image(),
-        };
-
+        let mut decoder = header.open(r);
         decoder.next_image()?;
         Ok(decoder)
     }
 
+    /// Parse the image header from the underlying file and create a decoder positioned before its
+    /// first directory.
+    ///
+    /// The [`TiffHeader`] type allows opening a file with a custom.
+    pub fn open(mut r: R) -> TiffResult<Decoder<R>> {
+        let header = TiffHeader::parse(&mut r)?;
+        Ok(header.open(r))
+    }
+
+    /// Configure allocation limits for all subsequent operations.
+    ///
+    /// Limits apply to allocated return values such as from [`Decoder::read_image`] and
+    /// reallocations on [`ValueBuffer`] and [`DecodingResult`] arguments when they are passed as
+    /// mutable references to methods such as [`Decoder::read_image_to_buffer`]. They carry over to
+    /// the decoder returned form [`Self::current_ifd`].
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
         self.value_reader.limits = limits;
         self
@@ -903,7 +899,8 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Loads the IFD at the specified index in the list, if one exists
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an
+    /// error is returned.
     pub fn seek_to_directory(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
         self.image = Image::no_image();
@@ -916,7 +913,8 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// The directory is then decoded as an image.
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an
+    /// error is returned.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
         self.image = Image::from_reader(&mut self.value_reader, &directory)?;
@@ -985,7 +983,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an error is
+    /// returned.
     pub fn next_directory(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
@@ -1000,7 +999,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     ///
-    /// Error guarantee: the current directory and its offset is not modified when an error occurs.
+    /// Error guarantee: the current directory and [`Self::ifd_pointer`] is not modified when an error is
+    /// returned.
     pub fn next_image(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
@@ -1584,7 +1584,11 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
-    /// Get the IFD decoder for our current image IFD.
+    /// Get the IFD decoder for our current IFD.
+    ///
+    /// This may be used with any directory, valid image or otherwise. When the decoder has not
+    /// read a directory yet (a state after [`TiffHeader::open`]) the decoder will represent an
+    /// empty directory with only the next pointer set.
     pub fn image_ifd(&mut self) -> IfdDecoder<'_> {
         IfdDecoder {
             inner: tag_reader::TagReader {
@@ -2111,13 +2115,16 @@ mod tests {
 
         let header = super::TiffHeader::parse(&mut cursor).unwrap();
         let mut decoder = header.open(cursor);
-        assert!(decoder.more_images());
+        let indicated_next = decoder.image_ifd().directory().next();
 
+        assert!(decoder.more_images());
         assert_eq!(decoder.ifd_pointer(), None);
+
         assert!(decoder.next_directory().is_ok());
         let first_ifd = decoder.image_ifd();
         assert!(first_ifd.directory().get(Tag::ImageWidth).is_none());
         assert!(decoder.more_images());
+        assert_eq!(decoder.ifd_pointer(), indicated_next);
 
         assert!(decoder.next_image().is_ok());
         let second_ifd = decoder.image_ifd();
