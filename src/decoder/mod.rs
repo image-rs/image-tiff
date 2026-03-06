@@ -4,8 +4,8 @@ use std::io::{self, Read, Seek};
 use std::num::NonZeroUsize;
 
 use crate::tags::{
-    CompressionMethod, IfdPointer, PhotometricInterpretation, PlanarConfiguration, Predictor,
-    SampleFormat, Tag, Type, ValueBuffer,
+    ByteOrder, IfdPointer, PlanarConfiguration, Predictor, SampleFormat, Tag, TiffVariant, Type,
+    ValueBuffer,
 };
 use crate::{
     bytecast, ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError,
@@ -14,7 +14,7 @@ use crate::{
 use half::f16;
 
 use self::image::Image;
-use self::stream::{ByteOrder, EndianReader};
+use self::stream::EndianReader;
 
 mod cycles;
 pub mod ifd;
@@ -505,6 +505,14 @@ impl Default for Limits {
     }
 }
 
+/// Describe the header of TIFF file, including where to find the first image directory.
+#[derive(Debug)]
+pub struct TiffHeader {
+    pub byte_order: ByteOrder,
+    pub variant: TiffVariant,
+    pub first_ifd: IfdPointer,
+}
+
 /// The representation of a TIFF decoder
 ///
 /// Currently does not support decoding of interlaced images
@@ -767,8 +775,8 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     host.convert_endian_bytes(class, buf, byte_order);
 }
 
-impl<R: Read + Seek> Decoder<R> {
-    pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
+impl TiffHeader {
+    pub fn parse<R: Read + Seek>(mut r: R) -> TiffResult<Self> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
@@ -780,6 +788,7 @@ impl<R: Read + Seek> Decoder<R> {
                 ))
             }
         };
+
         let mut reader = EndianReader::new(r, byte_order);
 
         let bigtiff = match reader.read_u16()? {
@@ -806,55 +815,67 @@ impl<R: Read + Seek> Decoder<R> {
             }
         };
 
-        let next_ifd = if bigtiff {
-            Some(reader.read_u64()?)
+        let next_ifd = IfdPointer(if bigtiff {
+            reader.read_u64()?
         } else {
-            Some(u64::from(reader.read_u32()?))
-        }
-        .map(IfdPointer);
+            u64::from(reader.read_u32()?)
+        });
 
-        let current_ifd = *next_ifd.as_ref().unwrap();
-        let ifd_offsets = vec![current_ifd];
+        Ok(TiffHeader {
+            byte_order,
+            variant: if bigtiff {
+                TiffVariant::BigTiff
+            } else {
+                TiffVariant::Standard
+            },
+            first_ifd: next_ifd,
+        })
+    }
+
+    /// Open a file, without seeking to any IFD yet.
+    pub fn open<R: Read + Seek>(&self, r: R) -> Decoder<R> {
+        let reader = EndianReader::new(r, self.byte_order);
+
+        Decoder {
+            value_reader: ValueReader {
+                reader,
+                bigtiff: matches!(self.variant, TiffVariant::BigTiff),
+                limits: Default::default(),
+            },
+            next_ifd_pointer: Some(self.first_ifd),
+            ifd_offsets: vec![],
+            current_ifd_pointer: None,
+            directory: Directory::empty(),
+            seen_ifds: cycles::IfdCycles::new(),
+            image: Image::no_image(),
+        }
+    }
+}
+
+impl<R: Read + Seek> Decoder<R> {
+    pub fn new(mut r: R) -> TiffResult<Decoder<R>> {
+        let header = TiffHeader::parse(&mut r)?;
+        let reader = EndianReader::new(r, header.byte_order);
+
+        let first_ifd = header.first_ifd;
+        let ifd_offsets = vec![first_ifd];
 
         let mut decoder = Decoder {
             value_reader: ValueReader {
                 reader,
-                bigtiff,
+                bigtiff: matches!(header.variant, TiffVariant::BigTiff),
                 limits: Default::default(),
             },
-            next_ifd_pointer: next_ifd,
+            next_ifd_pointer: Some(first_ifd),
             ifd_offsets,
             current_ifd_pointer: None,
             directory: Directory::empty(),
             seen_ifds: cycles::IfdCycles::new(),
-            image: Self::no_image(),
+            image: Image::no_image(),
         };
+
         decoder.next_image()?;
         Ok(decoder)
-    }
-
-    fn no_image() -> Image {
-        Image {
-            width: 0,
-            height: 0,
-            bits_per_sample: 1,
-            samples: 1,
-            extra_samples: vec![],
-            photometric_samples: 1,
-            sample_format: SampleFormat::Uint,
-            photometric_interpretation: PhotometricInterpretation::BlackIsZero,
-            compression_method: CompressionMethod::None,
-            jpeg_tables: None,
-            predictor: Predictor::None,
-            chunk_type: ChunkType::Strip,
-            planar_config: PlanarConfiguration::Chunky,
-            strip_decoder: None,
-            tile_attributes: None,
-            chunk_offsets: Vec::new(),
-            chunk_bytes: Vec::new(),
-            chroma_subsampling: (2, 2),
-            decompression_to_host_endian: false,
-        }
     }
 
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
@@ -951,7 +972,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_directory(&mut self) -> TiffResult<()> {
-        self.image = Self::no_image();
+        self.image = Image::no_image();
         self.read_next_ifd_pointer()
     }
 
@@ -960,6 +981,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// If there is no further image in the TIFF file a format error is returned.
     /// To determine whether there are more images call `TIFFDecoder::more_images` instead.
     pub fn next_image(&mut self) -> TiffResult<()> {
+        self.image = Image::no_image();
         self.read_next_ifd_pointer()?;
         self.image = Image::from_reader(&mut self.value_reader, &self.directory)?;
         Ok(())
@@ -1911,7 +1933,7 @@ impl<'l> IfdDecoder<'l> {
 mod tests {
     use super::Decoder;
     use crate::{
-        bytecast,
+        bytecast, encoder,
         tags::{ByteOrder, Tag, ValueBuffer},
     };
 
@@ -1971,5 +1993,68 @@ mod tests {
             );
             assert_eq!(&by_bytes[..3], &[8, 8, 8]);
         }
+    }
+
+    #[test]
+    fn non_image_directory_between() {
+        let mut cursor = std::io::Cursor::new(vec![]);
+
+        {
+            let mut encoder = encoder::TiffEncoder::new(&mut cursor).unwrap();
+            encoder
+                .write_image::<encoder::colortype::Gray8>(1, 1, &[0])
+                .unwrap();
+            encoder.image_directory().unwrap().finish().unwrap();
+            encoder
+                .write_image::<encoder::colortype::Gray8>(1, 1, &[0])
+                .unwrap();
+        }
+
+        cursor.set_position(0);
+
+        let mut decoder = Decoder::new(cursor).unwrap();
+        let first_ifd = decoder.image_ifd();
+        assert!(first_ifd.directory().get(Tag::ImageWidth).is_some());
+        assert!(decoder.more_images());
+
+        assert!(decoder.next_image().is_err());
+        let second_ifd = decoder.image_ifd();
+        assert!(second_ifd.directory().get(Tag::ImageWidth).is_none());
+        assert!(decoder.more_images());
+
+        assert!(decoder.next_image().is_ok());
+        let third_ifd = decoder.image_ifd();
+        assert!(third_ifd.directory().get(Tag::ImageWidth).is_some());
+        assert!(!decoder.more_images());
+    }
+
+    #[test]
+    fn non_image_directory_start() {
+        let mut cursor = std::io::Cursor::new(vec![]);
+
+        {
+            let mut encoder = encoder::TiffEncoder::new(&mut cursor).unwrap();
+            encoder.image_directory().unwrap().finish().unwrap();
+            encoder
+                .write_image::<encoder::colortype::Gray8>(1, 1, &[0])
+                .unwrap();
+        }
+
+        cursor.set_position(0);
+
+        let header = super::TiffHeader::parse(&mut cursor).unwrap();
+        let mut decoder = header.open(cursor);
+        assert!(decoder.more_images());
+
+        assert_eq!(decoder.ifd_pointer(), None);
+        assert!(decoder.next_directory().is_ok());
+        let first_ifd = decoder.image_ifd();
+        assert!(first_ifd.directory().get(Tag::ImageWidth).is_none());
+        assert!(decoder.more_images());
+
+        assert!(decoder.next_image().is_ok());
+        let second_ifd = decoder.image_ifd();
+        assert!(second_ifd.directory().get(Tag::ImageWidth).is_some());
+        assert!(!decoder.more_images());
     }
 }

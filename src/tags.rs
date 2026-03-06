@@ -589,3 +589,12 @@ pub(crate) enum EndianBytes {
     Four,
     Eight,
 }
+
+/// Defines how directories are laid out in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TiffVariant {
+    /// TIFF-V6.0 with 32-bit offsets and counts.
+    Standard,
+    /// Extended TIFF with 64-bit offsets and counts and long directories.
+    BigTiff,
+}

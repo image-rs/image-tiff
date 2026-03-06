@@ -146,6 +146,30 @@ pub(crate) struct ReadoutLayout {
 }
 
 impl Image {
+    pub(crate) fn no_image() -> Image {
+        Image {
+            width: 0,
+            height: 0,
+            bits_per_sample: 1,
+            samples: 1,
+            extra_samples: vec![],
+            photometric_samples: 1,
+            sample_format: SampleFormat::Uint,
+            photometric_interpretation: PhotometricInterpretation::BlackIsZero,
+            compression_method: CompressionMethod::None,
+            jpeg_tables: None,
+            predictor: Predictor::None,
+            chunk_type: ChunkType::Strip,
+            planar_config: PlanarConfiguration::Chunky,
+            strip_decoder: None,
+            tile_attributes: None,
+            chunk_offsets: Vec::new(),
+            chunk_bytes: Vec::new(),
+            chroma_subsampling: (2, 2),
+            decompression_to_host_endian: false,
+        }
+    }
+
     pub fn from_reader<R: Read + Seek>(
         decoder: &mut ValueReader<R>,
         ifd: &Directory,
