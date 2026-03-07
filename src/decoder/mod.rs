@@ -1458,21 +1458,28 @@ impl<R: Read + Seek> Decoder<R> {
             },
         }
     }
+}
 
+#[doc(hidden = "Deprecated methods")]
+#[allow(deprecated)]
+impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag from the current image directory.
     /// Return `Ok(None)` if the tag is not present.
+    #[deprecated = "Replace with `self.current_ifd().find_tag`"]
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
         self.current_ifd().find_tag(tag)
     }
 
     /// Tries to retrieve a tag in the current image directory and convert it to the desired
     /// unsigned type.
+    #[deprecated = "Replace with `self.current_ifd().find_tag_unsigned`"]
     pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
         self.current_ifd().find_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a vector of all a tag's values and convert them to the desired unsigned
     /// type.
+    #[deprecated = "Replace with `self.current_ifd().find_tag_unsigned_vec`"]
     pub fn find_tag_unsigned_vec<T: TryFrom<u64>>(
         &mut self,
         tag: Tag,
@@ -1482,67 +1489,81 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a tag from the current image directory and convert it to the desired
     /// unsigned type. Returns an error if the tag is not present.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_unsigned`"]
     pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
         self.current_ifd().get_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a tag from the current image directory.
     /// Returns an error if the tag is not present
+    #[deprecated = "Replace with `self.current_ifd().get_tag`"]
     pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
         self.current_ifd().get_tag(tag)
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u32`"]
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u64`"]
     pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
         self.get_tag(tag)?.into_u64()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f32`"]
     pub fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
         self.get_tag(tag)?.into_f32()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f64`"]
     pub fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
         self.get_tag(tag)?.into_f64()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u32_vec`"]
     pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u16_vec`"]
     pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
         self.get_tag(tag)?.into_u16_vec()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u64_vec`"]
     pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
         self.get_tag(tag)?.into_u64_vec()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f32_vec`"]
     pub fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
         self.get_tag(tag)?.into_f32_vec()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f64_vec`"]
     pub fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
         self.get_tag(tag)?.into_f64_vec()
     }
 
     /// Tries to retrieve a tag and convert it to a 8bit vector.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u8_vec`"]
     pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
         self.get_tag(tag)?.into_u8_vec()
     }
 
     /// Tries to retrieve a tag and convert it to a ascii vector.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_ascii_string`"]
     pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
         self.get_tag(tag)?.into_string()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().tag_iter`"]
     pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
         self.current_ifd().tag_iter()
     }
