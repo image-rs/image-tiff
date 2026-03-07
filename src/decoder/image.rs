@@ -330,113 +330,114 @@ impl Image {
             PlanarConfiguration::Planar => samples,
         };
 
+        // Note: Not strictly according to specification. The specification says that tiled images
+        // must have their data encoded in `TileByteCounts` and `TileOffsets`. But `libtiff`
+        // processes tags one-by-one and with *either* of these it will set the flag for the image
+        // being tiled. Also it will just use whatever offsets are available. (I believe also using
+        // the first of the two tag pairs that's available—remember tags are encoded ascending).
+        let is_tiled = ifd.contains(Tag::TileWidth) || ifd.contains(Tag::TileLength);
+        let has_strips = ifd.contains(Tag::StripByteCounts) && ifd.contains(Tag::StripOffsets);
+        let has_tiles = ifd.contains(Tag::TileByteCounts) && ifd.contains(Tag::TileOffsets);
+
         let chunk_type;
         let chunk_offsets;
         let chunk_bytes;
         let strip_decoder;
         let tile_attributes;
-        match (
-            ifd.contains(Tag::StripByteCounts),
-            ifd.contains(Tag::StripOffsets),
-            ifd.contains(Tag::TileByteCounts),
-            ifd.contains(Tag::TileOffsets),
-        ) {
-            (true, true, false, false) => {
-                chunk_type = ChunkType::Strip;
 
-                chunk_offsets = tag_reader
-                    .find_tag(Tag::StripOffsets)?
-                    .unwrap()
-                    .into_u64_vec()?;
-                chunk_bytes = tag_reader
-                    .find_tag(Tag::StripByteCounts)?
-                    .unwrap()
-                    .into_u64_vec()?;
-                let rows_per_strip = tag_reader
-                    .find_tag(Tag::RowsPerStrip)?
-                    .map(Value::into_u32)
-                    .transpose()?
-                    .unwrap_or(height);
-                strip_decoder = Some(StripDecodeState { rows_per_strip });
-                tile_attributes = None;
+        if !is_tiled && has_strips {
+            chunk_type = ChunkType::Strip;
 
-                if chunk_offsets.len() != chunk_bytes.len() {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InconsistentSizesEncountered,
-                    ));
-                }
+            chunk_offsets = tag_reader
+                .find_tag(Tag::StripOffsets)?
+                .unwrap()
+                .into_u64_vec()?;
+            chunk_bytes = tag_reader
+                .find_tag(Tag::StripByteCounts)?
+                .unwrap()
+                .into_u64_vec()?;
+            let rows_per_strip = tag_reader
+                .find_tag(Tag::RowsPerStrip)?
+                .map(Value::into_u32)
+                .transpose()?
+                .unwrap_or(height);
+            strip_decoder = Some(StripDecodeState { rows_per_strip });
+            tile_attributes = None;
 
-                if rows_per_strip == 0 {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InconsistentSizesEncountered,
-                    ));
-                }
-
-                if u32::try_from(chunk_offsets.len())?
-                    != height.div_ceil(rows_per_strip) * planes as u32
-                {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::IncorrectChunkCount {
-                            expected: height.div_ceil(rows_per_strip) * planes as u32,
-                            found: chunk_offsets.len() as u32,
-                        },
-                    ));
-                }
-            }
-            (false, false, true, true) => {
-                chunk_type = ChunkType::Tile;
-
-                let tile_width =
-                    usize::try_from(tag_reader.require_tag(Tag::TileWidth)?.into_u32()?)?;
-                let tile_length =
-                    usize::try_from(tag_reader.require_tag(Tag::TileLength)?.into_u32()?)?;
-
-                if tile_width == 0 {
-                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
-                } else if tile_length == 0 {
-                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
-                }
-
-                strip_decoder = None;
-                tile_attributes = Some(TileAttributes {
-                    image_width: usize::try_from(width)?,
-                    image_height: usize::try_from(height)?,
-                    tile_width,
-                    tile_length,
-                });
-                chunk_offsets = tag_reader
-                    .find_tag(Tag::TileOffsets)?
-                    .unwrap()
-                    .into_u64_vec()?;
-                chunk_bytes = tag_reader
-                    .find_tag(Tag::TileByteCounts)?
-                    .unwrap()
-                    .into_u64_vec()?;
-
-                let tile = tile_attributes.as_ref().unwrap();
-
-                if chunk_offsets.len() != chunk_bytes.len() {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InconsistentSizesEncountered,
-                    ));
-                }
-
-                if chunk_offsets.len() != tile.tiles_down() * tile.tiles_across() * planes as usize
-                {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::IncorrectChunkCount {
-                            expected: (tile.tiles_down() * tile.tiles_across() * planes as usize)
-                                as u32,
-                            found: chunk_offsets.len() as u32,
-                        },
-                    ));
-                }
-            }
-            (_, _, _, _) => {
+            if chunk_offsets.len() != chunk_bytes.len() {
                 return Err(TiffError::FormatError(
-                    TiffFormatError::StripTileTagConflict,
-                ))
+                    TiffFormatError::InconsistentSizesEncountered,
+                ));
             }
+
+            if rows_per_strip == 0 {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ));
+            }
+
+            if u32::try_from(chunk_offsets.len())?
+                != height.div_ceil(rows_per_strip) * planes as u32
+            {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::IncorrectChunkCount {
+                        expected: height.div_ceil(rows_per_strip) * planes as u32,
+                        found: chunk_offsets.len() as u32,
+                    },
+                ));
+            }
+        } else if is_tiled && (has_strips || has_tiles) {
+            chunk_type = ChunkType::Tile;
+
+            let tile_width = usize::try_from(tag_reader.require_tag(Tag::TileWidth)?.into_u32()?)?;
+            let tile_length =
+                usize::try_from(tag_reader.require_tag(Tag::TileLength)?.into_u32()?)?;
+
+            // Prioritize tiles over strips, tiles are what we expect.
+            let (tag_offsets, tag_counts) = if has_tiles {
+                (Tag::TileOffsets, Tag::TileByteCounts)
+            } else {
+                (Tag::StripOffsets, Tag::StripByteCounts)
+            };
+
+            if tile_width == 0 {
+                return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
+            } else if tile_length == 0 {
+                return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
+            }
+
+            strip_decoder = None;
+            tile_attributes = Some(TileAttributes {
+                image_width: usize::try_from(width)?,
+                image_height: usize::try_from(height)?,
+                tile_width,
+                tile_length,
+            });
+
+            chunk_offsets = tag_reader.find_tag(tag_offsets)?.unwrap().into_u64_vec()?;
+            chunk_bytes = tag_reader.find_tag(tag_counts)?.unwrap().into_u64_vec()?;
+
+            let tile = tile_attributes.as_ref().unwrap();
+
+            if chunk_offsets.len() != chunk_bytes.len() {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ));
+            }
+
+            if chunk_offsets.len() != tile.tiles_down() * tile.tiles_across() * planes as usize {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::IncorrectChunkCount {
+                        expected: (tile.tiles_down() * tile.tiles_across() * planes as usize)
+                            as u32,
+                        found: chunk_offsets.len() as u32,
+                    },
+                ));
+            }
+        } else {
+            return Err(TiffError::FormatError(
+                TiffFormatError::StripTileTagConflict,
+            ));
         };
 
         let mut sample_format = sample_format;
