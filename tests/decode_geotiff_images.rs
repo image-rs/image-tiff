@@ -30,27 +30,25 @@ fn test_geo_tiff() {
                 num_samples: 5
             }
         );
+
+        let mut ifd = decoder.current_ifd();
         assert_eq!(
-            decoder
-                .get_tag_u64(Tag::StripOffsets)
+            ifd.get_tag_u64(Tag::StripOffsets)
                 .expect("Cannot get StripOffsets"),
             418
         );
         assert_eq!(
-            decoder
-                .get_tag_u64(Tag::RowsPerStrip)
+            ifd.get_tag_u64(Tag::RowsPerStrip)
                 .expect("Cannot get RowsPerStrip"),
             10
         );
         assert_eq!(
-            decoder
-                .get_tag_u64(Tag::StripByteCounts)
+            ifd.get_tag_u64(Tag::StripByteCounts)
                 .expect("Cannot get StripByteCounts"),
             1000
         );
         assert_eq!(
-            decoder
-                .get_tag(Tag::ModelPixelScaleTag)
+            ifd.get_tag(Tag::ModelPixelScaleTag)
                 .expect("Cannot get pixel scale")
                 .into_f64_vec()
                 .expect("Cannot get pixel scale"),
