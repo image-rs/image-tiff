@@ -20,8 +20,10 @@ mod image;
 mod logluv;
 mod stream;
 mod tag_reader;
+mod value;
 
 pub use self::buffer::{DecodingSampleBuffer, DecodingSampleSlice, DecodingSampleType};
+pub use self::value::EntryBytesReader;
 
 #[deprecated = "Renamed to `DecodingSampleBuffer`"]
 pub type DecodingResult = DecodingSampleBuffer;
@@ -941,6 +943,10 @@ impl<R: Read + Seek> Decoder<R> {
         let mut val = [0; 4];
         self.value_reader.reader.inner().read_exact(&mut val)?;
         Ok(val)
+    }
+
+    pub fn read_entry(&mut self, entry: ifd::Entry) -> TiffResult<EntryBytesReader<'_, R>> {
+        EntryBytesReader::from_entry(&mut self.value_reader, entry)
     }
 
     /// Reads a TIFF IFA offset/value field
