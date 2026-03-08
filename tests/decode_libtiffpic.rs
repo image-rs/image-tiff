@@ -12,9 +12,7 @@ const REFERENCE_DIR: &str = "tests/libtiffpic";
 const FILES: &[(&str, bool)] = &[
     ("tests/libtiffpic/caspian.tif", true),
     ("tests/libtiffpic/cramps.tif", true),
-    // FIXME: See <https://github.com/image-rs/image-tiff/issues/338>, this has tiles as
-    // StripOffsets and has a RowsPerStrip.
-    ("tests/libtiffpic/cramps-tile.tif", false),
+    ("tests/libtiffpic/cramps-tile.tif", true),
     ("tests/libtiffpic/CVS/Entries", false),
     ("tests/libtiffpic/CVS/Repository", false),
     ("tests/libtiffpic/CVS/Root", false),
@@ -90,9 +88,7 @@ const FILES: &[(&str, bool)] = &[
     ("tests/libtiffpic/pc260001.tif", true),
     ("tests/libtiffpic/quad-jpeg.tif", true),
     ("tests/libtiffpic/quad-lzw.tif", true),
-    // FIXME: See <https://github.com/image-rs/image-tiff/issues/338>, this has tiles as
-    // StripOffsets and has a RowsPerStrip.
-    ("tests/libtiffpic/quad-tile.tif", false),
+    ("tests/libtiffpic/quad-tile.tif", true),
     ("tests/libtiffpic/README", false),
     ("tests/libtiffpic/smallliz.tif", true),
     ("tests/libtiffpic/strike.tif", true),
