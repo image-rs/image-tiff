@@ -11,6 +11,12 @@ Changes:
   directory state if they fail. This includes the failure to interpret an IFD
   as a supported image in the case of `*_image` variants.
 
+Compatibility:
+- Changed how tiled TIFF files are detected. The presence of a TileWidth OR
+  TileHeight/TileLength tag now marks an image as tiled. Data is no retrieved
+  from either StripOffsets or TileOffsets with the latter taking precedence.
+  This is closer to the behavior of libtiff.
+
 # Version 0.11.3
 
 Additions:
