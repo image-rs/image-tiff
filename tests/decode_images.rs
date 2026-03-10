@@ -1318,3 +1318,125 @@ fn test_seq_1c_16b_bigendian() {
 fn test_seq_3c_8b_bigendian() {
     test_image_sum_u8("seq-3c-8b-bigendian.tiff", ColorType::RGB(8), 97920);
 }
+
+// --- Standard sub-byte depths ---
+#[test]
+fn test_seq_1c_1b() {
+    test_image_sum_u8("seq-1c-1b.tiff", ColorType::Gray(1), 2720);
+}
+
+#[test]
+fn test_seq_1c_2b() {
+    test_image_sum_u8("seq-1c-2b.tiff", ColorType::Gray(2), 1728);
+}
+
+#[test]
+fn test_seq_1c_4b() {
+    test_image_sum_u8("seq-1c-4b.tiff", ColorType::Gray(4), 15360);
+}
+
+#[test]
+fn test_seq_1c_1b_miniswhite() {
+    test_image_sum_u8("seq-1c-1b-miniswhite.tiff", ColorType::Gray(1), 2720);
+}
+
+#[test]
+fn test_seq_1c_4b_miniswhite() {
+    test_image_sum_u8("seq-1c-4b-miniswhite.tiff", ColorType::Gray(4), 15360);
+}
+
+// --- Multi-strip (RowsPerStrip=4) ---
+#[test]
+fn test_seq_1c_8b_multistrip() {
+    test_image_sum_u8("seq-1c-8b-multistrip.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_16b_multistrip() {
+    test_image_sum_u16("seq-1c-16b-multistrip.tiff", ColorType::Gray(16), 32640);
+}
+
+#[test]
+fn test_seq_3c_8b_multistrip() {
+    test_image_sum_u8("seq-3c-8b-multistrip.tiff", ColorType::RGB(8), 97920);
+}
+
+// --- Tiled + compressed ---
+#[test]
+fn test_seq_1c_8b_tiled_lzw() {
+    test_image_sum_u8("seq-1c-8b-tiled-lzw.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_8b_tiled_deflate() {
+    test_image_sum_u8("seq-1c-8b-tiled-deflate.tiff", ColorType::Gray(8), 32640);
+}
+
+// --- Float + floating-point predictor ---
+#[test]
+fn test_seq_1c_32f_deflate_fpredict() {
+    test_image_sum_f32("seq-1c-32f-deflate-fpredict.tiff", ColorType::Gray(32), 128.00009);
+}
+
+#[test]
+fn test_seq_1c_64f_deflate_fpredict() {
+    test_image_sum_f64(
+        "seq-1c-64f-deflate-fpredict.tiff",
+        ColorType::Gray(64),
+        127.99999999999986,
+    );
+}
+
+// --- Unassociated alpha ---
+#[test]
+fn test_seq_4c_8b_rgba_unassoc() {
+    test_image_sum_u8("seq-4c-8b-rgba-unassoc.tiff", ColorType::RGBA(8), 130560);
+}
+
+// --- Sub-byte RGB contiguous ---
+#[test]
+fn test_seq_3c_5b_contig() {
+    test_image_sum_u8("seq-3c-5b-contig.tiff", ColorType::RGB(5), 56832);
+}
+
+#[test]
+fn test_seq_3c_7b_contig() {
+    test_image_sum_u8("seq-3c-7b-contig.tiff", ColorType::RGB(7), 74976);
+}
+
+// --- Signed RGB (decoded as Multiband since PHOTOMETRIC_MINISBLACK) ---
+#[test]
+fn test_seq_3c_i8() {
+    test_image_sum_i8(
+        "seq-3c-i8.tiff",
+        ColorType::Multiband {
+            bit_depth: 8,
+            num_samples: 3,
+        },
+        -384,
+    );
+}
+
+#[test]
+fn test_seq_3c_i16() {
+    test_image_sum_i16(
+        "seq-3c-i16.tiff",
+        ColorType::Multiband {
+            bit_depth: 16,
+            num_samples: 3,
+        },
+        -384,
+    );
+}
+
+// --- Float f64 RGB ---
+#[test]
+fn test_seq_3c_64f() {
+    test_image_sum_f64("seq-3c-64f.tiff", ColorType::RGB(64), 383.99999999999994);
+}
+
+// --- Tiled BigTIFF ---
+#[test]
+fn test_seq_1c_8b_tiled_bigtiff() {
+    test_image_sum_u8("seq-1c-8b-tiled-bigtiff.tiff", ColorType::Gray(8), 32640);
+}

@@ -671,6 +671,230 @@ static int write_rgba(const char *path, int bits, const char *mode)
     return 0;
 }
 
+/* Write a standard-depth grayscale TIFF with configurable RowsPerStrip (multi-strip). */
+static int write_gray_multistrip(const char *path, int bits, int rows_per_strip)
+{
+    TIFF *tif = TIFFOpen(path, "w");
+    if (!tif) { fprintf(stderr, "Cannot open %s\n", path); return -1; }
+
+    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, W);
+    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, H);
+    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, bits);
+    TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, rows_per_strip);
+
+    uint32_t max_val = (bits < 32) ? ((1u << bits) - 1) : 0xFFFFFFFFu;
+    tsize_t scanline_size = TIFFScanlineSize(tif);
+    uint8_t *buf = (uint8_t *)_TIFFmalloc(scanline_size);
+    if (!buf) { TIFFClose(tif); return -1; }
+
+    for (int y = 0; y < H; y++) {
+        memset(buf, 0, scanline_size);
+        for (int x = 0; x < W; x++) {
+            uint32_t val = (y * W + x) % (max_val + 1);
+            if (bits == 8)
+                buf[x] = (uint8_t)val;
+            else if (bits == 16)
+                ((uint16_t *)buf)[x] = (uint16_t)val;
+        }
+        if (TIFFWriteScanline(tif, buf, y, 0) < 0) {
+            fprintf(stderr, "Error writing scanline %d to %s\n", y, path);
+            _TIFFfree(buf); TIFFClose(tif); return -1;
+        }
+    }
+
+    _TIFFfree(buf);
+    TIFFClose(tif);
+    return 0;
+}
+
+/* Write a standard-depth RGB TIFF with configurable RowsPerStrip. */
+static int write_rgb_multistrip(const char *path, int bits, int rows_per_strip)
+{
+    TIFF *tif = TIFFOpen(path, "w");
+    if (!tif) { fprintf(stderr, "Cannot open %s\n", path); return -1; }
+
+    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, W);
+    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, H);
+    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 3);
+    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, bits);
+    TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, rows_per_strip);
+
+    uint32_t max_val = (bits < 32) ? ((1u << bits) - 1) : 0xFFFFFFFFu;
+    tsize_t scanline_size = TIFFScanlineSize(tif);
+    uint8_t *buf = (uint8_t *)_TIFFmalloc(scanline_size);
+    if (!buf) { TIFFClose(tif); return -1; }
+
+    for (int y = 0; y < H; y++) {
+        memset(buf, 0, scanline_size);
+        for (int x = 0; x < W; x++) {
+            for (int c = 0; c < 3; c++) {
+                uint32_t idx = (y * W + x) * 3 + c;
+                uint32_t val = idx % (max_val + 1);
+                if (bits == 8)
+                    buf[x * 3 + c] = (uint8_t)val;
+                else if (bits == 16)
+                    ((uint16_t *)buf)[x * 3 + c] = (uint16_t)val;
+            }
+        }
+        if (TIFFWriteScanline(tif, buf, y, 0) < 0) {
+            fprintf(stderr, "Error writing scanline %d to %s\n", y, path);
+            _TIFFfree(buf); TIFFClose(tif); return -1;
+        }
+    }
+
+    _TIFFfree(buf);
+    TIFFClose(tif);
+    return 0;
+}
+
+/* Write a tiled grayscale TIFF with compression. */
+static int write_gray_tiled_comp(const char *path, int bits,
+                                  uint16_t compression, const char *mode)
+{
+    TIFF *tif = TIFFOpen(path, mode);
+    if (!tif) { fprintf(stderr, "Cannot open %s\n", path); return -1; }
+
+    int tw = 16, th = 16;
+    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, W);
+    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, H);
+    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, bits);
+    TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, compression);
+    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tif, TIFFTAG_TILEWIDTH, tw);
+    TIFFSetField(tif, TIFFTAG_TILELENGTH, th);
+
+    uint32_t max_val = (bits < 32) ? ((1u << bits) - 1) : 0xFFFFFFFFu;
+    tsize_t tile_size = TIFFTileSize(tif);
+    uint8_t *tile_buf = (uint8_t *)_TIFFmalloc(tile_size);
+    if (!tile_buf) { TIFFClose(tif); return -1; }
+
+    for (int ty = 0; ty < H; ty += th) {
+        for (int tx = 0; tx < W; tx += tw) {
+            memset(tile_buf, 0, tile_size);
+            for (int row = 0; row < th; row++) {
+                for (int col = 0; col < tw; col++) {
+                    int y = ty + row, x = tx + col;
+                    uint32_t val = (y * W + x) % (max_val + 1);
+                    if (bits == 8)
+                        tile_buf[row * tw + col] = (uint8_t)val;
+                    else if (bits == 16)
+                        ((uint16_t *)tile_buf)[row * tw + col] = (uint16_t)val;
+                }
+            }
+            if (TIFFWriteTile(tif, tile_buf, tx, ty, 0, 0) < 0) {
+                fprintf(stderr, "Error writing tile at (%d,%d) to %s\n", tx, ty, path);
+                _TIFFfree(tile_buf); TIFFClose(tif); return -1;
+            }
+        }
+    }
+
+    _TIFFfree(tile_buf);
+    TIFFClose(tif);
+    return 0;
+}
+
+/* Write a grayscale float TIFF with compression + predictor.
+ * Values are (y*W+x)/255.0 */
+static int write_gray_float_comp(const char *path, int float_bits,
+                                  uint16_t compression, uint16_t predictor,
+                                  const char *mode)
+{
+    TIFF *tif = TIFFOpen(path, mode);
+    if (!tif) { fprintf(stderr, "Cannot open %s\n", path); return -1; }
+
+    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, W);
+    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, H);
+    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, float_bits);
+    TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_IEEEFP);
+    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, compression);
+    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, H);
+    if (predictor != PREDICTOR_NONE)
+        TIFFSetField(tif, TIFFTAG_PREDICTOR, predictor);
+
+    tsize_t scanline_size = TIFFScanlineSize(tif);
+    uint8_t *buf = (uint8_t *)_TIFFmalloc(scanline_size);
+    if (!buf) { TIFFClose(tif); return -1; }
+
+    for (int y = 0; y < H; y++) {
+        memset(buf, 0, scanline_size);
+        for (int x = 0; x < W; x++) {
+            double val = (double)(y * W + x) / 255.0;
+            if (float_bits == 32)
+                ((float *)buf)[x] = (float)val;
+            else
+                ((double *)buf)[x] = val;
+        }
+        if (TIFFWriteScanline(tif, buf, y, 0) < 0) {
+            fprintf(stderr, "Error writing scanline %d to %s\n", y, path);
+            _TIFFfree(buf); TIFFClose(tif); return -1;
+        }
+    }
+
+    _TIFFfree(buf);
+    TIFFClose(tif);
+    return 0;
+}
+
+/* Write a signed integer RGB TIFF. Values cycle -128..127 per channel. */
+static int write_rgb_signed(const char *path, int bits, const char *mode)
+{
+    TIFF *tif = TIFFOpen(path, mode);
+    if (!tif) { fprintf(stderr, "Cannot open %s\n", path); return -1; }
+
+    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, W);
+    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, H);
+    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 3);
+    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, bits);
+    TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_INT);
+    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, H);
+
+    tsize_t scanline_size = TIFFScanlineSize(tif);
+    uint8_t *buf = (uint8_t *)_TIFFmalloc(scanline_size);
+    if (!buf) { TIFFClose(tif); return -1; }
+
+    for (int y = 0; y < H; y++) {
+        memset(buf, 0, scanline_size);
+        for (int x = 0; x < W; x++) {
+            for (int c = 0; c < 3; c++) {
+                int32_t idx = (y * W + x) * 3 + c;
+                if (bits == 8) {
+                    int8_t val = (int8_t)((idx % 256) - 128);
+                    ((int8_t *)buf)[x * 3 + c] = val;
+                } else if (bits == 16) {
+                    int16_t val = (int16_t)((idx % 256) - 128);
+                    ((int16_t *)buf)[x * 3 + c] = val;
+                }
+            }
+        }
+        if (TIFFWriteScanline(tif, buf, y, 0) < 0) {
+            fprintf(stderr, "Error writing scanline %d to %s\n", y, path);
+            _TIFFfree(buf); TIFFClose(tif); return -1;
+        }
+    }
+
+    _TIFFfree(buf);
+    TIFFClose(tif);
+    return 0;
+}
+
 /* Write a multi-page TIFF with 3 gray pages. Page n has values offset by n*50. */
 static int write_multipage(const char *path, int bits, const char *mode)
 {
@@ -975,6 +1199,152 @@ int main(int argc, char **argv)
     if (write_rgb_compressed(path, 8, COMPRESSION_NONE, "wb") == 0)
         printf("  OK seq-3c-8b-bigendian.tiff\n");
     else { printf("  FAIL seq-3c-8b-bigendian.tiff\n"); ok = 0; }
+
+    printf("\n--- Standard sub-byte depths ---\n");
+
+    /* 1-bit, 2-bit, 4-bit BlackIsZero */
+    {
+        int stdbits[] = {1, 2, 4};
+        for (int i = 0; i < 3; i++) {
+            int b = stdbits[i];
+            snprintf(path, sizeof(path), "%s/seq-1c-%db.tiff", dir, b);
+            if (write_gray(path, b, PHOTOMETRIC_MINISBLACK, PREDICTOR_NONE) == 0)
+                printf("  OK seq-1c-%db.tiff\n", b);
+            else { printf("  FAIL seq-1c-%db.tiff\n", b); ok = 0; }
+        }
+    }
+
+    /* 1-bit, 4-bit WhiteIsZero */
+    {
+        int wbits[] = {1, 4};
+        for (int i = 0; i < 2; i++) {
+            int b = wbits[i];
+            snprintf(path, sizeof(path), "%s/seq-1c-%db-miniswhite.tiff", dir, b);
+            if (write_gray(path, b, PHOTOMETRIC_MINISWHITE, PREDICTOR_NONE) == 0)
+                printf("  OK seq-1c-%db-miniswhite.tiff\n", b);
+            else { printf("  FAIL seq-1c-%db-miniswhite.tiff\n", b); ok = 0; }
+        }
+    }
+
+    printf("\n--- Multi-strip (RowsPerStrip=4) ---\n");
+
+    snprintf(path, sizeof(path), "%s/seq-1c-8b-multistrip.tiff", dir);
+    if (write_gray_multistrip(path, 8, 4) == 0)
+        printf("  OK seq-1c-8b-multistrip.tiff\n");
+    else { printf("  FAIL seq-1c-8b-multistrip.tiff\n"); ok = 0; }
+
+    snprintf(path, sizeof(path), "%s/seq-1c-16b-multistrip.tiff", dir);
+    if (write_gray_multistrip(path, 16, 4) == 0)
+        printf("  OK seq-1c-16b-multistrip.tiff\n");
+    else { printf("  FAIL seq-1c-16b-multistrip.tiff\n"); ok = 0; }
+
+    snprintf(path, sizeof(path), "%s/seq-3c-8b-multistrip.tiff", dir);
+    if (write_rgb_multistrip(path, 8, 4) == 0)
+        printf("  OK seq-3c-8b-multistrip.tiff\n");
+    else { printf("  FAIL seq-3c-8b-multistrip.tiff\n"); ok = 0; }
+
+    printf("\n--- Tiled + compressed ---\n");
+
+    snprintf(path, sizeof(path), "%s/seq-1c-8b-tiled-lzw.tiff", dir);
+    if (write_gray_tiled_comp(path, 8, COMPRESSION_LZW, "w") == 0)
+        printf("  OK seq-1c-8b-tiled-lzw.tiff\n");
+    else { printf("  FAIL seq-1c-8b-tiled-lzw.tiff\n"); ok = 0; }
+
+    snprintf(path, sizeof(path), "%s/seq-1c-8b-tiled-deflate.tiff", dir);
+    if (write_gray_tiled_comp(path, 8, COMPRESSION_DEFLATE, "w") == 0)
+        printf("  OK seq-1c-8b-tiled-deflate.tiff\n");
+    else { printf("  FAIL seq-1c-8b-tiled-deflate.tiff\n"); ok = 0; }
+
+    printf("\n--- Float + predictor ---\n");
+
+    snprintf(path, sizeof(path), "%s/seq-1c-32f-deflate-fpredict.tiff", dir);
+    if (write_gray_float_comp(path, 32, COMPRESSION_DEFLATE, PREDICTOR_FLOATINGPOINT, "w") == 0)
+        printf("  OK seq-1c-32f-deflate-fpredict.tiff\n");
+    else { printf("  FAIL seq-1c-32f-deflate-fpredict.tiff\n"); ok = 0; }
+
+    snprintf(path, sizeof(path), "%s/seq-1c-64f-deflate-fpredict.tiff", dir);
+    if (write_gray_float_comp(path, 64, COMPRESSION_DEFLATE, PREDICTOR_FLOATINGPOINT, "w") == 0)
+        printf("  OK seq-1c-64f-deflate-fpredict.tiff\n");
+    else { printf("  FAIL seq-1c-64f-deflate-fpredict.tiff\n"); ok = 0; }
+
+    printf("\n--- Unassociated alpha ---\n");
+
+    /* Reuse write_rgba but with unassociated alpha */
+    {
+        snprintf(path, sizeof(path), "%s/seq-4c-8b-rgba-unassoc.tiff", dir);
+        TIFF *tif = TIFFOpen(path, "w");
+        if (tif) {
+            uint16_t extra[] = { EXTRASAMPLE_UNASSALPHA };
+            TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, W);
+            TIFFSetField(tif, TIFFTAG_IMAGELENGTH, H);
+            TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 4);
+            TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, 8);
+            TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+            TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+            TIFFSetField(tif, TIFFTAG_EXTRASAMPLES, 1, extra);
+            TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+            TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+            TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, H);
+            tsize_t sl = TIFFScanlineSize(tif);
+            uint8_t *b2 = (uint8_t *)_TIFFmalloc(sl);
+            int good = 1;
+            if (b2) {
+                for (int y = 0; y < H && good; y++) {
+                    memset(b2, 0, sl);
+                    for (int x = 0; x < W; x++)
+                        for (int c = 0; c < 4; c++) {
+                            uint32_t idx = (y * W + x) * 4 + c;
+                            b2[x * 4 + c] = (uint8_t)(idx % 256);
+                        }
+                    if (TIFFWriteScanline(tif, b2, y, 0) < 0) good = 0;
+                }
+                _TIFFfree(b2);
+            } else good = 0;
+            TIFFClose(tif);
+            if (good) printf("  OK seq-4c-8b-rgba-unassoc.tiff\n");
+            else { printf("  FAIL seq-4c-8b-rgba-unassoc.tiff\n"); ok = 0; }
+        } else { printf("  FAIL seq-4c-8b-rgba-unassoc.tiff\n"); ok = 0; }
+    }
+
+    printf("\n--- Sub-byte RGB ---\n");
+
+    /* 5-bit and 7-bit RGB contiguous */
+    {
+        int rgb_sub[] = {5, 7};
+        for (int i = 0; i < 2; i++) {
+            int b = rgb_sub[i];
+            snprintf(path, sizeof(path), "%s/seq-3c-%db-contig.tiff", dir, b);
+            if (write_rgb_contig(path, b) == 0)
+                printf("  OK seq-3c-%db-contig.tiff\n", b);
+            else { printf("  FAIL seq-3c-%db-contig.tiff\n", b); ok = 0; }
+        }
+    }
+
+    printf("\n--- Signed RGB ---\n");
+
+    snprintf(path, sizeof(path), "%s/seq-3c-i8.tiff", dir);
+    if (write_rgb_signed(path, 8, "w") == 0)
+        printf("  OK seq-3c-i8.tiff\n");
+    else { printf("  FAIL seq-3c-i8.tiff\n"); ok = 0; }
+
+    snprintf(path, sizeof(path), "%s/seq-3c-i16.tiff", dir);
+    if (write_rgb_signed(path, 16, "w") == 0)
+        printf("  OK seq-3c-i16.tiff\n");
+    else { printf("  FAIL seq-3c-i16.tiff\n"); ok = 0; }
+
+    printf("\n--- Float f64 RGB ---\n");
+
+    snprintf(path, sizeof(path), "%s/seq-3c-64f.tiff", dir);
+    if (write_rgb_float(path, 64, "w") == 0)
+        printf("  OK seq-3c-64f.tiff\n");
+    else { printf("  FAIL seq-3c-64f.tiff\n"); ok = 0; }
+
+    printf("\n--- Tiled BigTIFF ---\n");
+
+    snprintf(path, sizeof(path), "%s/seq-1c-8b-tiled-bigtiff.tiff", dir);
+    if (write_gray_tiled_comp(path, 8, COMPRESSION_NONE, "w8") == 0)
+        printf("  OK seq-1c-8b-tiled-bigtiff.tiff\n");
+    else { printf("  FAIL seq-1c-8b-tiled-bigtiff.tiff\n"); ok = 0; }
 
     printf("\nDone. %s\n", ok ? "All succeeded." : "Some failed!");
     return ok ? 0 : 1;
