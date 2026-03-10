@@ -905,6 +905,8 @@ fn test_rgb_planar_u24() {
     );
 }
 
+// ---- WhiteIsZero tests across bit depths ----
+
 // WhiteIsZero + extended bit depth (12-bit gray, synthetic 4x2 image)
 #[test]
 fn test_gray_u12_white_is_zero() {
@@ -913,7 +915,43 @@ fn test_gray_u12_white_is_zero() {
     test_image_sum_u16("miniswhite-1c-12b.tiff", ColorType::Gray(12), 18565);
 }
 
-// Horizontal predictor + extended bit depth (12-bit gray, synthetic 4x2 image)
+// WhiteIsZero + non-standard sub-byte depths (3-bit and 6-bit, synthetic 8x2 images)
+// These verify per-sample inversion for packed depths where samples cross byte boundaries.
+#[test]
+fn test_gray_u3_white_is_zero() {
+    test_image_sum_u8("miniswhite-1c-3b.tiff", ColorType::Gray(3), 765);
+}
+
+#[test]
+fn test_gray_u6_white_is_zero() {
+    // Values: [0, 10, 20, 30, 40, 50, 60, 63] × 2 rows
+    // After inversion: [63, 53, 43, 33, 23, 13, 3, 0] × 2 rows
+    test_image_sum_u8("miniswhite-1c-6b.tiff", ColorType::Gray(6), 2124);
+}
+
+// ---- Non-standard sub-byte depths (BlackIsZero) ----
+// Verify that odd bit depths (3, 5, 7) decode without error.
+
+#[test]
+fn test_gray_u3() {
+    // 8x2 image, values [0..7, 7..0], packed to 6 bytes
+    test_image_sum_u8("minisblack-1c-3b.tiff", ColorType::Gray(3), 765);
+}
+
+#[test]
+fn test_gray_u5() {
+    // 8x2 image, packed to 10 bytes
+    test_image_sum_u8("minisblack-1c-5b.tiff", ColorType::Gray(5), 1275);
+}
+
+#[test]
+fn test_gray_u7() {
+    // 8x2 image, packed to 14 bytes
+    test_image_sum_u8("minisblack-1c-7b.tiff", ColorType::Gray(7), 1711);
+}
+
+// ---- Horizontal predictor + extended bit depth ----
+
 #[test]
 fn test_gray_u12_hpredict() {
     // Delta-encoded 12-bit values: [100, 200, 300, 400, 1000, 2000, 3000, 4000]
