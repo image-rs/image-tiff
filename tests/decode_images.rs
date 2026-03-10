@@ -8,6 +8,7 @@ use std::io::{Read, Seek};
 use std::path::PathBuf;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
+const SEQ_IMAGE_DIR: &str = "./tests/images/seq/";
 const LIBTIFFPIC_DEPTH_DIR: &str = "./tests/libtiffpic/depth/";
 
 macro_rules! test_image_sum {
@@ -36,7 +37,6 @@ test_image_sum!(test_image_sum_u8, U8, u64);
 test_image_sum!(test_image_sum_i8, I8, i64);
 test_image_sum!(test_image_sum_u16, U16, u64);
 test_image_sum!(test_image_sum_i16, I16, i64);
-test_image_sum!(test_image_sum_i32, I32, i64);
 test_image_sum!(test_image_sum_u32, U32, u64);
 test_image_sum!(test_image_sum_u64, U64, u64);
 test_image_sum!(test_image_sum_f32, F32, f32);
@@ -67,6 +67,236 @@ macro_rules! test_image_sum_in {
 
 test_image_sum_in!(test_depth_sum_u16, U16, u64);
 test_image_sum_in!(test_depth_sum_u32, U32, u64);
+
+/// Compute a CRC32 hash of the full decoded TIFF output including metadata.
+///
+/// Hashes: page count, and for each page: dimensions, color type, and decoded
+/// sample data (in little-endian byte order for multi-byte types). This catches
+/// wrong dimensions, wrong color type, byte-order errors, bit-alignment errors,
+/// stride/padding errors, and pixel value errors.
+fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
+    let mut decoder = Decoder::open(reader).expect("Cannot create decoder");
+    let mut hasher = crc32fast::Hasher::new();
+
+    let mut page = 0u32;
+    loop {
+        decoder.next_image().expect("Cannot read image IFD");
+        let (width, height) = decoder.dimensions().unwrap();
+        let color_type = decoder.colortype().unwrap();
+        let result = decoder.read_image().unwrap();
+
+        // Hash page index + dimensions
+        hasher.update(&page.to_le_bytes());
+        hasher.update(&width.to_le_bytes());
+        hasher.update(&height.to_le_bytes());
+
+        // Hash color type (discriminant + fields)
+        match color_type {
+            ColorType::Gray(n) => hasher.update(&[0, n]),
+            ColorType::RGB(n) => hasher.update(&[1, n]),
+            ColorType::Palette(n) => hasher.update(&[2, n]),
+            ColorType::GrayA(n) => hasher.update(&[3, n]),
+            ColorType::RGBA(n) => hasher.update(&[4, n]),
+            ColorType::CMYK(n) => hasher.update(&[5, n]),
+            ColorType::CMYKA(n) => hasher.update(&[6, n]),
+            ColorType::YCbCr(n) => hasher.update(&[7, n]),
+            ColorType::Lab(n) => hasher.update(&[8, n]),
+            ColorType::Multiband {
+                bit_depth,
+                num_samples,
+            } => {
+                hasher.update(&[9, bit_depth]);
+                hasher.update(&num_samples.to_le_bytes());
+            }
+            _ => hasher.update(&[255]),
+        }
+
+        // Hash decoded data with type discriminant + LE sample bytes
+        match result {
+            DecodingResult::U8(ref data) => {
+                hasher.update(&[0]);
+                hasher.update(data);
+            }
+            DecodingResult::U16(ref data) => {
+                hasher.update(&[1]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::U32(ref data) => {
+                hasher.update(&[2]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::U64(ref data) => {
+                hasher.update(&[3]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::F16(ref data) => {
+                hasher.update(&[4]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::F32(ref data) => {
+                hasher.update(&[5]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::F64(ref data) => {
+                hasher.update(&[6]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::I8(ref data) => {
+                hasher.update(&[7]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::I16(ref data) => {
+                hasher.update(&[8]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::I32(ref data) => {
+                hasher.update(&[9]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+            DecodingResult::I64(ref data) => {
+                hasher.update(&[10]);
+                for v in data {
+                    hasher.update(&v.to_le_bytes());
+                }
+            }
+        }
+
+        page += 1;
+        if !decoder.more_images() {
+            break;
+        }
+    }
+
+    // Hash total page count at the end
+    hasher.update(&page.to_le_bytes());
+    hasher.finalize()
+}
+
+/// Verify all TIFF files in tests/images/seq/ against their filename-embedded CRC32 hash.
+///
+/// Each file is named `<description>-<8hex>.tiff` where the last segment before `.tiff`
+/// is the expected CRC32 hash of (dimensions, color type, decoded data) for all pages.
+#[test]
+fn verify_all_seq_images() {
+    let seq_dir = std::path::Path::new(SEQ_IMAGE_DIR);
+    if !seq_dir.is_dir() {
+        panic!(
+            "seq image directory not found: {}",
+            seq_dir.display()
+        );
+    }
+
+    let mut files: Vec<_> = std::fs::read_dir(seq_dir)
+        .expect("Cannot read seq image directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "tiff" || ext == "tif")
+        })
+        .collect();
+    files.sort_by_key(|e| e.file_name());
+
+    assert!(
+        !files.is_empty(),
+        "No .tiff files found in {}",
+        seq_dir.display()
+    );
+
+    let mut failures = Vec::new();
+    for entry in &files {
+        let path = entry.path();
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+
+        // Extract expected hash: last '-'-delimited segment
+        let expected_hash = stem
+            .rsplit('-')
+            .next()
+            .expect("filename must contain a '-' before the hash");
+
+        // Validate it looks like an 8-char hex string
+        if expected_hash.len() != 8 || !expected_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            failures.push(format!(
+                "{}: filename does not end with 8-char hex hash (got '{}')",
+                stem, expected_hash
+            ));
+            continue;
+        }
+
+        let file = File::open(&path).expect("Cannot open test image");
+        let actual_hash = format!("{:08x}", compute_tiff_hash(file));
+
+        if actual_hash != expected_hash {
+            failures.push(format!(
+                "{}: expected hash {} but got {}",
+                stem, expected_hash, actual_hash
+            ));
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} of {} seq images failed hash verification:\n  {}",
+            failures.len(),
+            files.len(),
+            failures.join("\n  ")
+        );
+    }
+
+    eprintln!("Verified {} seq images", files.len());
+}
+
+/// Helper: print the correct hash-suffixed filename for every *.tiff in tests/images/seq/.
+/// Run with: cargo test print_seq_hashes -- --ignored --nocapture
+#[test]
+#[ignore]
+fn print_seq_hashes() {
+    let dir = std::path::Path::new(SEQ_IMAGE_DIR);
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .expect("Cannot read image directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with("seq-") && n.ends_with(".tiff"))
+        })
+        .collect();
+    files.sort_by_key(|e| e.file_name());
+
+    for entry in &files {
+        let path = entry.path();
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let file = File::open(&path).expect("Cannot open test image");
+        let hash = format!("{:08x}", compute_tiff_hash(file));
+        // Strip the old hash (last -XXXXXXXX before .tiff) and print with new hash
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        let base = &stem[..stem.rfind('-').unwrap_or(stem.len())];
+        let new_name = format!("{base}-{hash}.tiff");
+        if new_name != name {
+            eprintln!("RENAME: {name} -> {new_name}");
+        } else {
+            eprintln!("OK: {name}");
+        }
+    }
+}
 
 /// Tests that a decoder can be constructed for an image and the color type
 /// read from the IFD and is of the appropriate type, but the type is
@@ -1000,443 +1230,3 @@ fn test_gray_u12_hpredict() {
     test_image_sum_u16("hpredict-1c-12b.tiff", ColorType::Gray(12), 11000);
 }
 
-// ===== Sequential-value test functions =====
-// Generated by gen_seq_images.py using manual TIFF writer
-// Each image has cycling 0..max values; any bit error changes the sum.
-// 16x16 images (256 pixels per channel).
-// Sub-byte checksums are sums of packed bytes (the decoder returns packed data).
-// Planar checksums are first-plane only (read_image() reads one plane).
-
-// --- Sub-byte BlackIsZero ---
-#[test]
-fn test_seq_1c_3b() {
-    test_image_sum_u8("seq-1c-3b.tiff", ColorType::Gray(3), 5792);
-}
-
-#[test]
-fn test_seq_1c_5b() {
-    test_image_sum_u8("seq-1c-5b.tiff", ColorType::Gray(5), 18944);
-}
-
-#[test]
-fn test_seq_1c_7b() {
-    test_image_sum_u8("seq-1c-7b.tiff", ColorType::Gray(7), 24992);
-}
-
-// --- Sub-byte WhiteIsZero ---
-#[test]
-fn test_seq_1c_3b_miniswhite() {
-    test_image_sum_u8("seq-1c-3b-miniswhite.tiff", ColorType::Gray(3), 5792);
-}
-
-#[test]
-fn test_seq_1c_5b_miniswhite() {
-    test_image_sum_u8("seq-1c-5b-miniswhite.tiff", ColorType::Gray(5), 18944);
-}
-
-#[test]
-fn test_seq_1c_6b_miniswhite() {
-    test_image_sum_u8("seq-1c-6b-miniswhite.tiff", ColorType::Gray(6), 25728);
-}
-
-#[test]
-fn test_seq_1c_7b_miniswhite() {
-    test_image_sum_u8("seq-1c-7b-miniswhite.tiff", ColorType::Gray(7), 24992);
-}
-
-// --- Extended BlackIsZero ---
-#[test]
-fn test_seq_1c_10b() {
-    test_image_sum_u16("seq-1c-10b.tiff", ColorType::Gray(10), 32640);
-}
-
-#[test]
-fn test_seq_1c_12b() {
-    test_image_sum_u16("seq-1c-12b.tiff", ColorType::Gray(12), 32640);
-}
-
-#[test]
-fn test_seq_1c_14b() {
-    test_image_sum_u16("seq-1c-14b.tiff", ColorType::Gray(14), 32640);
-}
-
-#[test]
-fn test_seq_1c_24b() {
-    test_image_sum_u32("seq-1c-24b.tiff", ColorType::Gray(24), 32640);
-}
-
-// --- Extended WhiteIsZero ---
-#[test]
-fn test_seq_1c_10b_miniswhite() {
-    test_image_sum_u16("seq-1c-10b-miniswhite.tiff", ColorType::Gray(10), 32640);
-}
-
-#[test]
-fn test_seq_1c_12b_miniswhite() {
-    test_image_sum_u16("seq-1c-12b-miniswhite.tiff", ColorType::Gray(12), 32640);
-}
-
-#[test]
-fn test_seq_1c_14b_miniswhite() {
-    test_image_sum_u16("seq-1c-14b-miniswhite.tiff", ColorType::Gray(14), 32640);
-}
-
-#[test]
-fn test_seq_1c_24b_miniswhite() {
-    test_image_sum_u32("seq-1c-24b-miniswhite.tiff", ColorType::Gray(24), 32640);
-}
-
-// --- Extended HPredict ---
-#[test]
-fn test_seq_1c_10b_hpredict() {
-    test_image_sum_u16("seq-1c-10b-hpredict.tiff", ColorType::Gray(10), 32640);
-}
-
-#[test]
-fn test_seq_1c_12b_hpredict() {
-    test_image_sum_u16("seq-1c-12b-hpredict.tiff", ColorType::Gray(12), 32640);
-}
-
-#[test]
-fn test_seq_1c_14b_hpredict() {
-    test_image_sum_u16("seq-1c-14b-hpredict.tiff", ColorType::Gray(14), 32640);
-}
-
-#[test]
-fn test_seq_1c_24b_hpredict() {
-    test_image_sum_u32("seq-1c-24b-hpredict.tiff", ColorType::Gray(24), 32640);
-}
-
-// --- RGB Contiguous ---
-#[test]
-fn test_seq_3c_10b_contig() {
-    test_image_sum_u16("seq-3c-10b-contig.tiff", ColorType::RGB(10), 294528);
-}
-
-#[test]
-fn test_seq_3c_12b_contig() {
-    test_image_sum_u16("seq-3c-12b-contig.tiff", ColorType::RGB(12), 294528);
-}
-
-#[test]
-fn test_seq_3c_14b_contig() {
-    test_image_sum_u16("seq-3c-14b-contig.tiff", ColorType::RGB(14), 294528);
-}
-
-#[test]
-fn test_seq_3c_24b_contig() {
-    test_image_sum_u32("seq-3c-24b-contig.tiff", ColorType::RGB(24), 294528);
-}
-
-// --- RGB Planar (first plane only via read_image) ---
-#[test]
-fn test_seq_3c_10b_planar() {
-    test_image_sum_u16("seq-3c-10b-planar.tiff", ColorType::RGB(10), 32640);
-}
-
-#[test]
-fn test_seq_3c_12b_planar() {
-    test_image_sum_u16("seq-3c-12b-planar.tiff", ColorType::RGB(12), 32640);
-}
-
-#[test]
-fn test_seq_3c_14b_planar() {
-    test_image_sum_u16("seq-3c-14b-planar.tiff", ColorType::RGB(14), 32640);
-}
-
-#[test]
-fn test_seq_3c_24b_planar() {
-    test_image_sum_u32("seq-3c-24b-planar.tiff", ColorType::RGB(24), 32640);
-}
-
-// --- Compressed (LZW, Deflate, PackBits) ---
-#[test]
-fn test_seq_1c_8b_lzw() {
-    test_image_sum_u8("seq-1c-8b-lzw.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_8b_deflate() {
-    test_image_sum_u8("seq-1c-8b-deflate.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_8b_packbits() {
-    test_image_sum_u8("seq-1c-8b-packbits.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_16b_lzw() {
-    test_image_sum_u16("seq-1c-16b-lzw.tiff", ColorType::Gray(16), 32640);
-}
-
-#[test]
-fn test_seq_1c_16b_deflate() {
-    test_image_sum_u16("seq-1c-16b-deflate.tiff", ColorType::Gray(16), 32640);
-}
-
-#[test]
-fn test_seq_1c_8b_lzw_hpredict() {
-    test_image_sum_u8("seq-1c-8b-lzw-hpredict.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_3c_8b_lzw() {
-    test_image_sum_u8("seq-3c-8b-lzw.tiff", ColorType::RGB(8), 97920);
-}
-
-// --- Tiled layout ---
-#[test]
-fn test_seq_1c_8b_tiled() {
-    test_image_sum_u8("seq-1c-8b-tiled.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_16b_tiled() {
-    test_image_sum_u16("seq-1c-16b-tiled.tiff", ColorType::Gray(16), 32640);
-}
-
-#[test]
-fn test_seq_3c_8b_tiled() {
-    test_image_sum_u8("seq-3c-8b-tiled.tiff", ColorType::RGB(8), 97920);
-}
-
-// --- BigTIFF ---
-#[test]
-fn test_seq_1c_8b_bigtiff() {
-    test_image_sum_u8("seq-1c-8b-bigtiff.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_3c_16b_bigtiff() {
-    test_image_sum_u16("seq-3c-16b-bigtiff.tiff", ColorType::RGB(16), 294528);
-}
-
-// --- Float samples ---
-#[test]
-fn test_seq_1c_32f() {
-    test_image_sum_f32("seq-1c-32f.tiff", ColorType::Gray(32), 128.00009);
-}
-
-#[test]
-fn test_seq_1c_64f() {
-    test_image_sum_f64("seq-1c-64f.tiff", ColorType::Gray(64), 127.99999999999986);
-}
-
-#[test]
-fn test_seq_3c_32f() {
-    test_image_sum_f32("seq-3c-32f.tiff", ColorType::RGB(32), 384.0);
-}
-
-// --- Signed integer ---
-#[test]
-fn test_seq_1c_i8() {
-    test_image_sum_i8("seq-1c-i8.tiff", ColorType::Gray(8), -128);
-}
-
-#[test]
-fn test_seq_1c_i16() {
-    test_image_sum_i16("seq-1c-i16.tiff", ColorType::Gray(16), -128);
-}
-
-#[test]
-fn test_seq_1c_i32() {
-    test_image_sum_i32("seq-1c-i32.tiff", ColorType::Gray(32), -128);
-}
-
-// --- CMYK ---
-#[test]
-fn test_seq_4c_8b_cmyk() {
-    test_image_sum_u8("seq-4c-8b-cmyk.tiff", ColorType::CMYK(8), 130560);
-}
-
-#[test]
-fn test_seq_4c_16b_cmyk() {
-    test_image_sum_u16("seq-4c-16b-cmyk.tiff", ColorType::CMYK(16), 523776);
-}
-
-// --- Palette (indexed) ---
-#[test]
-fn test_seq_1c_8b_palette() {
-    test_image_sum_u8("seq-1c-8b-palette.tiff", ColorType::Palette(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_4b_palette() {
-    test_image_sum_u8("seq-1c-4b-palette.tiff", ColorType::Palette(4), 15360);
-}
-
-// --- RGBA (associated alpha) ---
-#[test]
-fn test_seq_4c_8b_rgba() {
-    test_image_sum_u8("seq-4c-8b-rgba.tiff", ColorType::RGBA(8), 130560);
-}
-
-#[test]
-fn test_seq_4c_16b_rgba() {
-    test_image_sum_u16("seq-4c-16b-rgba.tiff", ColorType::RGBA(16), 523776);
-}
-
-// --- Multi-page (reads first page only via standard macro) ---
-#[test]
-fn test_seq_1c_8b_multipage() {
-    test_image_sum_u8("seq-1c-8b-multipage.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_8b_multipage_all_pages() {
-    let path = PathBuf::from(TEST_IMAGE_DIR).join("seq-1c-8b-multipage.tiff");
-    let img_file = File::open(path).expect("Cannot find test image!");
-    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
-
-    let expected_sums: [u64; 3] = [32640, 32640, 32640];
-    for (page, &expected) in expected_sums.iter().enumerate() {
-        decoder.next_image().expect("Cannot read image IFD");
-        assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
-        match decoder.read_image().unwrap() {
-            DecodingResult::U8(res) => {
-                let sum: u64 = res.into_iter().map(u64::from).sum();
-                assert_eq!(sum, expected, "Page {} sum mismatch", page);
-            }
-            _ => panic!("Wrong bit depth for page {}", page),
-        }
-    }
-}
-
-// --- Big-endian byte order ---
-#[test]
-fn test_seq_1c_8b_bigendian() {
-    test_image_sum_u8("seq-1c-8b-bigendian.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_16b_bigendian() {
-    test_image_sum_u16("seq-1c-16b-bigendian.tiff", ColorType::Gray(16), 32640);
-}
-
-#[test]
-fn test_seq_3c_8b_bigendian() {
-    test_image_sum_u8("seq-3c-8b-bigendian.tiff", ColorType::RGB(8), 97920);
-}
-
-// --- Standard sub-byte depths ---
-#[test]
-fn test_seq_1c_1b() {
-    test_image_sum_u8("seq-1c-1b.tiff", ColorType::Gray(1), 2720);
-}
-
-#[test]
-fn test_seq_1c_2b() {
-    test_image_sum_u8("seq-1c-2b.tiff", ColorType::Gray(2), 1728);
-}
-
-#[test]
-fn test_seq_1c_4b() {
-    test_image_sum_u8("seq-1c-4b.tiff", ColorType::Gray(4), 15360);
-}
-
-#[test]
-fn test_seq_1c_1b_miniswhite() {
-    test_image_sum_u8("seq-1c-1b-miniswhite.tiff", ColorType::Gray(1), 2720);
-}
-
-#[test]
-fn test_seq_1c_4b_miniswhite() {
-    test_image_sum_u8("seq-1c-4b-miniswhite.tiff", ColorType::Gray(4), 15360);
-}
-
-// --- Multi-strip (RowsPerStrip=4) ---
-#[test]
-fn test_seq_1c_8b_multistrip() {
-    test_image_sum_u8("seq-1c-8b-multistrip.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_16b_multistrip() {
-    test_image_sum_u16("seq-1c-16b-multistrip.tiff", ColorType::Gray(16), 32640);
-}
-
-#[test]
-fn test_seq_3c_8b_multistrip() {
-    test_image_sum_u8("seq-3c-8b-multistrip.tiff", ColorType::RGB(8), 97920);
-}
-
-// --- Tiled + compressed ---
-#[test]
-fn test_seq_1c_8b_tiled_lzw() {
-    test_image_sum_u8("seq-1c-8b-tiled-lzw.tiff", ColorType::Gray(8), 32640);
-}
-
-#[test]
-fn test_seq_1c_8b_tiled_deflate() {
-    test_image_sum_u8("seq-1c-8b-tiled-deflate.tiff", ColorType::Gray(8), 32640);
-}
-
-// --- Float + floating-point predictor ---
-#[test]
-fn test_seq_1c_32f_deflate_fpredict() {
-    test_image_sum_f32("seq-1c-32f-deflate-fpredict.tiff", ColorType::Gray(32), 128.00009);
-}
-
-#[test]
-fn test_seq_1c_64f_deflate_fpredict() {
-    test_image_sum_f64(
-        "seq-1c-64f-deflate-fpredict.tiff",
-        ColorType::Gray(64),
-        127.99999999999986,
-    );
-}
-
-// --- Unassociated alpha ---
-#[test]
-fn test_seq_4c_8b_rgba_unassoc() {
-    test_image_sum_u8("seq-4c-8b-rgba-unassoc.tiff", ColorType::RGBA(8), 130560);
-}
-
-// --- Sub-byte RGB contiguous ---
-#[test]
-fn test_seq_3c_5b_contig() {
-    test_image_sum_u8("seq-3c-5b-contig.tiff", ColorType::RGB(5), 56832);
-}
-
-#[test]
-fn test_seq_3c_7b_contig() {
-    test_image_sum_u8("seq-3c-7b-contig.tiff", ColorType::RGB(7), 74976);
-}
-
-// --- Signed RGB (decoded as Multiband since PHOTOMETRIC_MINISBLACK) ---
-#[test]
-fn test_seq_3c_i8() {
-    test_image_sum_i8(
-        "seq-3c-i8.tiff",
-        ColorType::Multiband {
-            bit_depth: 8,
-            num_samples: 3,
-        },
-        -384,
-    );
-}
-
-#[test]
-fn test_seq_3c_i16() {
-    test_image_sum_i16(
-        "seq-3c-i16.tiff",
-        ColorType::Multiband {
-            bit_depth: 16,
-            num_samples: 3,
-        },
-        -384,
-    );
-}
-
-// --- Float f64 RGB ---
-#[test]
-fn test_seq_3c_64f() {
-    test_image_sum_f64("seq-3c-64f.tiff", ColorType::RGB(64), 383.99999999999994);
-}
-
-// --- Tiled BigTIFF ---
-#[test]
-fn test_seq_1c_8b_tiled_bigtiff() {
-    test_image_sum_u8("seq-1c-8b-tiled-bigtiff.tiff", ColorType::Gray(8), 32640);
-}
