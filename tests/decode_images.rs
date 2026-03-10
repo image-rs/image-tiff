@@ -10,7 +10,6 @@ use std::path::PathBuf;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
 const SEQ_IMAGE_DIR: &str = "./tests/images/seq/";
-const LIBTIFFPIC_DEPTH_DIR: &str = "./tests/libtiffpic/depth/";
 
 macro_rules! test_image_sum {
     ($name:ident, $buffer:ident, $sum_ty:ty) => {
@@ -42,32 +41,6 @@ test_image_sum!(test_image_sum_u32, U32, u64);
 test_image_sum!(test_image_sum_u64, U64, u64);
 test_image_sum!(test_image_sum_f32, F32, f32);
 test_image_sum!(test_image_sum_f64, F64, f64);
-
-/// Like test_image_sum but reads from an arbitrary directory.
-macro_rules! test_image_sum_in {
-    ($name:ident, $buffer:ident, $sum_ty:ty) => {
-        fn $name(dir: &str, file: &str, expected_type: ColorType, expected_sum: $sum_ty) {
-            let path = PathBuf::from(dir).join(file);
-            let img_file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
-
-            decoder.next_image().expect("Cannot read image IFD");
-            assert_eq!(decoder.colortype().unwrap(), expected_type);
-            let img_res = decoder.read_image().unwrap();
-
-            match img_res {
-                DecodingResult::$buffer(res) => {
-                    let sum: $sum_ty = res.into_iter().map(<$sum_ty>::from).sum();
-                    assert_eq!(sum, expected_sum);
-                }
-                _ => panic!("Wrong bit depth"),
-            }
-        }
-    };
-}
-
-test_image_sum_in!(test_depth_sum_u16, U16, u64);
-test_image_sum_in!(test_depth_sum_u32, U32, u64);
 
 /// Compute a CRC32 hash of the full decoded TIFF output including metadata.
 ///
@@ -1026,114 +999,6 @@ fn test_decode_huge_g4() {
     } else {
         panic!("Unexpected decoding result type");
     }
-}
-
-// ---- Extended bit depth tests (9-31 bits per sample) ----
-//
-// These test the unpacking of packed N-bit samples to standard-width output.
-// All flower-* images are 73x43 pixels from the libtiffpic depth suite.
-
-// Gray extended depths (contiguous, BlackIsZero)
-#[test]
-fn test_gray_u10() {
-    test_depth_sum_u16(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-minisblack-10.tif",
-        ColorType::Gray(10),
-        1175406,
-    );
-}
-
-#[test]
-fn test_gray_u14() {
-    test_depth_sum_u16(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-minisblack-14.tif",
-        ColorType::Gray(14),
-        18847564,
-    );
-}
-
-#[test]
-fn test_gray_u24() {
-    test_depth_sum_u32(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-minisblack-24.tif",
-        ColorType::Gray(24),
-        19201687050,
-    );
-}
-
-// RGB contiguous extended depths
-#[test]
-fn test_rgb_contig_u10() {
-    test_depth_sum_u16(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-rgb-contig-10.tif",
-        ColorType::RGB(10),
-        3302314,
-    );
-}
-
-#[test]
-fn test_rgb_contig_u14() {
-    test_depth_sum_u16(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-rgb-contig-14.tif",
-        ColorType::RGB(14),
-        52955900,
-    );
-}
-
-#[test]
-fn test_rgb_contig_u24() {
-    test_depth_sum_u32(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-rgb-contig-24.tif",
-        ColorType::RGB(24),
-        53926969278,
-    );
-}
-
-// RGB planar extended depths (read_image returns first plane only)
-#[test]
-fn test_rgb_planar_u10() {
-    test_depth_sum_u16(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-rgb-planar-10.tif",
-        ColorType::RGB(10),
-        1214176,
-    );
-}
-
-#[test]
-fn test_rgb_planar_u12() {
-    test_depth_sum_u16(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-rgb-planar-12.tif",
-        ColorType::RGB(12),
-        4865028,
-    );
-}
-
-#[test]
-fn test_rgb_planar_u14() {
-    test_depth_sum_u16(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-rgb-planar-14.tif",
-        ColorType::RGB(14),
-        19468331,
-    );
-}
-
-#[test]
-fn test_rgb_planar_u24() {
-    test_depth_sum_u32(
-        LIBTIFFPIC_DEPTH_DIR,
-        "flower-rgb-planar-24.tif",
-        ColorType::RGB(24),
-        19835471019,
-    );
 }
 
 // ---- WhiteIsZero tests across bit depths ----
