@@ -1,6 +1,7 @@
 extern crate tiff;
 
 use tiff::decoder::{ifd, Decoder, DecodingResult};
+use tiff::tags::{ByteOrder, Type};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -83,7 +84,7 @@ fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
         decoder.next_image().expect("Cannot read image IFD");
         let (width, height) = decoder.dimensions().unwrap();
         let color_type = decoder.colortype().unwrap();
-        let result = decoder.read_image().unwrap();
+        let mut result = decoder.read_image().unwrap();
 
         // Hash page index + dimensions
         hasher.update(&page.to_le_bytes());
@@ -111,73 +112,27 @@ fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
             other => panic!("compute_tiff_hash: unhandled ColorType {other:?}"),
         }
 
-        // Hash decoded data with type discriminant + LE sample bytes
-        match result {
-            DecodingResult::U8(ref data) => {
-                hasher.update(&[0]);
-                hasher.update(data);
-            }
-            DecodingResult::U16(ref data) => {
-                hasher.update(&[1]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::U32(ref data) => {
-                hasher.update(&[2]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::U64(ref data) => {
-                hasher.update(&[3]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::F16(ref data) => {
-                hasher.update(&[4]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::F32(ref data) => {
-                hasher.update(&[5]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::F64(ref data) => {
-                hasher.update(&[6]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::I8(ref data) => {
-                hasher.update(&[7]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::I16(ref data) => {
-                hasher.update(&[8]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::I32(ref data) => {
-                hasher.update(&[9]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-            DecodingResult::I64(ref data) => {
-                hasher.update(&[10]);
-                for v in data {
-                    hasher.update(&v.to_le_bytes());
-                }
-            }
-        }
+        // Hash decoded data: TIFF type tag (u16 repr) + LE sample bytes.
+        // Map each variant to the corresponding TIFF Type for byte-order normalization.
+        let sample_type = match &result {
+            DecodingResult::U8(_) => Type::BYTE,
+            DecodingResult::I8(_) => Type::SBYTE,
+            DecodingResult::U16(_) => Type::SHORT,
+            DecodingResult::I16(_) => Type::SSHORT,
+            DecodingResult::U32(_) => Type::LONG,
+            DecodingResult::I32(_) => Type::SLONG,
+            DecodingResult::F32(_) => Type::FLOAT,
+            DecodingResult::U64(_) => Type::LONG8,
+            DecodingResult::I64(_) => Type::SLONG8,
+            DecodingResult::F64(_) => Type::DOUBLE,
+            DecodingResult::F16(_) => Type::SHORT, // f16 is 2 bytes like SHORT
+        };
+        hasher.update(&sample_type.to_u16().to_le_bytes());
+
+        let mut buf = result.as_buffer(0);
+        let bytes = buf.as_bytes_mut();
+        ByteOrder::native().convert(sample_type, bytes, ByteOrder::LittleEndian);
+        hasher.update(bytes);
 
         page += 1;
         if !decoder.more_images() {

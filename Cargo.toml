@@ -54,9 +54,6 @@ harness = false
 name = "encode"
 harness = false
 
-[[bench]]
-name = "decode"
-harness = false
 
 [[test]]
 name = "decode_libtiffpic"
