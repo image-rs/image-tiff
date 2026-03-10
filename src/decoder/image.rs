@@ -1030,7 +1030,12 @@ impl Image {
                 bit_depth: n,
                 num_samples: _,
             } if n == 8 || n == 16 || n == 32 || n == 64 => {}
-            ColorType::Gray(n)
+            ColorType::RGB(n)
+            | ColorType::RGBA(n)
+            | ColorType::CMYK(n)
+            | ColorType::CMYKA(n)
+            | ColorType::YCbCr(n)
+            | ColorType::Gray(n)
             | ColorType::Palette(n)
             | ColorType::Multiband {
                 bit_depth: n,
