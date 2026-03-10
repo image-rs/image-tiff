@@ -108,7 +108,7 @@ fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
                 hasher.update(&[9, bit_depth]);
                 hasher.update(&num_samples.to_le_bytes());
             }
-            _ => hasher.update(&[255]),
+            other => panic!("compute_tiff_hash: unhandled ColorType {other:?}"),
         }
 
         // Hash decoded data with type discriminant + LE sample bytes
@@ -286,9 +286,16 @@ fn print_seq_hashes() {
         let name = path.file_name().unwrap().to_str().unwrap();
         let file = File::open(&path).expect("Cannot open test image");
         let hash = format!("{:08x}", compute_tiff_hash(file));
-        // Strip the old hash (last -XXXXXXXX before .tiff) and print with new hash
+        // Strip the old hash (last -XXXXXXXX before .tiff) if present
         let stem = path.file_stem().unwrap().to_str().unwrap();
-        let base = &stem[..stem.rfind('-').unwrap_or(stem.len())];
+        let base = match stem.rsplit_once('-') {
+            Some((prefix, suffix))
+                if suffix.len() == 8 && suffix.chars().all(|c| c.is_ascii_hexdigit()) =>
+            {
+                prefix
+            }
+            _ => stem,
+        };
         let new_name = format!("{base}-{hash}.tiff");
         if new_name != name {
             eprintln!("RENAME: {name} -> {new_name}");
