@@ -85,6 +85,9 @@ pub(crate) struct Image {
     pub chunk_offsets: Vec<u64>,
     pub chunk_bytes: Vec<u64>,
     pub chroma_subsampling: (u16, u16),
+    /// The color map (palette) for `PhotometricInterpretation::RGBPalette`.
+    /// Contains `3 * 2^BitsPerSample` u16 entries: R values, then G values, then B values.
+    pub color_map: Option<Vec<u16>>,
     /// Will decompression yield host-endian samples?
     ///
     /// Standard compression algorithms run on pure bytes, taking the sample slice as it would be
@@ -166,6 +169,7 @@ impl Image {
             chunk_offsets: Vec::new(),
             chunk_bytes: Vec::new(),
             chroma_subsampling: (2, 2),
+            color_map: None,
             decompression_to_host_endian: false,
         }
     }
@@ -458,6 +462,31 @@ impl Image {
             bits_per_sample = 32;
         }
 
+        // Read ColorMap for palette images. The tag contains 3 * 2^BitsPerSample u16 entries.
+        let color_map = if photometric_interpretation == PhotometricInterpretation::RGBPalette {
+            match tag_reader.find_tag(Tag::ColorMap)? {
+                Some(v) => {
+                    let map = v.into_u16_vec()?;
+                    let expected_len = 3usize
+                        .checked_mul(1usize << bits_per_sample)
+                        .ok_or(TiffError::LimitsExceeded)?;
+                    if map.len() != expected_len {
+                        return Err(TiffError::FormatError(
+                            TiffFormatError::InconsistentSizesEncountered,
+                        ));
+                    }
+                    Some(map)
+                }
+                None => {
+                    return Err(TiffError::FormatError(
+                        TiffFormatError::RequiredTagNotFound(Tag::ColorMap),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Image {
             width,
             height,
@@ -477,6 +506,7 @@ impl Image {
             chunk_offsets,
             chunk_bytes,
             chroma_subsampling,
+            color_map,
             decompression_to_host_endian: matches!(
                 compression_method,
                 CompressionMethod::SgiLog | CompressionMethod::SgiLog24
@@ -629,14 +659,13 @@ impl Image {
                     vec![self.bits_per_sample; self.samples as usize],
                 ),
             )),
-            PhotometricInterpretation::RGBPalette | PhotometricInterpretation::TransparencyMask => {
-                Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::InterpretationWithBits(
-                        self.photometric_interpretation,
-                        vec![self.bits_per_sample; self.samples as usize],
-                    ),
-                ))
-            }
+            PhotometricInterpretation::RGBPalette => Ok(ColorType::Palette(self.bits_per_sample)),
+            PhotometricInterpretation::TransparencyMask => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::InterpretationWithBits(
+                    self.photometric_interpretation,
+                    vec![self.bits_per_sample; self.samples as usize],
+                ),
+            )),
         }
     }
 
@@ -979,11 +1008,13 @@ impl Image {
             | ColorType::CMYKA(n)
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
+            | ColorType::Palette(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,
             } if n == 8 || n == 16 || n == 32 || n == 64 => {}
             ColorType::Gray(n)
+            | ColorType::Palette(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,
