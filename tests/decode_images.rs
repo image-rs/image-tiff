@@ -74,6 +74,47 @@ fn test_cmyk_f32() {
 }
 
 #[test]
+fn test_palette_u1() {
+    test_image_sum_u8("palette-1c-1b.tiff", ColorType::Palette(1), 379313);
+}
+
+#[test]
+fn test_palette_u4() {
+    test_image_sum_u8("palette-1c-4b.tiff", ColorType::Palette(4), 1480490);
+}
+
+#[test]
+fn test_palette_u8() {
+    test_image_sum_u8("palette-1c-8b.tiff", ColorType::Palette(8), 2876948);
+}
+
+#[test]
+fn test_palette_color_map() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("palette-1c-8b.tiff");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
+
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Palette(8));
+
+    let color_map = decoder
+        .color_map()
+        .expect("Palette image should have a color map");
+    // 8-bit palette: 3 * 256 = 768 entries
+    assert_eq!(color_map.len(), 768);
+
+    // Each section (R, G, B) has 256 entries
+    let r = &color_map[..256];
+    let g = &color_map[256..512];
+    let b = &color_map[512..768];
+
+    // Verify all values are valid u16 (non-zero palette, at least some variation)
+    assert!(r.iter().any(|&v| v > 0));
+    assert!(g.iter().any(|&v| v > 0));
+    assert!(b.iter().any(|&v| v > 0));
+}
+
+#[test]
 fn test_gray_u8() {
     test_image_sum_u8("minisblack-1c-8b.tiff", ColorType::Gray(8), 2840893);
 }

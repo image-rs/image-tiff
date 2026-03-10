@@ -941,6 +941,16 @@ impl<R: Read + Seek> Decoder<R> {
         self.image.colortype()
     }
 
+    /// Returns the color map (palette) for the current image, if it uses
+    /// `PhotometricInterpretation::RGBPalette`.
+    ///
+    /// The returned slice contains `3 * 2^BitsPerSample` entries as u16 values,
+    /// laid out as: all red values, then all green values, then all blue values.
+    /// Each value is in the range `0..=65535` regardless of the actual bit depth.
+    pub fn color_map(&self) -> Option<&[u16]> {
+        self.image.color_map.as_deref()
+    }
+
     /// The offset of the directory representing the current image.
     pub fn ifd_pointer(&mut self) -> Option<IfdPointer> {
         self.current_ifd_pointer
