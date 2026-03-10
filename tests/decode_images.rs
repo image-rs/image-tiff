@@ -198,10 +198,7 @@ fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
 fn verify_all_seq_images() {
     let seq_dir = std::path::Path::new(SEQ_IMAGE_DIR);
     if !seq_dir.is_dir() {
-        panic!(
-            "seq image directory not found: {}",
-            seq_dir.display()
-        );
+        panic!("seq image directory not found: {}", seq_dir.display());
     }
 
     let mut files: Vec<_> = std::fs::read_dir(seq_dir)
@@ -1236,4 +1233,3 @@ fn test_gray_u12_hpredict() {
     // Delta-encoded 12-bit values: [100, 200, 300, 400, 1000, 2000, 3000, 4000]
     test_image_sum_u16("hpredict-1c-12b.tiff", ColorType::Gray(12), 11000);
 }
-
