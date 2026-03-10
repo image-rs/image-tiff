@@ -36,6 +36,7 @@ test_image_sum!(test_image_sum_u8, U8, u64);
 test_image_sum!(test_image_sum_i8, I8, i64);
 test_image_sum!(test_image_sum_u16, U16, u64);
 test_image_sum!(test_image_sum_i16, I16, i64);
+test_image_sum!(test_image_sum_i32, I32, i64);
 test_image_sum!(test_image_sum_u32, U32, u64);
 test_image_sum!(test_image_sum_u64, U64, u64);
 test_image_sum!(test_image_sum_f32, F32, f32);
@@ -1146,4 +1147,174 @@ fn test_seq_3c_14b_planar() {
 #[test]
 fn test_seq_3c_24b_planar() {
     test_image_sum_u32("seq-3c-24b-planar.tiff", ColorType::RGB(24), 32640);
+}
+
+// --- Compressed (LZW, Deflate, PackBits) ---
+#[test]
+fn test_seq_1c_8b_lzw() {
+    test_image_sum_u8("seq-1c-8b-lzw.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_8b_deflate() {
+    test_image_sum_u8("seq-1c-8b-deflate.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_8b_packbits() {
+    test_image_sum_u8("seq-1c-8b-packbits.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_16b_lzw() {
+    test_image_sum_u16("seq-1c-16b-lzw.tiff", ColorType::Gray(16), 32640);
+}
+
+#[test]
+fn test_seq_1c_16b_deflate() {
+    test_image_sum_u16("seq-1c-16b-deflate.tiff", ColorType::Gray(16), 32640);
+}
+
+#[test]
+fn test_seq_1c_8b_lzw_hpredict() {
+    test_image_sum_u8("seq-1c-8b-lzw-hpredict.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_3c_8b_lzw() {
+    test_image_sum_u8("seq-3c-8b-lzw.tiff", ColorType::RGB(8), 97920);
+}
+
+// --- Tiled layout ---
+#[test]
+fn test_seq_1c_8b_tiled() {
+    test_image_sum_u8("seq-1c-8b-tiled.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_16b_tiled() {
+    test_image_sum_u16("seq-1c-16b-tiled.tiff", ColorType::Gray(16), 32640);
+}
+
+#[test]
+fn test_seq_3c_8b_tiled() {
+    test_image_sum_u8("seq-3c-8b-tiled.tiff", ColorType::RGB(8), 97920);
+}
+
+// --- BigTIFF ---
+#[test]
+fn test_seq_1c_8b_bigtiff() {
+    test_image_sum_u8("seq-1c-8b-bigtiff.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_3c_16b_bigtiff() {
+    test_image_sum_u16("seq-3c-16b-bigtiff.tiff", ColorType::RGB(16), 294528);
+}
+
+// --- Float samples ---
+#[test]
+fn test_seq_1c_32f() {
+    test_image_sum_f32("seq-1c-32f.tiff", ColorType::Gray(32), 128.00009);
+}
+
+#[test]
+fn test_seq_1c_64f() {
+    test_image_sum_f64("seq-1c-64f.tiff", ColorType::Gray(64), 127.99999999999986);
+}
+
+#[test]
+fn test_seq_3c_32f() {
+    test_image_sum_f32("seq-3c-32f.tiff", ColorType::RGB(32), 384.0);
+}
+
+// --- Signed integer ---
+#[test]
+fn test_seq_1c_i8() {
+    test_image_sum_i8("seq-1c-i8.tiff", ColorType::Gray(8), -128);
+}
+
+#[test]
+fn test_seq_1c_i16() {
+    test_image_sum_i16("seq-1c-i16.tiff", ColorType::Gray(16), -128);
+}
+
+#[test]
+fn test_seq_1c_i32() {
+    test_image_sum_i32("seq-1c-i32.tiff", ColorType::Gray(32), -128);
+}
+
+// --- CMYK ---
+#[test]
+fn test_seq_4c_8b_cmyk() {
+    test_image_sum_u8("seq-4c-8b-cmyk.tiff", ColorType::CMYK(8), 130560);
+}
+
+#[test]
+fn test_seq_4c_16b_cmyk() {
+    test_image_sum_u16("seq-4c-16b-cmyk.tiff", ColorType::CMYK(16), 523776);
+}
+
+// --- Palette (indexed) ---
+#[test]
+fn test_seq_1c_8b_palette() {
+    test_image_sum_u8("seq-1c-8b-palette.tiff", ColorType::Palette(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_4b_palette() {
+    test_image_sum_u8("seq-1c-4b-palette.tiff", ColorType::Palette(4), 15360);
+}
+
+// --- RGBA (associated alpha) ---
+#[test]
+fn test_seq_4c_8b_rgba() {
+    test_image_sum_u8("seq-4c-8b-rgba.tiff", ColorType::RGBA(8), 130560);
+}
+
+#[test]
+fn test_seq_4c_16b_rgba() {
+    test_image_sum_u16("seq-4c-16b-rgba.tiff", ColorType::RGBA(16), 523776);
+}
+
+// --- Multi-page (reads first page only via standard macro) ---
+#[test]
+fn test_seq_1c_8b_multipage() {
+    test_image_sum_u8("seq-1c-8b-multipage.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_8b_multipage_all_pages() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("seq-1c-8b-multipage.tiff");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+
+    let expected_sums: [u64; 3] = [32640, 32640, 32640];
+    for (page, &expected) in expected_sums.iter().enumerate() {
+        decoder.next_image().expect("Cannot read image IFD");
+        assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
+        match decoder.read_image().unwrap() {
+            DecodingResult::U8(res) => {
+                let sum: u64 = res.into_iter().map(u64::from).sum();
+                assert_eq!(sum, expected, "Page {} sum mismatch", page);
+            }
+            _ => panic!("Wrong bit depth for page {}", page),
+        }
+    }
+}
+
+// --- Big-endian byte order ---
+#[test]
+fn test_seq_1c_8b_bigendian() {
+    test_image_sum_u8("seq-1c-8b-bigendian.tiff", ColorType::Gray(8), 32640);
+}
+
+#[test]
+fn test_seq_1c_16b_bigendian() {
+    test_image_sum_u16("seq-1c-16b-bigendian.tiff", ColorType::Gray(16), 32640);
+}
+
+#[test]
+fn test_seq_3c_8b_bigendian() {
+    test_image_sum_u8("seq-3c-8b-bigendian.tiff", ColorType::RGB(8), 97920);
 }
