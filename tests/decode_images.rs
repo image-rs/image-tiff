@@ -43,6 +43,7 @@ test_image_sum!(test_image_sum_f64, F64, f64);
 /// Tests that a decoder can be constructed for an image and the color type
 /// read from the IFD and is of the appropriate type, but the type is
 /// unsupported.
+#[allow(dead_code)]
 fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = File::open(path).expect("Cannot find test image!");
@@ -80,7 +81,7 @@ fn test_gray_u8() {
 
 #[test]
 fn test_gray_u12() {
-    test_image_color_type_unsupported("12bit.cropped.tiff", ColorType::Gray(12));
+    test_image_sum_u16("12bit.cropped.tiff", ColorType::Gray(12), 10973);
 }
 
 #[test]
@@ -119,7 +120,7 @@ fn test_rgb_u8() {
 
 #[test]
 fn test_rgb_u12() {
-    test_image_color_type_unsupported("12bit.cropped.rgb.tiff", ColorType::RGB(12));
+    test_image_sum_u16("12bit.cropped.rgb.tiff", ColorType::RGB(12), 32919);
 }
 
 #[test]
