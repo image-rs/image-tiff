@@ -740,6 +740,23 @@ fn invert_colors(
                 *x = !*x;
             }
         }
+        (ColorType::Gray(n @ 9..=15), SampleFormat::Uint) => {
+            // Extended depths promoted to u16: invert within the valid bit range.
+            // Byte-wise NOT would flip the upper padding bits, so we use (max - v).
+            let max = (1u16 << n) - 1;
+            for chunk in buf.as_chunks_mut::<2>().0 {
+                let v = u16::from_ne_bytes(*chunk);
+                *chunk = (max - v).to_ne_bytes();
+            }
+        }
+        (ColorType::Gray(n @ 17..=31), SampleFormat::Uint) => {
+            // Extended depths promoted to u32: invert within the valid bit range.
+            let max = (1u32 << n) - 1;
+            for chunk in buf.as_chunks_mut::<4>().0 {
+                let v = u32::from_ne_bytes(*chunk);
+                *chunk = (max - v).to_ne_bytes();
+            }
+        }
         (ColorType::Gray(32), SampleFormat::IEEEFP) => {
             for x in buf.as_chunks_mut::<4>().0 {
                 let v = f32::from_ne_bytes(*x);

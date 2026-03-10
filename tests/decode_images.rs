@@ -8,6 +8,7 @@ use std::io::{Read, Seek};
 use std::path::PathBuf;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
+const LIBTIFFPIC_DEPTH_DIR: &str = "./tests/libtiffpic/depth/";
 
 macro_rules! test_image_sum {
     ($name:ident, $buffer:ident, $sum_ty:ty) => {
@@ -39,6 +40,32 @@ test_image_sum!(test_image_sum_u32, U32, u64);
 test_image_sum!(test_image_sum_u64, U64, u64);
 test_image_sum!(test_image_sum_f32, F32, f32);
 test_image_sum!(test_image_sum_f64, F64, f64);
+
+/// Like test_image_sum but reads from an arbitrary directory.
+macro_rules! test_image_sum_in {
+    ($name:ident, $buffer:ident, $sum_ty:ty) => {
+        fn $name(dir: &str, file: &str, expected_type: ColorType, expected_sum: $sum_ty) {
+            let path = PathBuf::from(dir).join(file);
+            let img_file = File::open(path).expect("Cannot find test image!");
+            let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+
+            decoder.next_image().expect("Cannot read image IFD");
+            assert_eq!(decoder.colortype().unwrap(), expected_type);
+            let img_res = decoder.read_image().unwrap();
+
+            match img_res {
+                DecodingResult::$buffer(res) => {
+                    let sum: $sum_ty = res.into_iter().map(<$sum_ty>::from).sum();
+                    assert_eq!(sum, expected_sum);
+                }
+                _ => panic!("Wrong bit depth"),
+            }
+        }
+    };
+}
+
+test_image_sum_in!(test_depth_sum_u16, U16, u64);
+test_image_sum_in!(test_depth_sum_u32, U32, u64);
 
 /// Tests that a decoder can be constructed for an image and the color type
 /// read from the IFD and is of the appropriate type, but the type is
@@ -809,4 +836,127 @@ fn test_decode_huge_g4() {
     } else {
         panic!("Unexpected decoding result type");
     }
+}
+
+// ---- Extended bit depth tests (9-31 bits per sample) ----
+//
+// These test the unpacking of packed N-bit samples to standard-width output.
+// All flower-* images are 73x43 pixels from the libtiffpic depth suite.
+
+// Gray extended depths (contiguous, BlackIsZero)
+#[test]
+fn test_gray_u10() {
+    test_depth_sum_u16(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-minisblack-10.tif",
+        ColorType::Gray(10),
+        1175406,
+    );
+}
+
+#[test]
+fn test_gray_u14() {
+    test_depth_sum_u16(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-minisblack-14.tif",
+        ColorType::Gray(14),
+        18847564,
+    );
+}
+
+#[test]
+fn test_gray_u24() {
+    test_depth_sum_u32(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-minisblack-24.tif",
+        ColorType::Gray(24),
+        19201687050,
+    );
+}
+
+// RGB contiguous extended depths
+#[test]
+fn test_rgb_contig_u10() {
+    test_depth_sum_u16(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-rgb-contig-10.tif",
+        ColorType::RGB(10),
+        3302314,
+    );
+}
+
+#[test]
+fn test_rgb_contig_u14() {
+    test_depth_sum_u16(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-rgb-contig-14.tif",
+        ColorType::RGB(14),
+        52955900,
+    );
+}
+
+#[test]
+fn test_rgb_contig_u24() {
+    test_depth_sum_u32(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-rgb-contig-24.tif",
+        ColorType::RGB(24),
+        53926969278,
+    );
+}
+
+// RGB planar extended depths (read_image returns first plane only)
+#[test]
+fn test_rgb_planar_u10() {
+    test_depth_sum_u16(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-rgb-planar-10.tif",
+        ColorType::RGB(10),
+        1214176,
+    );
+}
+
+#[test]
+fn test_rgb_planar_u12() {
+    test_depth_sum_u16(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-rgb-planar-12.tif",
+        ColorType::RGB(12),
+        4865028,
+    );
+}
+
+#[test]
+fn test_rgb_planar_u14() {
+    test_depth_sum_u16(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-rgb-planar-14.tif",
+        ColorType::RGB(14),
+        19468331,
+    );
+}
+
+#[test]
+fn test_rgb_planar_u24() {
+    test_depth_sum_u32(
+        LIBTIFFPIC_DEPTH_DIR,
+        "flower-rgb-planar-24.tif",
+        ColorType::RGB(24),
+        19835471019,
+    );
+}
+
+// WhiteIsZero + extended bit depth (12-bit gray, synthetic 4x2 image)
+#[test]
+fn test_gray_u12_white_is_zero() {
+    // Values: [0, 1000, 2000, 4095, 100, 500, 3000, 3500]
+    // After WhiteIsZero inversion: [4095, 3095, 2095, 0, 3995, 3595, 1095, 595]
+    test_image_sum_u16("miniswhite-1c-12b.tiff", ColorType::Gray(12), 18565);
+}
+
+// Horizontal predictor + extended bit depth (12-bit gray, synthetic 4x2 image)
+#[test]
+fn test_gray_u12_hpredict() {
+    // Delta-encoded 12-bit values: [100, 200, 300, 400, 1000, 2000, 3000, 4000]
+    test_image_sum_u16("hpredict-1c-12b.tiff", ColorType::Gray(12), 11000);
 }
