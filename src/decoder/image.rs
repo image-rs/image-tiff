@@ -1330,51 +1330,89 @@ fn unpack_bits(
     num_samples: usize,
     output_width: u8,
 ) {
+    // Dispatch to const-generic specializations so the compiler can unroll the
+    // byte-gathering loop and precompute shift/mask constants.
+    macro_rules! dispatch {
+        ($($bps:literal),+) => {
+            match bits_per_sample {
+                $( $bps => unpack_bits_const::<$bps>(src, dst, num_samples, output_width), )+
+                _ => unpack_bits_const::<0>(src, dst, num_samples, output_width),
+            }
+        };
+    }
+    // Cover every bit depth from 9..=32 that could reach this path, plus 0 as fallback.
+    dispatch!(
+        9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        32
+    );
+}
+
+/// Inner loop with const BPS so the compiler can optimize the bit extraction.
+/// BPS=0 is the fallback for unexpected bit depths (uses runtime value).
+#[inline(always)]
+fn unpack_bits_const<const BPS: u8>(
+    src: &[u8],
+    dst: &mut [u8],
+    num_samples: usize,
+    output_width: u8,
+) {
     debug_assert!(output_width == 16 || output_width == 32);
-    let bps = u32::from(bits_per_sample);
 
     match output_width {
         16 => {
             debug_assert!(dst.len() >= num_samples * 2);
             let mut bit_offset: usize = 0;
             for i in 0..num_samples {
-                let val = extract_bits_msb(src, bit_offset, bps);
+                let val = if BPS > 0 {
+                    extract_bits_msb_const::<BPS>(src, bit_offset)
+                } else {
+                    extract_bits_msb_const::<16>(src, bit_offset) // unreachable fallback
+                };
                 dst[i * 2..i * 2 + 2].copy_from_slice(&(val as u16).to_ne_bytes());
-                bit_offset += bps as usize;
+                bit_offset += if BPS > 0 { BPS as usize } else { 16 };
             }
         }
         32 => {
             debug_assert!(dst.len() >= num_samples * 4);
             let mut bit_offset: usize = 0;
             for i in 0..num_samples {
-                let val = extract_bits_msb(src, bit_offset, bps);
+                let val = if BPS > 0 {
+                    extract_bits_msb_const::<BPS>(src, bit_offset)
+                } else {
+                    extract_bits_msb_const::<32>(src, bit_offset) // unreachable fallback
+                };
                 dst[i * 4..i * 4 + 4].copy_from_slice(&val.to_ne_bytes());
-                bit_offset += bps as usize;
+                bit_offset += if BPS > 0 { BPS as usize } else { 32 };
             }
         }
         _ => unreachable!(),
     }
 }
 
-/// Extract a value of `num_bits` bits starting at `bit_offset` from an MSB-first packed byte
-/// stream. Returns the value as a u32 (right-justified, zero-extended).
-#[inline]
-fn extract_bits_msb(src: &[u8], bit_offset: usize, num_bits: u32) -> u32 {
-    debug_assert!(num_bits <= 32);
-
+/// Extract a value of `BPS` bits starting at `bit_offset` from an MSB-first packed byte stream.
+/// Uses a single wide read + shift/mask for branchless extraction.
+#[inline(always)]
+fn extract_bits_msb_const<const BPS: u8>(src: &[u8], bit_offset: usize) -> u32 {
     let byte_idx = bit_offset / 8;
     let bit_idx = bit_offset % 8;
+    let mask: u64 = (1u64 << BPS) - 1;
 
-    // Read enough bytes to cover the value (up to 5 bytes for 32 bits crossing a byte boundary).
-    let mut acc: u64 = 0;
-    let bytes_needed = (bit_idx + num_bits as usize).div_ceil(8);
-    for i in 0..bytes_needed {
-        acc = (acc << 8) | u64::from(src[byte_idx + i]);
-    }
+    // Read a u64 from as many bytes as available, big-endian, without going out of bounds.
+    // For BPS <= 32 (+ up to 7 bits offset = 39 bits max), we need at most 5 bytes,
+    // but reading 8 at once is faster and the branch is only taken near row ends.
+    let remaining = src.len() - byte_idx;
+    let acc = if remaining >= 8 {
+        u64::from_be_bytes(src[byte_idx..byte_idx + 8].try_into().unwrap())
+    } else {
+        // Near the end of the buffer — read available bytes into the high bits of a u64.
+        let mut buf = [0u8; 8];
+        buf[..remaining].copy_from_slice(&src[byte_idx..]);
+        u64::from_be_bytes(buf)
+    };
 
-    // Shift right to align the value to bit 0 and mask.
-    let shift = bytes_needed * 8 - bit_idx - num_bits as usize;
-    ((acc >> shift) & ((1u64 << num_bits) - 1)) as u32
+    // The value starts at bit_idx from the MSB of our u64. Shift it to the LSB and mask.
+    let shift = 64 - bit_idx - BPS as usize;
+    ((acc >> shift) & mask) as u32
 }
 
 impl ReadoutLayout {
