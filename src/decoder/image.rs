@@ -135,6 +135,10 @@ pub(crate) struct ReadoutLayout {
 
     /// Bits per sample in the encoded data.
     pub tiff_bits_per_sample: u8,
+    /// Bits per sample in the output buffer, promoted to a standard width.
+    /// For sub-byte depths (1-8): same as tiff_bits_per_sample.
+    /// For 9-16: 16. For 17-32: 32. For 33-64: 64.
+    pub output_bits_per_sample: u8,
     /// Number of samples in the encoded data.
     pub tiff_samples: u16,
     /// Dimensions of the underlying rectangular chunks (tile or strips).
@@ -872,17 +876,29 @@ impl Image {
 
         let data_dimensions = (width, height);
 
+        // Output bits per sample: sub-byte depths stay packed, supra-byte non-standard
+        // depths are promoted to the next standard width (matching sample_type() mapping).
+        let output_bits_per_sample: u8 = match tiff_bits_per_sample {
+            0..=8 => tiff_bits_per_sample,
+            9..=16 => 16,
+            17..=32 => 32,
+            _ => 64,
+        };
+
+        // Packed row size for reading from the file (uses tiff_bits_per_sample).
         let tiff_row_bits = (u64::from(tiff_chunk_dimensions.0) * u64::from(tiff_bits_per_sample))
             .checked_mul(u64::from(tiff_samples))
             .ok_or(TiffError::LimitsExceeded)?;
         let tiff_row_bytes: usize = tiff_row_bits.div_ceil(8).try_into()?;
 
-        let chunk_row_bits = (u64::from(tiff_chunk_dimensions.0) * u64::from(tiff_bits_per_sample))
-            .checked_mul(u64::from(data_samples))
-            .ok_or(TiffError::LimitsExceeded)?;
+        // Output buffer sizes use output_bits_per_sample (the promoted width).
+        let chunk_row_bits = (u64::from(tiff_chunk_dimensions.0)
+            * u64::from(output_bits_per_sample))
+        .checked_mul(u64::from(data_samples))
+        .ok_or(TiffError::LimitsExceeded)?;
         let chunk_row_bytes: usize = chunk_row_bits.div_ceil(8).try_into()?;
 
-        let data_row_bits = (u64::from(data_dimensions.0) * u64::from(tiff_bits_per_sample))
+        let data_row_bits = (u64::from(data_dimensions.0) * u64::from(output_bits_per_sample))
             .checked_mul(u64::from(data_samples))
             .ok_or(TiffError::LimitsExceeded)?;
         let data_row_bytes: usize = data_row_bits.div_ceil(8).try_into()?;
@@ -938,6 +954,7 @@ impl Image {
             chunk_col_stride,
             plane_stride,
             tiff_bits_per_sample,
+            output_bits_per_sample,
             tiff_samples,
             tiff_chunk_dimensions,
             tiff_row_bytes,
@@ -1031,6 +1048,26 @@ impl Image {
                     ));
                 }
             },
+            // Extended bit depths (9-15, 17-31): packed N-bit samples unpacked to standard width.
+            // Horizontal predictor is supported (operates on unpacked standard-width samples).
+            // FloatingPoint predictor is not meaningful for non-standard integer depths.
+            ColorType::RGB(n)
+            | ColorType::RGBA(n)
+            | ColorType::CMYK(n)
+            | ColorType::CMYKA(n)
+            | ColorType::YCbCr(n)
+            | ColorType::Gray(n)
+            | ColorType::Multiband {
+                bit_depth: n,
+                num_samples: _,
+            } if n <= 32 => match self.predictor {
+                Predictor::None | Predictor::Horizontal => {}
+                Predictor::FloatingPoint => {
+                    return Err(TiffError::UnsupportedError(
+                        TiffUnsupportedError::FloatingPointPredictor(color_type),
+                    ));
+                }
+            },
             type_ => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::UnsupportedColorType(type_),
@@ -1104,7 +1141,49 @@ impl Image {
             self.samples,
         )?;
 
-        if is_output_chunk_rows && is_all_bits {
+        // Extended bit depths (9-15, 17-31): packed N-bit samples must be unpacked to
+        // standard-width output samples before endianness fix and predictor.
+        let needs_unpacking = layout.tiff_bits_per_sample != layout.output_bits_per_sample
+            && layout.tiff_bits_per_sample > 8;
+
+        if needs_unpacking {
+            if !is_all_bits {
+                // Packed extended depths with extra samples to discard is not yet supported.
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                ));
+            }
+
+            let tiff_bps = layout.tiff_bits_per_sample;
+            let out_bps = layout.output_bits_per_sample;
+            let samples_per_data_row = data_dims.0 as usize * samples as usize;
+
+            let mut packed = vec![0u8; chunk_row_bytes];
+
+            for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
+                reader.read_exact(&mut packed)?;
+
+                let out_row = &mut row[..data_row_bytes];
+                unpack_bits(&packed, out_row, tiff_bps, samples_per_data_row, out_bps);
+
+                // Unpacked values are in native byte order, so pass native to skip
+                // endianness conversion while still applying the predictor.
+                super::fix_endianness_and_predict(
+                    out_row,
+                    color_type.bit_depth(),
+                    samples,
+                    ByteOrder::native(),
+                    predictor,
+                );
+
+                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
+                    super::invert_colors(out_row, color_type, self.sample_format)?;
+                }
+            }
+        } else if is_output_chunk_rows && is_all_bits {
             // Here we can read directly into the output buffer itself.
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
@@ -1229,6 +1308,70 @@ impl Image {
     }
 }
 
+/// Unpack N-bit packed samples (MSB-first) into standard-width output samples in native byte
+/// order. Packed bits are read from `src` and expanded samples are written to `dst`.
+///
+/// `bits_per_sample` is the packed depth (e.g. 10, 12, 14).
+/// `num_samples` is the number of samples to extract.
+/// `output_width` is the output sample width in bits (16 or 32).
+///
+/// # Panics
+///
+/// Panics if `dst` is too small for `num_samples` output samples.
+fn unpack_bits(
+    src: &[u8],
+    dst: &mut [u8],
+    bits_per_sample: u8,
+    num_samples: usize,
+    output_width: u8,
+) {
+    debug_assert!(output_width == 16 || output_width == 32);
+    let bps = u32::from(bits_per_sample);
+
+    match output_width {
+        16 => {
+            debug_assert!(dst.len() >= num_samples * 2);
+            let mut bit_offset: usize = 0;
+            for i in 0..num_samples {
+                let val = extract_bits_msb(src, bit_offset, bps);
+                dst[i * 2..i * 2 + 2].copy_from_slice(&(val as u16).to_ne_bytes());
+                bit_offset += bps as usize;
+            }
+        }
+        32 => {
+            debug_assert!(dst.len() >= num_samples * 4);
+            let mut bit_offset: usize = 0;
+            for i in 0..num_samples {
+                let val = extract_bits_msb(src, bit_offset, bps);
+                dst[i * 4..i * 4 + 4].copy_from_slice(&val.to_ne_bytes());
+                bit_offset += bps as usize;
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Extract a value of `num_bits` bits starting at `bit_offset` from an MSB-first packed byte
+/// stream. Returns the value as a u32 (right-justified, zero-extended).
+#[inline]
+fn extract_bits_msb(src: &[u8], bit_offset: usize, num_bits: u32) -> u32 {
+    debug_assert!(num_bits <= 32);
+
+    let byte_idx = bit_offset / 8;
+    let bit_idx = bit_offset % 8;
+
+    // Read enough bytes to cover the value (up to 5 bytes for 32 bits crossing a byte boundary).
+    let mut acc: u64 = 0;
+    let bytes_needed = (bit_idx + num_bits as usize).div_ceil(8);
+    for i in 0..bytes_needed {
+        acc = (acc << 8) | u64::from(src[byte_idx + i]);
+    }
+
+    // Shift right to align the value to bit 0 and mask.
+    let shift = bytes_needed * 8 - bit_idx - num_bits as usize;
+    ((acc >> shift) & ((1u64 << num_bits) - 1)) as u32
+}
+
 impl ReadoutLayout {
     pub(crate) fn samples_per_out_texel(&self) -> u16 {
         match self.planar_config {
@@ -1241,7 +1384,7 @@ impl ReadoutLayout {
     // pixel data.
     pub(crate) fn chunk_row_bytes(&self, width: u32) -> TiffResult<usize> {
         let data_samples = self.samples_per_out_texel();
-        let data_row_bits = (u64::from(width) * u64::from(self.tiff_bits_per_sample))
+        let data_row_bits = (u64::from(width) * u64::from(self.output_bits_per_sample))
             .checked_mul(u64::from(data_samples))
             .ok_or(TiffError::LimitsExceeded)?;
         Ok(data_row_bits.div_ceil(8).try_into()?)
