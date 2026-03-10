@@ -630,7 +630,7 @@ fn test_predictor_3_gray_f32() {
 }
 
 #[test]
-#[cfg(feature = "zstd")]
+#[cfg(any(feature = "zstd", feature = "zstd-safe-rust"))]
 fn test_zstd_compression() {
     // gdal_translate -co COMPRESS=ZSTD -co ZSTD_LEVEL=20 int16.tif int16_zstd.tif
     test_image_sum_i16("int16_zstd.tif", ColorType::Gray(16), 354396);
