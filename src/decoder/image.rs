@@ -85,6 +85,8 @@ pub(crate) struct Image {
     pub chunk_offsets: Vec<u64>,
     pub chunk_bytes: Vec<u64>,
     pub chroma_subsampling: (u16, u16),
+    /// FillOrder: 1 = MSB-to-LSB (default), 2 = LSB-to-MSB (common in fax images)
+    pub fill_order: u16,
     /// Will decompression yield host-endian samples?
     ///
     /// Standard compression algorithms run on pure bytes, taking the sample slice as it would be
@@ -166,6 +168,7 @@ impl Image {
             chunk_offsets: Vec::new(),
             chunk_bytes: Vec::new(),
             chroma_subsampling: (2, 2),
+            fill_order: 1,
             decompression_to_host_endian: false,
         }
     }
@@ -325,6 +328,12 @@ impl Image {
             (2, 2)
         };
 
+        let fill_order = tag_reader
+            .find_tag(Tag::FillOrder)?
+            .map(Value::into_u16)
+            .transpose()?
+            .unwrap_or(1);
+
         let planes = match planar_config {
             PlanarConfiguration::Chunky => 1,
             PlanarConfiguration::Planar => samples,
@@ -477,6 +486,7 @@ impl Image {
             chunk_offsets,
             chunk_bytes,
             chroma_subsampling,
+            fill_order,
             decompression_to_host_endian: matches!(
                 compression_method,
                 CompressionMethod::SgiLog | CompressionMethod::SgiLog24
@@ -648,6 +658,7 @@ impl Image {
         #[cfg_attr(not(feature = "jpeg"), allow(unused_variables))] jpeg_tables: Option<&[u8]>,
         dimensions: (u32, u32),
         samples: u16,
+        #[cfg_attr(not(feature = "fax"), allow(unused_variables))] fill_order: u16,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
@@ -741,10 +752,18 @@ impl Image {
                 Box::new(Cursor::new(data))
             }
             #[cfg(feature = "fax")]
+            CompressionMethod::Fax3 => Box::new(super::stream::Group3Reader::new(
+                dimensions,
+                reader,
+                compressed_length,
+                fill_order,
+            )?),
+            #[cfg(feature = "fax")]
             CompressionMethod::Fax4 => Box::new(super::stream::Group4Reader::new(
                 dimensions,
                 reader,
                 compressed_length,
+                fill_order,
             )?),
             #[cfg(feature = "webp")]
             CompressionMethod::WebP => Box::new(super::stream::WebPReader::new(
@@ -1071,6 +1090,7 @@ impl Image {
             self.jpeg_tables.as_deref().map(|a| &**a),
             chunk_dims,
             self.samples,
+            self.fill_order,
         )?;
 
         if is_output_chunk_rows && is_all_bits {
