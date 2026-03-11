@@ -938,15 +938,10 @@ impl Image {
 
         // Only this color type interprets the tag, which is defined with a default of (2, 2)
         if matches!(color, ColorType::YCbCr(_)) && self.chroma_subsampling != (1, 1) {
-            // The JPEG library does upsampling for us and defines its buffers correctly
-            // (presumably). All other compression schemes are not supported..
-            //
-            // NOTE: as explained in <fa225e820b96bef35f01bf4685654beeb4a8df0c> we may be better
-            // off supporting this tag by consistently upsampling, not by adjusting the buffer
-            // size. At least as a default this makes more sense and is much more permissive in
-            // case the compression stream disagrees with the tags (we would not have enough / or
-            // the wrong buffer layout if we only asked for subsampled planes in a planar layout).
-            if !matches!(self.compression_method, CompressionMethod::ModernJPEG) {
+            // The JPEG library does upsampling for us. For other compression methods,
+            // the expand_chunk pipeline wraps the decompressor in a YCbCrUpsamplingReader
+            // that converts the subsampled block layout to full-resolution pixel rows.
+            if matches!(self.planar_config, PlanarConfiguration::Planar) {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::ChromaSubsampling,
                 ));
@@ -1147,7 +1142,7 @@ impl Image {
         let is_all_bits = samples == data_samples;
         let is_output_chunk_rows = layout.row_stride == chunk_row_bytes;
 
-        let mut reader = Self::create_reader(
+        let mut reader: Box<dyn Read> = Self::create_reader(
             reader.inner(),
             compression_method,
             *compressed_bytes,
@@ -1156,6 +1151,20 @@ impl Image {
             self.samples,
             self.fill_order,
         )?;
+
+        // For non-JPEG YCbCr with chroma subsampling, wrap the decompressor in an
+        // upsampling reader that converts the subsampled block layout to full-resolution
+        // pixel rows. JPEG handles upsampling internally.
+        if matches!(color_type, ColorType::YCbCr(_))
+            && self.chroma_subsampling != (1, 1)
+            && !matches!(compression_method, CompressionMethod::ModernJPEG)
+        {
+            reader = Box::new(super::stream::YCbCrUpsamplingReader::new(
+                reader,
+                data_dims,
+                self.chroma_subsampling,
+            ));
+        }
 
         // Extended bit depths (9-15, 17-31): packed N-bit samples must be unpacked to
         // standard-width output samples before endianness fix and predictor.
