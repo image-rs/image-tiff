@@ -174,10 +174,10 @@ const FILES: &[(&str, Option<u32>)] = &[
     ("tests/libtiffpic/depth/README.txt", None),
     ("tests/libtiffpic/depth/summary.txt", None),
     ("tests/libtiffpic/dscf0013.tif", Some(0)), // unsupported YCbCr chroma subsampling
-    ("tests/libtiffpic/fax2d.tif", Some(0)),    // unsupported Fax3 compression
+    ("tests/libtiffpic/fax2d.tif", Some(0xc2f30c6f)),
     // No support for direct CCITT Group 3 1D format
     ("tests/libtiffpic/g3test.g3", None),
-    ("tests/libtiffpic/g3test.tif", Some(0)), // unsupported Fax3 compression
+    ("tests/libtiffpic/g3test.tif", Some(0x304b606b)),
     ("tests/libtiffpic/jello.tif", Some(0xb03dbda9)),
     ("tests/libtiffpic/jim___ah.tif", Some(0x81a27b7f)),
     ("tests/libtiffpic/jim___cg.tif", Some(0xfd31747c)),
