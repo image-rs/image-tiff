@@ -922,9 +922,13 @@ impl Image {
             .ok_or(TiffError::LimitsExceeded)?;
         let data_row_bytes: usize = data_row_bits.div_ceil(8).try_into()?;
 
+        // Clamp the chunk height to the image height: a chunk never contributes more
+        // rows than the image contains. Without this, RowsPerStrip = u32::MAX overflows
+        // usize on 32-bit platforms.
+        let clamped_chunk_height = tiff_chunk_dimensions.1.min(data_dimensions.1);
         let chunk_col_stride: usize = data_row_bits
             .div_ceil(8)
-            .checked_mul(u64::from(tiff_chunk_dimensions.1))
+            .checked_mul(u64::from(clamped_chunk_height))
             .ok_or(TiffError::LimitsExceeded)?
             .try_into()?;
 
@@ -1474,8 +1478,12 @@ impl ReadoutLayout {
 
         let data_row_bytes = u64::try_from(row_stride)?;
 
+        // Use the original image height (from plane_stride / row_stride) to clamp
+        // the chunk height, matching the clamping in readout_for_size().
+        let image_height = self.plane_stride.checked_div(self.row_stride).unwrap_or(0) as u32;
+        let clamped_chunk_height = self.tiff_chunk_dimensions.1.min(image_height);
         let chunk_col_stride = data_row_bytes
-            .checked_mul(u64::from(self.tiff_chunk_dimensions.1))
+            .checked_mul(u64::from(clamped_chunk_height))
             .ok_or(TiffError::LimitsExceeded)?
             .try_into()?;
 
