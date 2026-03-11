@@ -510,6 +510,90 @@ impl Read for Group3Reader {
     }
 }
 
+/// Converts YCbCr data from chroma-subsampled block layout to full-resolution
+/// 3-bytes-per-pixel YCbCr output. Each block of h×v pixels stores h*v Y samples
+/// plus one shared Cb and one shared Cr sample. This reader expands those into
+/// per-pixel (Y, Cb, Cr) triples.
+pub struct YCbCrUpsamplingReader<R: Read> {
+    reader: R,
+    width: u32,
+    horiz_sub: u32,
+    vert_sub: u32,
+    height: u32,
+    current_row: u32,
+    output_buf: io::Cursor<Vec<u8>>,
+}
+
+impl<R: Read> YCbCrUpsamplingReader<R> {
+    pub fn new(reader: R, dimensions: (u32, u32), chroma: (u16, u16)) -> Self {
+        Self {
+            reader,
+            width: dimensions.0,
+            horiz_sub: u32::from(chroma.0),
+            vert_sub: u32::from(chroma.1),
+            height: dimensions.1,
+            current_row: 0,
+            output_buf: io::Cursor::new(Vec::new()),
+        }
+    }
+}
+
+impl<R: Read> Read for YCbCrUpsamplingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // If output buffer is exhausted, decode next block row
+        if self.output_buf.position() as usize >= self.output_buf.get_ref().len() {
+            if self.current_row >= self.height {
+                return Ok(0);
+            }
+
+            let h = self.horiz_sub;
+            let v = self.vert_sub;
+            let blocks_across = self.width.div_ceil(h);
+            let block_size = (h * v + 2) as usize;
+            let block_row_bytes = blocks_across as usize * block_size;
+
+            let rows_in_block = v.min(self.height - self.current_row) as usize;
+
+            let mut subsampled = vec![0u8; block_row_bytes];
+            self.reader.read_exact(&mut subsampled)?;
+
+            let output_row_bytes = self.width as usize * 3;
+            let output = self.output_buf.get_mut();
+            output.clear();
+            output.resize(rows_in_block * output_row_bytes, 0);
+
+            let mut src_offset = 0;
+            for bx in 0..blocks_across {
+                let x0 = (bx * h) as usize;
+
+                let y_samples = &subsampled[src_offset..src_offset + (h * v) as usize];
+                let cb = subsampled[src_offset + (h * v) as usize];
+                let cr = subsampled[src_offset + (h * v) as usize + 1];
+                src_offset += block_size;
+
+                for dy in 0..rows_in_block {
+                    for dx in 0..h as usize {
+                        let x = x0 + dx;
+                        if x >= self.width as usize {
+                            break;
+                        }
+                        let y_val = y_samples[dy * h as usize + dx];
+                        let pixel_offset = dy * output_row_bytes + x * 3;
+                        output[pixel_offset] = y_val;
+                        output[pixel_offset + 1] = cb;
+                        output[pixel_offset + 2] = cr;
+                    }
+                }
+            }
+
+            self.current_row += v;
+            self.output_buf.set_position(0);
+        }
+
+        self.output_buf.read(buf)
+    }
+}
+
 #[cfg(feature = "webp")]
 pub struct WebPReader {
     inner: Cursor<Vec<u8>>,
