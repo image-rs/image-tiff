@@ -1,6 +1,7 @@
 extern crate tiff;
 
 use tiff::decoder::{ifd, Decoder, DecodingResult};
+use tiff::tags::{ByteOrder, Type};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -8,6 +9,7 @@ use std::io::{Read, Seek};
 use std::path::PathBuf;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
+const SEQ_IMAGE_DIR: &str = "./tests/images/seq/";
 
 macro_rules! test_image_sum {
     ($name:ident, $buffer:ident, $sum_ty:ty) => {
@@ -40,9 +42,198 @@ test_image_sum!(test_image_sum_u64, U64, u64);
 test_image_sum!(test_image_sum_f32, F32, f32);
 test_image_sum!(test_image_sum_f64, F64, f64);
 
+/// Compute a CRC32 hash of the full decoded TIFF output including metadata.
+///
+/// Hashes: page count, and for each page: dimensions, color type, and decoded
+/// sample data (in little-endian byte order for multi-byte types). This catches
+/// wrong dimensions, wrong color type, byte-order errors, bit-alignment errors,
+/// stride/padding errors, and pixel value errors.
+fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
+    let mut decoder = Decoder::open(reader).expect("Cannot create decoder");
+    let mut hasher = crc32fast::Hasher::new();
+
+    let mut page = 0u32;
+    loop {
+        decoder.next_image().expect("Cannot read image IFD");
+        let (width, height) = decoder.dimensions().unwrap();
+        let color_type = decoder.colortype().unwrap();
+        let mut result = decoder.read_image().unwrap();
+
+        // Hash page index + dimensions
+        hasher.update(&page.to_le_bytes());
+        hasher.update(&width.to_le_bytes());
+        hasher.update(&height.to_le_bytes());
+
+        // Hash color type (discriminant + fields)
+        match color_type {
+            ColorType::Gray(n) => hasher.update(&[0, n]),
+            ColorType::RGB(n) => hasher.update(&[1, n]),
+            ColorType::Palette(n) => hasher.update(&[2, n]),
+            ColorType::GrayA(n) => hasher.update(&[3, n]),
+            ColorType::RGBA(n) => hasher.update(&[4, n]),
+            ColorType::CMYK(n) => hasher.update(&[5, n]),
+            ColorType::CMYKA(n) => hasher.update(&[6, n]),
+            ColorType::YCbCr(n) => hasher.update(&[7, n]),
+            ColorType::Lab(n) => hasher.update(&[8, n]),
+            ColorType::Multiband {
+                bit_depth,
+                num_samples,
+            } => {
+                hasher.update(&[9, bit_depth]);
+                hasher.update(&num_samples.to_le_bytes());
+            }
+            other => panic!("compute_tiff_hash: unhandled ColorType {other:?}"),
+        }
+
+        // Hash decoded data: TIFF type tag (u16 repr) + LE sample bytes.
+        // Map each variant to the corresponding TIFF Type for byte-order normalization.
+        let sample_type = match &result {
+            DecodingResult::U8(_) => Type::BYTE,
+            DecodingResult::I8(_) => Type::SBYTE,
+            DecodingResult::U16(_) => Type::SHORT,
+            DecodingResult::I16(_) => Type::SSHORT,
+            DecodingResult::U32(_) => Type::LONG,
+            DecodingResult::I32(_) => Type::SLONG,
+            DecodingResult::F32(_) => Type::FLOAT,
+            DecodingResult::U64(_) => Type::LONG8,
+            DecodingResult::I64(_) => Type::SLONG8,
+            DecodingResult::F64(_) => Type::DOUBLE,
+            DecodingResult::F16(_) => Type::SHORT, // f16 is 2 bytes like SHORT
+        };
+        hasher.update(&sample_type.to_u16().to_le_bytes());
+
+        let mut buf = result.as_buffer(0);
+        let bytes = buf.as_bytes_mut();
+        ByteOrder::native().convert(sample_type, bytes, ByteOrder::LittleEndian);
+        hasher.update(bytes);
+
+        page += 1;
+        if !decoder.more_images() {
+            break;
+        }
+    }
+
+    // Hash total page count at the end
+    hasher.update(&page.to_le_bytes());
+    hasher.finalize()
+}
+
+/// Verify all TIFF files in tests/images/seq/ against their filename-embedded CRC32 hash.
+///
+/// Each file is named `<description>-<8hex>.tiff` where the last segment before `.tiff`
+/// is the expected CRC32 hash of (dimensions, color type, decoded data) for all pages.
+#[test]
+fn verify_all_seq_images() {
+    let seq_dir = std::path::Path::new(SEQ_IMAGE_DIR);
+    if !seq_dir.is_dir() {
+        panic!("seq image directory not found: {}", seq_dir.display());
+    }
+
+    let mut files: Vec<_> = std::fs::read_dir(seq_dir)
+        .expect("Cannot read seq image directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "tiff" || ext == "tif")
+        })
+        .collect();
+    files.sort_by_key(|e| e.file_name());
+
+    assert!(
+        !files.is_empty(),
+        "No .tiff files found in {}",
+        seq_dir.display()
+    );
+
+    let mut failures = Vec::new();
+    for entry in &files {
+        let path = entry.path();
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+
+        // Extract expected hash: last '-'-delimited segment
+        let expected_hash = stem
+            .rsplit('-')
+            .next()
+            .expect("filename must contain a '-' before the hash");
+
+        // Validate it looks like an 8-char hex string
+        if expected_hash.len() != 8 || !expected_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            failures.push(format!(
+                "{}: filename does not end with 8-char hex hash (got '{}')",
+                stem, expected_hash
+            ));
+            continue;
+        }
+
+        let file = File::open(&path).expect("Cannot open test image");
+        let actual_hash = format!("{:08x}", compute_tiff_hash(file));
+
+        if actual_hash != expected_hash {
+            failures.push(format!(
+                "{}: expected hash {} but got {}",
+                stem, expected_hash, actual_hash
+            ));
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} of {} seq images failed hash verification:\n  {}",
+            failures.len(),
+            files.len(),
+            failures.join("\n  ")
+        );
+    }
+
+    eprintln!("Verified {} seq images", files.len());
+}
+
+/// Helper: print the correct hash-suffixed filename for every *.tiff in tests/images/seq/.
+/// Run with: cargo test print_seq_hashes -- --ignored --nocapture
+#[test]
+#[ignore]
+fn print_seq_hashes() {
+    let dir = std::path::Path::new(SEQ_IMAGE_DIR);
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .expect("Cannot read image directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with("seq-") && n.ends_with(".tiff"))
+        })
+        .collect();
+    files.sort_by_key(|e| e.file_name());
+
+    for entry in &files {
+        let path = entry.path();
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let file = File::open(&path).expect("Cannot open test image");
+        let hash = format!("{:08x}", compute_tiff_hash(file));
+        // Strip the old hash (last -XXXXXXXX before .tiff) if present
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        let base = match stem.rsplit_once('-') {
+            Some((prefix, suffix))
+                if suffix.len() == 8 && suffix.chars().all(|c| c.is_ascii_hexdigit()) =>
+            {
+                prefix
+            }
+            _ => stem,
+        };
+        let new_name = format!("{base}-{hash}.tiff");
+        if new_name != name {
+            eprintln!("RENAME: {name} -> {new_name}");
+        } else {
+            eprintln!("OK: {name}");
+        }
+    }
+}
+
 /// Tests that a decoder can be constructed for an image and the color type
 /// read from the IFD and is of the appropriate type, but the type is
 /// unsupported.
+#[allow(dead_code)]
 fn test_image_color_type_unsupported(file: &str, expected_type: ColorType) {
     let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
     let img_file = File::open(path).expect("Cannot find test image!");
@@ -121,7 +312,7 @@ fn test_gray_u8() {
 
 #[test]
 fn test_gray_u12() {
-    test_image_color_type_unsupported("12bit.cropped.tiff", ColorType::Gray(12));
+    test_image_sum_u16("12bit.cropped.tiff", ColorType::Gray(12), 10973);
 }
 
 #[test]
@@ -160,7 +351,7 @@ fn test_rgb_u8() {
 
 #[test]
 fn test_rgb_u12() {
-    test_image_color_type_unsupported("12bit.cropped.rgb.tiff", ColorType::RGB(12));
+    test_image_sum_u16("12bit.cropped.rgb.tiff", ColorType::RGB(12), 32919);
 }
 
 #[test]
@@ -808,4 +999,57 @@ fn test_decode_huge_g4() {
     } else {
         panic!("Unexpected decoding result type");
     }
+}
+
+// ---- WhiteIsZero tests across bit depths ----
+
+// WhiteIsZero + extended bit depth (12-bit gray, synthetic 4x2 image)
+#[test]
+fn test_gray_u12_white_is_zero() {
+    // Values: [0, 1000, 2000, 4095, 100, 500, 3000, 3500]
+    // After WhiteIsZero inversion: [4095, 3095, 2095, 0, 3995, 3595, 1095, 595]
+    test_image_sum_u16("miniswhite-1c-12b.tiff", ColorType::Gray(12), 18565);
+}
+
+// WhiteIsZero + non-standard sub-byte depths (3-bit and 6-bit, synthetic 8x2 images)
+// These verify per-sample inversion for packed depths where samples cross byte boundaries.
+#[test]
+fn test_gray_u3_white_is_zero() {
+    test_image_sum_u8("miniswhite-1c-3b.tiff", ColorType::Gray(3), 765);
+}
+
+#[test]
+fn test_gray_u6_white_is_zero() {
+    // Values: [0, 10, 20, 30, 40, 50, 60, 63] × 2 rows
+    // After inversion: [63, 53, 43, 33, 23, 13, 3, 0] × 2 rows
+    test_image_sum_u8("miniswhite-1c-6b.tiff", ColorType::Gray(6), 2124);
+}
+
+// ---- Non-standard sub-byte depths (BlackIsZero) ----
+// Verify that odd bit depths (3, 5, 7) decode without error.
+
+#[test]
+fn test_gray_u3() {
+    // 8x2 image, values [0..7, 7..0], packed to 6 bytes
+    test_image_sum_u8("minisblack-1c-3b.tiff", ColorType::Gray(3), 765);
+}
+
+#[test]
+fn test_gray_u5() {
+    // 8x2 image, packed to 10 bytes
+    test_image_sum_u8("minisblack-1c-5b.tiff", ColorType::Gray(5), 1275);
+}
+
+#[test]
+fn test_gray_u7() {
+    // 8x2 image, packed to 14 bytes
+    test_image_sum_u8("minisblack-1c-7b.tiff", ColorType::Gray(7), 1711);
+}
+
+// ---- Horizontal predictor + extended bit depth ----
+
+#[test]
+fn test_gray_u12_hpredict() {
+    // Delta-encoded 12-bit values: [100, 200, 300, 400, 1000, 2000, 3000, 4000]
+    test_image_sum_u16("hpredict-1c-12b.tiff", ColorType::Gray(12), 11000);
 }

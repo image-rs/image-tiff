@@ -740,6 +740,58 @@ fn invert_colors(
                 *x = !*x;
             }
         }
+        (ColorType::Gray(n @ (3 | 5 | 6 | 7)), SampleFormat::Uint) => {
+            // Non-standard sub-byte depths where samples may cross byte boundaries.
+            // Byte-wise NOT would corrupt samples spanning two bytes, so we invert
+            // each N-bit sample individually within the packed stream.
+            let max = (1u8 << n) - 1;
+            let total_bits = buf.len() * 8;
+            let mut bit_offset = 0;
+            while bit_offset + n as usize <= total_bits {
+                let byte_idx = bit_offset / 8;
+                let bit_in_byte = bit_offset % 8;
+
+                if bit_in_byte + n as usize <= 8 {
+                    // Sample fits within one byte
+                    let shift = 8 - bit_in_byte - n as usize;
+                    let val = (buf[byte_idx] >> shift) & max;
+                    let mask = max << shift;
+                    buf[byte_idx] = (buf[byte_idx] & !mask) | ((max - val) << shift);
+                } else {
+                    // Sample spans two bytes
+                    let combined = ((buf[byte_idx] as u16) << 8)
+                        | buf.get(byte_idx + 1).copied().unwrap_or(0) as u16;
+                    let shift = 16 - bit_in_byte - n as usize;
+                    let max16 = max as u16;
+                    let val = ((combined >> shift) & max16) as u8;
+                    let new_combined =
+                        (combined & !(max16 << shift)) | ((max - val) as u16) << shift;
+                    buf[byte_idx] = (new_combined >> 8) as u8;
+                    if byte_idx + 1 < buf.len() {
+                        buf[byte_idx + 1] = new_combined as u8;
+                    }
+                }
+
+                bit_offset += n as usize;
+            }
+        }
+        (ColorType::Gray(n @ 9..=15), SampleFormat::Uint) => {
+            // Extended depths promoted to u16: invert within the valid bit range.
+            // Byte-wise NOT would flip the upper padding bits, so we use (max - v).
+            let max = (1u16 << n) - 1;
+            for chunk in buf.as_chunks_mut::<2>().0 {
+                let v = u16::from_ne_bytes(*chunk);
+                *chunk = (max - v).to_ne_bytes();
+            }
+        }
+        (ColorType::Gray(n @ 17..=31), SampleFormat::Uint) => {
+            // Extended depths promoted to u32: invert within the valid bit range.
+            let max = (1u32 << n) - 1;
+            for chunk in buf.as_chunks_mut::<4>().0 {
+                let v = u32::from_ne_bytes(*chunk);
+                *chunk = (max - v).to_ne_bytes();
+            }
+        }
         (ColorType::Gray(32), SampleFormat::IEEEFP) => {
             for x in buf.as_chunks_mut::<4>().0 {
                 let v = f32::from_ne_bytes(*x);

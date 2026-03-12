@@ -256,9 +256,24 @@ impl<R: Read> Read for PackBitsReader<R> {
     }
 }
 
+/// Iterator adapter that reverses bits in each byte for FillOrder=2 (LSB-to-MSB).
+#[cfg(feature = "fax")]
+type FaxBytes<R> =
+    core::iter::Map<io::Bytes<io::BufReader<io::Take<R>>>, fn(io::Result<u8>) -> io::Result<u8>>;
+
+#[cfg(feature = "fax")]
+fn fax_byte_iter<R: Read>(reader: R, len: u64, fill_order: u16) -> FaxBytes<R> {
+    let map_fn: fn(io::Result<u8>) -> io::Result<u8> = if fill_order == 2 {
+        |r| r.map(u8::reverse_bits)
+    } else {
+        |r| r
+    };
+    io::BufReader::new(reader.take(len)).bytes().map(map_fn)
+}
+
 #[cfg(feature = "fax")]
 pub struct Group4Reader<R: Read> {
-    decoder: fax34::decoder::Group4Decoder<io::Bytes<io::BufReader<io::Take<R>>>>,
+    decoder: fax34::decoder::Group4Decoder<FaxBytes<R>>,
     line_buf: io::Cursor<Vec<u8>>,
     height: u32,
     width: u16,
@@ -271,13 +286,14 @@ impl<R: Read> Group4Reader<R> {
         dimensions: (u32, u32),
         reader: R,
         compressed_length: u64,
+        fill_order: u16,
     ) -> crate::TiffResult<Self> {
         let width = u16::try_from(dimensions.0)?;
         let height = dimensions.1;
 
         Ok(Self {
             decoder: fax34::decoder::Group4Decoder::new(
-                io::BufReader::new(reader.take(compressed_length)).bytes(),
+                fax_byte_iter(reader, compressed_length, fill_order),
                 width,
             )?,
             line_buf: io::Cursor::new(Vec::with_capacity(width.into())),
@@ -350,6 +366,141 @@ impl<R: Read> Read for Group4Reader<R> {
                     self.line_buf.set_position(0);
                 }
             }
+        }
+
+        self.line_buf.read(buf)
+    }
+}
+
+/// Owning byte reader for Group 3 decoding: the compressed data is consumed
+/// into an iterator so the reader doesn't borrow the buffer.
+#[cfg(feature = "fax")]
+type OwnedBitReader = fax34::ByteReader<
+    core::iter::Map<std::vec::IntoIter<u8>, fn(u8) -> Result<u8, std::convert::Infallible>>,
+>;
+
+/// Decodes CCITT Group 3 (T.4) 1D compressed data line by line.
+///
+/// The fax crate's `Group3Decoder` has a bug where `new()` doesn't consume the
+/// initial EOL marker, causing its lookup tables to destructively consume bits
+/// from the EOL when trying to decode run-length codes. We work around this by
+/// using the crate's lower-level `white::decode` / `black::decode` functions
+/// and handling EOL markers ourselves.
+#[cfg(feature = "fax")]
+pub struct Group3Reader {
+    reader: OwnedBitReader,
+    line_buf: io::Cursor<Vec<u8>>,
+    height: u32,
+    width: u16,
+    y: u32,
+}
+
+#[cfg(feature = "fax")]
+impl Group3Reader {
+    pub fn new<R: Read>(
+        dimensions: (u32, u32),
+        reader: R,
+        compressed_length: u64,
+        fill_order: u16,
+    ) -> crate::TiffResult<Self> {
+        let width = u16::try_from(dimensions.0)?;
+        let height = dimensions.1;
+
+        // Buffer all compressed data and apply FillOrder bit reversal
+        let mut compressed = vec![0u8; compressed_length as usize];
+        reader.take(compressed_length).read_exact(&mut compressed)?;
+        if fill_order == 2 {
+            for b in &mut compressed {
+                *b = b.reverse_bits();
+            }
+        }
+
+        // Create an owning bit reader (Vec consumed by into_iter, no borrow issues)
+        let map_fn: fn(u8) -> Result<u8, std::convert::Infallible> = Ok;
+        let mut bit_reader = fax34::ByteReader::new(compressed.into_iter().map(map_fn)).unwrap();
+
+        // Skip fill bits + initial EOL marker
+        Self::skip_eol(&mut bit_reader);
+
+        Ok(Self {
+            reader: bit_reader,
+            line_buf: io::Cursor::new(Vec::with_capacity(width.into())),
+            width,
+            height,
+            y: 0,
+        })
+    }
+
+    /// Skip zero fill bits followed by the terminating '1' bit of an EOL code.
+    fn skip_eol(reader: &mut impl fax34::BitReader) {
+        while reader.peek(1) == Some(0) {
+            let _ = reader.consume(1);
+        }
+        if reader.peek(1) == Some(1) {
+            let _ = reader.consume(1);
+        }
+    }
+
+    /// Decode a full run-length value (terminal + optional makeup codes).
+    fn with_markup<R: fax34::BitReader>(
+        decoder: fn(&mut R) -> Option<u16>,
+        reader: &mut R,
+    ) -> Option<u16> {
+        let mut sum = 0u16;
+        while let Some(n) = decoder(reader) {
+            sum += n;
+            if n < 64 {
+                return Some(sum);
+            }
+        }
+        None
+    }
+}
+
+#[cfg(feature = "fax")]
+impl Read for Group3Reader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.line_buf.position() as usize == self.line_buf.get_ref().len()
+            && self.y < self.height
+        {
+            // Decode one line of alternating white/black run-lengths
+            let mut transitions = Vec::new();
+            let mut a0 = 0u16;
+            let mut is_white = true;
+            loop {
+                let run = if is_white {
+                    Self::with_markup(fax34::maps::white::decode, &mut self.reader)
+                } else {
+                    Self::with_markup(fax34::maps::black::decode, &mut self.reader)
+                };
+                match run {
+                    Some(len) => {
+                        a0 += len;
+                        transitions.push(a0);
+                        is_white = !is_white;
+                    }
+                    None => break,
+                }
+            }
+
+            self.y += 1;
+
+            // Convert transitions to packed bilevel output
+            let bytes_per_line = usize::from(self.width).div_ceil(8);
+            let buffer = self.line_buf.get_mut();
+            buffer.clear();
+            buffer.resize(bytes_per_line, 0u8);
+
+            let pels = fax34::decoder::pels(&transitions, self.width);
+            for (i, c) in pels.enumerate() {
+                if c == fax34::Color::Black {
+                    buffer[i / 8] |= 1 << (7 - (i % 8));
+                }
+            }
+            self.line_buf.set_position(0);
+
+            // Skip fill bits + line-ending EOL
+            Self::skip_eol(&mut self.reader);
         }
 
         self.line_buf.read(buf)

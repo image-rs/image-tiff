@@ -54,6 +54,7 @@ harness = false
 name = "encode"
 harness = false
 
+
 [[test]]
 name = "decode_libtiffpic"
 path = "tests/decode_libtiffpic.rs"
