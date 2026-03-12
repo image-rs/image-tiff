@@ -948,6 +948,52 @@ static int write_multipage(const char *path, int bits, const char *mode)
     return 0;
 }
 
+/* Write a 1-bit bilevel TIFF with CCITT Group 3 (Fax3) compression.
+ * Sequential pattern: pixel = (y*W+x) % 2, inverted for MinIsWhite. */
+static int write_bilevel_fax3(const char *path, uint32_t t4options, uint16_t fill_order)
+{
+    TIFF *tif = TIFFOpen(path, "w");
+    if (!tif) { fprintf(stderr, "Cannot open %s\n", path); return -1; }
+
+    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, W);
+    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, H);
+    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, 1);
+    TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISWHITE);
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_CCITTFAX3);
+    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, H);
+    TIFFSetField(tif, TIFFTAG_GROUP3OPTIONS, t4options);
+    TIFFSetField(tif, TIFFTAG_FILLORDER, fill_order);
+
+    tsize_t scanline_size = TIFFScanlineSize(tif);
+    uint8_t *buf = (uint8_t *)_TIFFmalloc(scanline_size);
+    if (!buf) { TIFFClose(tif); return -1; }
+
+    for (int y = 0; y < H; y++) {
+        memset(buf, 0, scanline_size);
+        int bit_offset = 0;
+        for (int x = 0; x < W; x++) {
+            uint32_t val = (y * W + x) % 2;
+            /* MinIsWhite: store inverted so decoder inverts back to match
+             * the canonical sequential pattern (same as seq-1c-1b.tiff). */
+            val = 1 - val;
+            pack_value(buf, &bit_offset, val, 1);
+        }
+        if (TIFFWriteScanline(tif, buf, y, 0) < 0) {
+            fprintf(stderr, "Error writing scanline %d to %s\n", y, path);
+            _TIFFfree(buf);
+            TIFFClose(tif);
+            return -1;
+        }
+    }
+
+    _TIFFfree(buf);
+    TIFFClose(tif);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -1345,6 +1391,26 @@ int main(int argc, char **argv)
     if (write_gray_tiled_comp(path, 8, COMPRESSION_NONE, "w8") == 0)
         printf("  OK seq-1c-8b-tiled-bigtiff.tiff\n");
     else { printf("  FAIL seq-1c-8b-tiled-bigtiff.tiff\n"); ok = 0; }
+
+    printf("\n--- CCITT Group 3 (Fax3) ---\n");
+
+    /* Fax3: basic (no fill bits, MSB-first) */
+    snprintf(path, sizeof(path), "%s/seq-1c-1b-fax3.tiff", dir);
+    if (write_bilevel_fax3(path, 0, FILLORDER_MSB2LSB) == 0)
+        printf("  OK seq-1c-1b-fax3.tiff\n");
+    else { printf("  FAIL seq-1c-1b-fax3.tiff\n"); ok = 0; }
+
+    /* Fax3: with fill bits (T4Options bit 2 = 4) */
+    snprintf(path, sizeof(path), "%s/seq-1c-1b-fax3-fillbits.tiff", dir);
+    if (write_bilevel_fax3(path, 4, FILLORDER_MSB2LSB) == 0)
+        printf("  OK seq-1c-1b-fax3-fillbits.tiff\n");
+    else { printf("  FAIL seq-1c-1b-fax3-fillbits.tiff\n"); ok = 0; }
+
+    /* Fax3: LSB-first fill order */
+    snprintf(path, sizeof(path), "%s/seq-1c-1b-fax3-lsb.tiff", dir);
+    if (write_bilevel_fax3(path, 0, FILLORDER_LSB2MSB) == 0)
+        printf("  OK seq-1c-1b-fax3-lsb.tiff\n");
+    else { printf("  FAIL seq-1c-1b-fax3-lsb.tiff\n"); ok = 0; }
 
     printf("\nDone. %s\n", ok ? "All succeeded." : "Some failed!");
     return ok ? 0 : 1;

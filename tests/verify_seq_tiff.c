@@ -436,6 +436,15 @@ int main(int argc, char **argv)
 
         /* --- Tiled BigTIFF --- */
         {"seq-1c-8b-tiled-bigtiff.tiff", SUM_U8, 8, 1, {.u = 32640}},
+
+        /* --- CCITT Group 3 (Fax3) ---
+         * libtiff returns raw scanline data in MinIsWhite convention (0=white, 1=black).
+         * The stored pattern is inverted sequential, so libtiff sum differs from
+         * image-tiff's BlackIsZero sum. For 16x16 1-bit with inverted sequential pattern,
+         * the raw packed byte sum is computed by verify run below. */
+        {"seq-1c-1b-fax3.tiff",          SUM_U8_PACKED, 1, 1, {.u = 5440}},
+        {"seq-1c-1b-fax3-fillbits.tiff", SUM_U8_PACKED, 1, 1, {.u = 5440}},
+        {"seq-1c-1b-fax3-lsb.tiff",      SUM_U8_PACKED, 1, 1, {.u = 5440}},
     };
 
     int ncases = sizeof(cases) / sizeof(cases[0]);
