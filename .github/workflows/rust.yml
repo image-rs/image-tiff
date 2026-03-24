@@ -11,7 +11,7 @@ jobs:
       matrix:
         rust: ["1.88.0", stable, beta, nightly]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v6
 
     - uses: dtolnay/rust-toolchain@nightly
       if: ${{ matrix.rust == '1.88.0' }}
@@ -32,13 +32,29 @@ jobs:
       if: ${{ matrix.rust != '1.88.0' }}
       run: cargo test -v && cargo doc -v
 
+  test-platforms:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-26-intel, windows-latest, windows-11-arm]
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Cache Cargo Dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+    - name: test
+      run: cargo test -v
+
   features:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         feature: ["", deflate, jpeg, lzw, zstd, default, "default,zstd"]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
@@ -59,25 +75,29 @@ jobs:
       matrix:
         arch: [powerpc-unknown-linux-gnu, i686-unknown-linux-gnu]
     steps:
-      - uses: actions/checkout@v4
-      - name: Install or use cached cross-rs/cross
-        uses: baptiste0928/cargo-install@v2
-        with:
-          crate: cross
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@cross
       - name: Cache Cargo Dependencies
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
           key: ${{ matrix.arch }}
-      - name: Start Docker (required for cross-rs)
-        run: sudo systemctl start docker
       - name: Cross-Run Tests using QEMU
         run: cross test --target ${{ matrix.arch }}
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: taiki-e/install-action@cargo-hack
+    - name: Check MSRV
+      run: cargo hack check --rust-version
 
   rustfmt:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
@@ -87,8 +107,8 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
-    - run: cargo clippy --all-features # TODO: enable "-- -D warnings" once all outstanding clippy lints are fixed
+    - run: cargo clippy --all-features --all-targets -- -D warnings
