@@ -2,7 +2,7 @@ extern crate tiff;
 
 use std::io::{Cursor, Seek, Write};
 use tiff::{
-    decoder::{Decoder, DecodingResult},
+    decoder::{Decoder, DecodingSampleBuffer},
     encoder::{
         colortype::{self, ColorType},
         Compression, TiffEncoder, TiffValue,
@@ -115,7 +115,7 @@ fn encode_decode_with_compression(compression: Compression) {
         // Check the RGB image
         assert_eq!(
             match decoder.read_image() {
-                Ok(DecodingResult::U16(image_data)) => image_data,
+                Ok(DecodingSampleBuffer::U16(image_data)) => image_data,
                 unexpected => panic!("Descoding RGB failed: {unexpected:?}"),
             },
             image_rgb.reference_data()
@@ -125,7 +125,7 @@ fn encode_decode_with_compression(compression: Compression) {
         decoder.next_image().unwrap();
         assert_eq!(
             match decoder.read_image() {
-                Ok(DecodingResult::U8(image_data)) => image_data,
+                Ok(DecodingSampleBuffer::U8(image_data)) => image_data,
                 unexpected => panic!("Decoding grayscale failed: {unexpected:?}"),
             },
             image_grayscale.reference_data()

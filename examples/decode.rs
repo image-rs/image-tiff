@@ -1,4 +1,4 @@
-use tiff::decoder::{BufferLayoutPreference, Decoder, DecodingBuffer, DecodingResult};
+use tiff::decoder::{BufferLayoutPreference, Decoder, DecodingSampleBuffer, DecodingSampleSlice};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(image) = std::env::args_os().nth(1) else {
@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let io = std::io::BufReader::new(file);
     let mut reader = Decoder::open(io)?;
 
-    let mut data = DecodingResult::I8(vec![]);
+    let mut data = DecodingSampleBuffer::I8(vec![]);
 
     for i in 0u32.. {
         let colortype = reader.colortype()?;
@@ -31,32 +31,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn debug_planes(
     index: u32,
-    data: &mut DecodingResult,
+    data: &mut DecodingSampleBuffer,
     layout: &BufferLayoutPreference,
     colortype: &tiff::ColorType,
     (width, height): (u32, u32),
 ) {
     match data {
-        DecodingResult::F16(v) => {
+        DecodingSampleBuffer::F16(v) => {
             let samples = v
                 .iter()
                 .map(|&f| (f64::from(f) * f64::from(u16::MAX)) as u16)
                 .collect::<Vec<_>>();
-            *data = DecodingResult::U16(samples);
+            *data = DecodingSampleBuffer::U16(samples);
         }
-        DecodingResult::F32(v) => {
+        DecodingSampleBuffer::F32(v) => {
             let samples = v
                 .iter()
                 .map(|&f| (f64::from(f) * f64::from(u16::MAX)) as u16)
                 .collect::<Vec<_>>();
-            *data = DecodingResult::U16(samples);
+            *data = DecodingSampleBuffer::U16(samples);
         }
-        DecodingResult::F64(v) => {
+        DecodingSampleBuffer::F64(v) => {
             let samples = v
                 .iter()
                 .map(|&f| (f * f64::from(u16::MAX)) as u16)
                 .collect::<Vec<_>>();
-            *data = DecodingResult::U16(samples);
+            *data = DecodingSampleBuffer::U16(samples);
         }
         _ => {}
     }
@@ -98,24 +98,24 @@ fn debug_planes(
         // them here (e.g. represent 1-bit as `{0, 1}`) but we'd also set `maxval` accordingly and
         // this requires tupltype to be `BLACKANDWHITE` so introducing a bunch of complexity. If
         // you want to do that in your real code, go ahead.
-        DecodingBuffer::U8(buf) => match colortype.bit_depth() {
+        DecodingSampleSlice::U8(buf) => match colortype.bit_depth() {
             8 => u64::from(u8::MAX),
             4 => {
                 fallback_buffer = vec![0; (swidth * sheight) as usize];
                 expand_4bit(buf, swidth, &mut fallback_buffer);
-                *data = DecodingResult::U8(fallback_buffer);
+                *data = DecodingSampleBuffer::U8(fallback_buffer);
                 u64::from(u8::MAX)
             }
             2 => {
                 fallback_buffer = vec![0; (swidth * sheight) as usize];
                 expand_2bit(buf, swidth, &mut fallback_buffer);
-                *data = DecodingResult::U8(fallback_buffer);
+                *data = DecodingSampleBuffer::U8(fallback_buffer);
                 u64::from(u8::MAX)
             }
             1 => {
                 fallback_buffer = vec![0; (swidth * sheight) as usize];
                 expand_1bit(buf, swidth, &mut fallback_buffer);
-                *data = DecodingResult::U8(fallback_buffer);
+                *data = DecodingSampleBuffer::U8(fallback_buffer);
                 u64::from(u8::MAX)
             }
             _ => {
@@ -126,28 +126,30 @@ fn debug_planes(
                 return;
             }
         },
-        DecodingBuffer::U16(_) => u64::from(u16::MAX),
-        DecodingBuffer::U32(_) => u64::from(u32::MAX),
-        DecodingBuffer::U64(_) => u64::MAX,
+        DecodingSampleSlice::U16(_) => u64::from(u16::MAX),
+        DecodingSampleSlice::U32(_) => u64::from(u32::MAX),
+        DecodingSampleSlice::U64(_) => u64::MAX,
         // Eh, this is a good effort I guess.
-        DecodingBuffer::I8(items) => {
+        DecodingSampleSlice::I8(items) => {
             items.iter_mut().for_each(|v| *v = 0.max(*v));
             u64::from(i8::MAX as u8)
         }
-        DecodingBuffer::I16(items) => {
+        DecodingSampleSlice::I16(items) => {
             items.iter_mut().for_each(|v| *v = 0.max(*v));
             u64::from(i16::MAX as u16)
         }
-        DecodingBuffer::I32(items) => {
+        DecodingSampleSlice::I32(items) => {
             items.iter_mut().for_each(|v| *v = 0.max(*v));
             u64::from(i32::MAX as u32)
         }
-        DecodingBuffer::I64(items) => {
+        DecodingSampleSlice::I64(items) => {
             items.iter_mut().for_each(|v| *v = 0.max(*v));
             i64::MAX as u64
         }
         // Not supported by PAM.
-        DecodingBuffer::F16(_) | DecodingBuffer::F32(_) | DecodingBuffer::F64(_) => return,
+        DecodingSampleSlice::F16(_) | DecodingSampleSlice::F32(_) | DecodingSampleSlice::F64(_) => {
+            return
+        }
     };
 
     let byte_len = if layout.planes > 1 {

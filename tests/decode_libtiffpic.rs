@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::{fs::File, path};
 
-use tiff::decoder::{Decoder, DecodingResult};
+use tiff::decoder::{Decoder, DecodingSampleBuffer};
 use tiff::tags::{ByteOrder, Type};
 use tiff::ColorType;
 
@@ -252,19 +252,19 @@ fn main() {
 }
 
 /// Map DecodingResult variant to a TIFF Type for byte-order normalization.
-fn sample_type_of(result: &DecodingResult) -> Type {
+fn sample_type_of(result: &DecodingSampleBuffer) -> Type {
     match result {
-        DecodingResult::U8(_) => Type::BYTE,
-        DecodingResult::I8(_) => Type::SBYTE,
-        DecodingResult::U16(_) => Type::SHORT,
-        DecodingResult::I16(_) => Type::SSHORT,
-        DecodingResult::U32(_) => Type::LONG,
-        DecodingResult::I32(_) => Type::SLONG,
-        DecodingResult::F32(_) => Type::FLOAT,
-        DecodingResult::U64(_) => Type::LONG8,
-        DecodingResult::I64(_) => Type::SLONG8,
-        DecodingResult::F64(_) => Type::DOUBLE,
-        DecodingResult::F16(_) => Type::SHORT, // f16 is 2 bytes like SHORT
+        DecodingSampleBuffer::U8(_) => Type::BYTE,
+        DecodingSampleBuffer::I8(_) => Type::SBYTE,
+        DecodingSampleBuffer::U16(_) => Type::SHORT,
+        DecodingSampleBuffer::I16(_) => Type::SSHORT,
+        DecodingSampleBuffer::U32(_) => Type::LONG,
+        DecodingSampleBuffer::I32(_) => Type::SLONG,
+        DecodingSampleBuffer::F32(_) => Type::FLOAT,
+        DecodingSampleBuffer::U64(_) => Type::LONG8,
+        DecodingSampleBuffer::I64(_) => Type::SLONG8,
+        DecodingSampleBuffer::F64(_) => Type::DOUBLE,
+        DecodingSampleBuffer::F16(_) => Type::SHORT, // f16 is 2 bytes like SHORT
     }
 }
 
@@ -299,7 +299,7 @@ fn compute_hash(path: &std::path::Path) -> Result<u32, tiff::TiffError> {
     let img_file = File::open(path)?;
     let mut decoder = Decoder::open(img_file)?;
     let mut hasher = crc32fast::Hasher::new();
-    let mut buffer = DecodingResult::U8(vec![]);
+    let mut buffer = DecodingSampleBuffer::U8(vec![]);
 
     let mut page = 0u32;
     while decoder.more_images() {

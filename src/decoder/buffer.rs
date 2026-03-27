@@ -9,7 +9,7 @@ use crate::{
 
 /// Result of a decoding process
 #[derive(Debug)]
-pub enum DecodingResult {
+pub enum DecodingSampleBuffer {
     /// A vector of unsigned bytes
     U8(Vec<u8>),
     /// A vector of unsigned words
@@ -34,7 +34,7 @@ pub enum DecodingResult {
     I64(Vec<i64>),
 }
 
-impl DecodingResult {
+impl DecodingSampleBuffer {
     /// Reallocate the buffer to decode all planes of the indicated layout.
     pub fn resize_to(
         &mut self,
@@ -63,7 +63,7 @@ impl DecodingResult {
         size: usize,
         limits: &Limits,
         from_fn: fn(Vec<T>) -> Self,
-    ) -> TiffResult<DecodingResult> {
+    ) -> TiffResult<DecodingSampleBuffer> {
         if size > limits.decoding_buffer_size / core::mem::size_of::<T>() {
             Err(TiffError::LimitsExceeded)
         } else {
@@ -71,70 +71,70 @@ impl DecodingResult {
         }
     }
 
-    fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::U8)
+    fn new_u8(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::U8)
     }
 
-    fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::U16)
+    fn new_u16(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::U16)
     }
 
-    fn new_u32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::U32)
+    fn new_u32(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::U32)
     }
 
-    fn new_u64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::U64)
+    fn new_u64(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::U64)
     }
 
-    fn new_f32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::F32)
+    fn new_f32(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::F32)
     }
 
-    fn new_f64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::F64)
+    fn new_f64(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::F64)
     }
 
-    fn new_f16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::F16)
+    fn new_f16(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::F16)
     }
 
-    fn new_i8(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::I8)
+    fn new_i8(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::I8)
     }
 
-    fn new_i16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::I16)
+    fn new_i16(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::I16)
     }
 
-    fn new_i32(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::I32)
+    fn new_i32(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::I32)
     }
 
-    fn new_i64(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
-        Self::new(size, limits, DecodingResult::I64)
+    fn new_i64(size: usize, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
+        Self::new(size, limits, DecodingSampleBuffer::I64)
     }
 
     /// Get a view of this buffer starting from the nth _sample_ of the current type.
-    pub fn as_buffer(&mut self, start: usize) -> DecodingBuffer<'_> {
+    pub fn as_buffer(&mut self, start: usize) -> DecodingSampleSlice<'_> {
         match *self {
-            DecodingResult::U8(ref mut buf) => DecodingBuffer::U8(&mut buf[start..]),
-            DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
-            DecodingResult::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[start..]),
-            DecodingResult::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[start..]),
-            DecodingResult::F16(ref mut buf) => DecodingBuffer::F16(&mut buf[start..]),
-            DecodingResult::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[start..]),
-            DecodingResult::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[start..]),
-            DecodingResult::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[start..]),
-            DecodingResult::I16(ref mut buf) => DecodingBuffer::I16(&mut buf[start..]),
-            DecodingResult::I32(ref mut buf) => DecodingBuffer::I32(&mut buf[start..]),
-            DecodingResult::I64(ref mut buf) => DecodingBuffer::I64(&mut buf[start..]),
+            DecodingSampleBuffer::U8(ref mut buf) => DecodingSampleSlice::U8(&mut buf[start..]),
+            DecodingSampleBuffer::U16(ref mut buf) => DecodingSampleSlice::U16(&mut buf[start..]),
+            DecodingSampleBuffer::U32(ref mut buf) => DecodingSampleSlice::U32(&mut buf[start..]),
+            DecodingSampleBuffer::U64(ref mut buf) => DecodingSampleSlice::U64(&mut buf[start..]),
+            DecodingSampleBuffer::F16(ref mut buf) => DecodingSampleSlice::F16(&mut buf[start..]),
+            DecodingSampleBuffer::F32(ref mut buf) => DecodingSampleSlice::F32(&mut buf[start..]),
+            DecodingSampleBuffer::F64(ref mut buf) => DecodingSampleSlice::F64(&mut buf[start..]),
+            DecodingSampleBuffer::I8(ref mut buf) => DecodingSampleSlice::I8(&mut buf[start..]),
+            DecodingSampleBuffer::I16(ref mut buf) => DecodingSampleSlice::I16(&mut buf[start..]),
+            DecodingSampleBuffer::I32(ref mut buf) => DecodingSampleSlice::I32(&mut buf[start..]),
+            DecodingSampleBuffer::I64(ref mut buf) => DecodingSampleSlice::I64(&mut buf[start..]),
         }
     }
 }
 
 // A buffer for image decoding
-pub enum DecodingBuffer<'a> {
+pub enum DecodingSampleSlice<'a> {
     /// A slice of unsigned bytes
     U8(&'a mut [u8]),
     /// A slice of unsigned words
@@ -159,36 +159,36 @@ pub enum DecodingBuffer<'a> {
     I64(&'a mut [i64]),
 }
 
-impl<'a> DecodingBuffer<'a> {
+impl<'a> DecodingSampleSlice<'a> {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            DecodingBuffer::U8(buf) => buf,
-            DecodingBuffer::I8(buf) => bytecast::i8_as_ne_bytes(buf),
-            DecodingBuffer::U16(buf) => bytecast::u16_as_ne_bytes(buf),
-            DecodingBuffer::I16(buf) => bytecast::i16_as_ne_bytes(buf),
-            DecodingBuffer::U32(buf) => bytecast::u32_as_ne_bytes(buf),
-            DecodingBuffer::I32(buf) => bytecast::i32_as_ne_bytes(buf),
-            DecodingBuffer::U64(buf) => bytecast::u64_as_ne_bytes(buf),
-            DecodingBuffer::I64(buf) => bytecast::i64_as_ne_bytes(buf),
-            DecodingBuffer::F16(buf) => bytecast::f16_as_ne_bytes(buf),
-            DecodingBuffer::F32(buf) => bytecast::f32_as_ne_bytes(buf),
-            DecodingBuffer::F64(buf) => bytecast::f64_as_ne_bytes(buf),
+            DecodingSampleSlice::U8(buf) => buf,
+            DecodingSampleSlice::I8(buf) => bytecast::i8_as_ne_bytes(buf),
+            DecodingSampleSlice::U16(buf) => bytecast::u16_as_ne_bytes(buf),
+            DecodingSampleSlice::I16(buf) => bytecast::i16_as_ne_bytes(buf),
+            DecodingSampleSlice::U32(buf) => bytecast::u32_as_ne_bytes(buf),
+            DecodingSampleSlice::I32(buf) => bytecast::i32_as_ne_bytes(buf),
+            DecodingSampleSlice::U64(buf) => bytecast::u64_as_ne_bytes(buf),
+            DecodingSampleSlice::I64(buf) => bytecast::i64_as_ne_bytes(buf),
+            DecodingSampleSlice::F16(buf) => bytecast::f16_as_ne_bytes(buf),
+            DecodingSampleSlice::F32(buf) => bytecast::f32_as_ne_bytes(buf),
+            DecodingSampleSlice::F64(buf) => bytecast::f64_as_ne_bytes(buf),
         }
     }
 
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         match self {
-            DecodingBuffer::U8(buf) => buf,
-            DecodingBuffer::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
-            DecodingBuffer::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
-            DecodingBuffer::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
-            DecodingBuffer::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
-            DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
-            DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
-            DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
-            DecodingBuffer::F16(buf) => bytecast::f16_as_ne_mut_bytes(buf),
-            DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
-            DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::U8(buf) => buf,
+            DecodingSampleSlice::I8(buf) => bytecast::i8_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::U16(buf) => bytecast::u16_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::I16(buf) => bytecast::i16_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::U32(buf) => bytecast::u32_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::F16(buf) => bytecast::f16_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
+            DecodingSampleSlice::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
         }
     }
 
@@ -247,19 +247,19 @@ pub(crate) enum DecodingExtent {
 }
 
 impl DecodingExtent {
-    pub(crate) fn to_result_buffer(&self, limits: &Limits) -> TiffResult<DecodingResult> {
+    pub(crate) fn to_result_buffer(&self, limits: &Limits) -> TiffResult<DecodingSampleBuffer> {
         match *self {
-            DecodingExtent::U8(count) => DecodingResult::new_u8(count, limits),
-            DecodingExtent::U16(count) => DecodingResult::new_u16(count, limits),
-            DecodingExtent::U32(count) => DecodingResult::new_u32(count, limits),
-            DecodingExtent::U64(count) => DecodingResult::new_u64(count, limits),
-            DecodingExtent::F16(count) => DecodingResult::new_f16(count, limits),
-            DecodingExtent::F32(count) => DecodingResult::new_f32(count, limits),
-            DecodingExtent::F64(count) => DecodingResult::new_f64(count, limits),
-            DecodingExtent::I8(count) => DecodingResult::new_i8(count, limits),
-            DecodingExtent::I16(count) => DecodingResult::new_i16(count, limits),
-            DecodingExtent::I32(count) => DecodingResult::new_i32(count, limits),
-            DecodingExtent::I64(count) => DecodingResult::new_i64(count, limits),
+            DecodingExtent::U8(count) => DecodingSampleBuffer::new_u8(count, limits),
+            DecodingExtent::U16(count) => DecodingSampleBuffer::new_u16(count, limits),
+            DecodingExtent::U32(count) => DecodingSampleBuffer::new_u32(count, limits),
+            DecodingExtent::U64(count) => DecodingSampleBuffer::new_u64(count, limits),
+            DecodingExtent::F16(count) => DecodingSampleBuffer::new_f16(count, limits),
+            DecodingExtent::F32(count) => DecodingSampleBuffer::new_f32(count, limits),
+            DecodingExtent::F64(count) => DecodingSampleBuffer::new_f64(count, limits),
+            DecodingExtent::I8(count) => DecodingSampleBuffer::new_i8(count, limits),
+            DecodingExtent::I16(count) => DecodingSampleBuffer::new_i16(count, limits),
+            DecodingExtent::I32(count) => DecodingSampleBuffer::new_i32(count, limits),
+            DecodingExtent::I64(count) => DecodingSampleBuffer::new_i64(count, limits),
         }
     }
 

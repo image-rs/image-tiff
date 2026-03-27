@@ -21,7 +21,14 @@ mod logluv;
 mod stream;
 mod tag_reader;
 
-pub use self::buffer::{DecodingResult, DecodingBuffer, DecodingSampleType};
+pub use self::buffer::{DecodingSampleBuffer, DecodingSampleSlice, DecodingSampleType};
+
+#[deprecated = "Renamed to `DecodingSampleBuffer`"]
+pub type DecodingResult = DecodingSampleBuffer;
+
+#[deprecated = "Renamed to `DecodingSampleSlice`"]
+pub type DecodingBuffer<'a> = DecodingSampleSlice<'a>;
+
 use self::buffer::DecodingExtent;
 
 /// An index referring to a (rectangular) region of an image.
@@ -1107,7 +1114,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Read the specified chunk (at index `chunk_index`) and return the binary data as a Vector.
     ///
     /// Note that for planar images each chunk contains only one sample of the underlying data.
-    pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingResult> {
+    pub fn read_chunk(&mut self, chunk_index: u32) -> TiffResult<DecodingSampleBuffer> {
         let (width, height) = self.image.chunk_data_dimensions(chunk_index)?;
 
         let readout = self.image.readout_for_size(width, height)?;
@@ -1148,7 +1155,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Note that for planar images each chunk contains only one sample of the underlying data.
     pub fn read_chunk_to_buffer(
         &mut self,
-        buffer: &mut DecodingResult,
+        buffer: &mut DecodingSampleBuffer,
         chunk_index: u32,
         output_width: usize,
     ) -> TiffResult<()> {
@@ -1271,7 +1278,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// calls. This old method will likely keep its bugged planar behavior until it is fully
     /// replaced, to ensure that existing code will not run into unexpectedly large allocations
     /// that will error on limits instead.
-    pub fn read_image(&mut self) -> TiffResult<DecodingResult> {
+    pub fn read_image(&mut self) -> TiffResult<DecodingSampleBuffer> {
         let readout = self.image.readout_for_image()?;
 
         let mut result = readout
@@ -1332,7 +1339,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// ```
     pub fn read_image_to_buffer(
         &mut self,
-        result: &mut DecodingResult,
+        result: &mut DecodingSampleBuffer,
     ) -> TiffResult<BufferLayoutPreference> {
         let readout = self.image.readout_for_image()?;
         let planes = readout.to_plane_layout()?;

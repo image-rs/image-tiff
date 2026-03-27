@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::{Decoder, DecodingResult};
+use tiff::decoder::{Decoder, DecodingSampleBuffer};
 use tiff::encoder::{colortype, Predictor, TiffEncoder};
 use tiff::ColorType;
 
@@ -23,7 +23,7 @@ macro_rules! test_predict {
             decoder.next_image().unwrap();
             assert_eq!(decoder.colortype().unwrap(), expected_type);
             let image_data = match decoder.read_image().unwrap() {
-                DecodingResult::$buffer(res) => res,
+                DecodingSampleBuffer::$buffer(res) => res,
                 _ => panic!("Wrong data type"),
             };
 
@@ -130,7 +130,7 @@ macro_rules! test_predict_roundtrip {
             assert_eq!(decoder.colortype().unwrap(), expected_type);
 
             let image_data = match decoder.read_image().unwrap() {
-                DecodingResult::$buffer(res) => res,
+                DecodingSampleBuffer::$buffer(res) => res,
                 _ => panic!("Wrong data type"),
             };
 
@@ -147,7 +147,7 @@ macro_rules! test_predict_roundtrip {
             {
                 let mut decoder = Decoder::open(&mut file).unwrap();
                 decoder.next_image().unwrap();
-                if let DecodingResult::$buffer(img_res) =
+                if let DecodingSampleBuffer::$buffer(img_res) =
                     decoder.read_image().expect("Decoding image failed")
                 {
                     assert_eq!(image_data, img_res);
