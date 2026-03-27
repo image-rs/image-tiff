@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::{ifd, Decoder, DecodingResult};
+use tiff::decoder::{ifd, Decoder, DecodingSampleBuffer};
 use tiff::tags::{ByteOrder, Type};
 use tiff::ColorType;
 
@@ -23,7 +23,7 @@ macro_rules! test_image_sum {
             let img_res = decoder.read_image().unwrap();
 
             match img_res {
-                DecodingResult::$buffer(res) => {
+                DecodingSampleBuffer::$buffer(res) => {
                     let sum: $sum_ty = res.into_iter().map(<$sum_ty>::from).sum();
                     assert_eq!(sum, expected_sum);
                 }
@@ -88,17 +88,17 @@ fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
         // Hash decoded data: TIFF type tag (u16 repr) + LE sample bytes.
         // Map each variant to the corresponding TIFF Type for byte-order normalization.
         let sample_type = match &result {
-            DecodingResult::U8(_) => Type::BYTE,
-            DecodingResult::I8(_) => Type::SBYTE,
-            DecodingResult::U16(_) => Type::SHORT,
-            DecodingResult::I16(_) => Type::SSHORT,
-            DecodingResult::U32(_) => Type::LONG,
-            DecodingResult::I32(_) => Type::SLONG,
-            DecodingResult::F32(_) => Type::FLOAT,
-            DecodingResult::U64(_) => Type::LONG8,
-            DecodingResult::I64(_) => Type::SLONG8,
-            DecodingResult::F64(_) => Type::DOUBLE,
-            DecodingResult::F16(_) => Type::SHORT, // f16 is 2 bytes like SHORT
+            DecodingSampleBuffer::U8(_) => Type::BYTE,
+            DecodingSampleBuffer::I8(_) => Type::SBYTE,
+            DecodingSampleBuffer::U16(_) => Type::SHORT,
+            DecodingSampleBuffer::I16(_) => Type::SSHORT,
+            DecodingSampleBuffer::U32(_) => Type::LONG,
+            DecodingSampleBuffer::I32(_) => Type::SLONG,
+            DecodingSampleBuffer::F32(_) => Type::FLOAT,
+            DecodingSampleBuffer::U64(_) => Type::LONG8,
+            DecodingSampleBuffer::I64(_) => Type::SLONG8,
+            DecodingSampleBuffer::F64(_) => Type::DOUBLE,
+            DecodingSampleBuffer::F16(_) => Type::SHORT, // f16 is 2 bytes like SHORT
         };
         hasher.update(&sample_type.to_u16().to_le_bytes());
 
@@ -431,7 +431,7 @@ fn test_decode_data() {
     decoder.next_image().expect("Cannot read image IFD");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
     assert_eq!(decoder.dimensions().unwrap(), (100, 100));
-    if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
+    if let DecodingSampleBuffer::U8(img_res) = decoder.read_image().unwrap() {
         assert_eq!(image_data, img_res);
     } else {
         panic!("Wrong data type");
@@ -511,7 +511,7 @@ fn test_inner_access() {
     let raw_sum: u64 = buf.into_iter().map(<u64>::from).sum();
 
     match decoder.read_chunk(0).unwrap() {
-        DecodingResult::U8(chunk) => {
+        DecodingSampleBuffer::U8(chunk) => {
             let sum: u64 = chunk.into_iter().map(<u64>::from).sum();
             assert_eq!(sum, raw_sum);
         }
@@ -570,7 +570,7 @@ fn test_tiled_incremental() {
 
     for tile in 0..tiles {
         match decoder.read_chunk(tile).unwrap() {
-            DecodingResult::U8(res) => {
+            DecodingSampleBuffer::U8(res) => {
                 let sum: u64 = res.into_iter().map(<u64>::from).sum();
                 assert_eq!(sum, sums[tile as usize]);
             }
@@ -604,21 +604,21 @@ fn test_read_planar_bands() {
 
     // 1st band (red)
     match decoder.read_chunk(0).unwrap() {
-        DecodingResult::U8(chunk) => {
+        DecodingSampleBuffer::U8(chunk) => {
             assert_eq!(chunk[0], 73);
         }
         _ => panic!("Wrong bit depth"),
     }
     // 2nd band (green)
     match decoder.read_chunk(chunks / 3).unwrap() {
-        DecodingResult::U8(chunk) => {
+        DecodingSampleBuffer::U8(chunk) => {
             assert_eq!(chunk[0], 51);
         }
         _ => panic!("Wrong bit depth"),
     }
     // 3rd band (blue)
     match decoder.read_chunk(chunks / 3 * 2).unwrap() {
-        DecodingResult::U8(chunk) => {
+        DecodingSampleBuffer::U8(chunk) => {
             assert_eq!(chunk[0], 30);
         }
         _ => panic!("Wrong bit depth"),
@@ -994,7 +994,7 @@ fn test_decode_huge_g4() {
         .read_image()
         .expect("failed to decode huge G4 image");
 
-    if let tiff::decoder::DecodingResult::U8(data) = result {
+    if let tiff::decoder::DecodingSampleBuffer::U8(data) = result {
         assert_eq!(data.len(), (width as usize * height as usize));
     } else {
         panic!("Unexpected decoding result type");

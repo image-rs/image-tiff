@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::{Decoder, DecodingResult};
+use tiff::decoder::{Decoder, DecodingSampleBuffer};
 use tiff::tags::Tag;
 use tiff::ColorType;
 
@@ -56,7 +56,7 @@ fn test_geo_tiff() {
                 .expect("Cannot get pixel scale"),
             vec![60.0, 60.0, 0.0]
         );
-        let DecodingResult::I16(data) = decoder.read_image().unwrap() else {
+        let DecodingSampleBuffer::I16(data) = decoder.read_image().unwrap() else {
             panic!("Cannot read band data")
         };
         assert_eq!(data.len(), 500);
@@ -67,7 +67,7 @@ fn test_geo_tiff() {
 #[test]
 fn test_webp_tiff() {
     let filenames = ["usda_naip_256_webp_z3.tif"];
-    let mut buffer = DecodingResult::U8(vec![]);
+    let mut buffer = DecodingSampleBuffer::U8(vec![]);
 
     for filename in filenames.iter() {
         let path = PathBuf::from(TEST_IMAGE_DIR).join(filename);

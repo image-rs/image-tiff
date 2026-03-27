@@ -1,4 +1,4 @@
-use tiff::decoder::{Decoder, DecodingResult, Limits, TiffCodingUnit};
+use tiff::decoder::{Decoder, DecodingSampleBuffer, Limits, TiffCodingUnit};
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -84,7 +84,7 @@ fn read_planes_by_limits() {
     let io = std::io::BufReader::new(file);
 
     let mut limits = Limits::default();
-    let mut buffer = DecodingResult::U8(vec![]);
+    let mut buffer = DecodingSampleBuffer::U8(vec![]);
 
     // Make room for 1 plane.
     let mut tif = Decoder::open(io).unwrap();

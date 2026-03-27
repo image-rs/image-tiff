@@ -1,6 +1,6 @@
 extern crate tiff;
 
-use tiff::decoder::{ifd, Decoder, DecodingResult};
+use tiff::decoder::{ifd, Decoder, DecodingSampleBuffer};
 use tiff::encoder::{colortype, Ifd, Ifd8, Predictor, SRational, TiffEncoder};
 use tiff::tags::Tag;
 use tiff::ColorType;
@@ -84,9 +84,9 @@ fn encode_decode() {
             ifd::Value::Ascii("Image-tiff".into())
         );
 
-        let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
+        let mut buffer = tiff::decoder::DecodingSampleBuffer::U8(vec![]);
         let _layout = decoder.read_image_to_buffer(&mut buffer).unwrap();
-        if let tiff::decoder::DecodingResult::U8(img_res) = buffer {
+        if let tiff::decoder::DecodingSampleBuffer::U8(img_res) = buffer {
             assert_eq!(image_data, img_res);
         } else {
             panic!("Wrong data type");
@@ -168,9 +168,9 @@ fn encode_decode_big() {
             decoder.get_tag(Tag::Artist).unwrap(),
             ifd::Value::Ascii("Image-tiff".into())
         );
-        let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
+        let mut buffer = tiff::decoder::DecodingSampleBuffer::U8(vec![]);
         let _layout = decoder.read_image_to_buffer(&mut buffer).unwrap();
-        if let DecodingResult::U8(img_res) = buffer {
+        if let DecodingSampleBuffer::U8(img_res) = buffer {
             assert_eq!(image_data, img_res);
         } else {
             panic!("Wrong data type");
@@ -258,11 +258,11 @@ macro_rules! test_roundtrip {
 
             assert_eq!(decoder.colortype().unwrap(), expected_type);
 
-            let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
+            let mut buffer = tiff::decoder::DecodingSampleBuffer::U8(vec![]);
             decoder.read_image_to_buffer(&mut buffer).unwrap();
 
             let image_data = match buffer {
-                DecodingResult::$buffer(res) => res,
+                DecodingSampleBuffer::$buffer(res) => res,
                 _ => panic!("Wrong data type"),
             };
 
@@ -275,11 +275,11 @@ macro_rules! test_roundtrip {
             }
             file.seek(SeekFrom::Start(0)).unwrap();
             {
-                let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
+                let mut buffer = tiff::decoder::DecodingSampleBuffer::U8(vec![]);
                 let mut decoder = Decoder::open(&mut file).unwrap();
                 decoder.next_image().unwrap();
                 decoder.read_image_to_buffer(&mut buffer).unwrap();
-                if let DecodingResult::$buffer(img_res) = buffer {
+                if let DecodingSampleBuffer::$buffer(img_res) = buffer {
                     assert_eq!(*image_data, img_res);
                 } else {
                     panic!("Wrong data type");
@@ -418,9 +418,9 @@ fn test_gray_f32_floating_point_predictor() {
         decoder.next_image().unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(32));
 
-        let mut buffer = DecodingResult::F32(vec![]);
+        let mut buffer = DecodingSampleBuffer::F32(vec![]);
         decoder.read_image_to_buffer(&mut buffer).unwrap();
-        if let DecodingResult::F32(img_res) = buffer {
+        if let DecodingSampleBuffer::F32(img_res) = buffer {
             assert_eq!(image_data.len(), img_res.len());
             for (orig, decoded) in image_data.iter().zip(img_res.iter()) {
                 assert_eq!(
@@ -465,9 +465,9 @@ fn test_rgb_f32_floating_point_predictor() {
         decoder.next_image().unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(32));
 
-        let mut buffer = DecodingResult::F32(vec![]);
+        let mut buffer = DecodingSampleBuffer::F32(vec![]);
         decoder.read_image_to_buffer(&mut buffer).unwrap();
-        if let DecodingResult::F32(img_res) = buffer {
+        if let DecodingSampleBuffer::F32(img_res) = buffer {
             assert_eq!(image_data.len(), img_res.len());
             for (i, (orig, decoded)) in image_data.iter().zip(img_res.iter()).enumerate() {
                 assert_eq!(
@@ -509,9 +509,9 @@ fn test_gray_f64_floating_point_predictor() {
         decoder.next_image().unwrap();
         assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(64));
 
-        let mut buffer = DecodingResult::F64(vec![]);
+        let mut buffer = DecodingSampleBuffer::F64(vec![]);
         decoder.read_image_to_buffer(&mut buffer).unwrap();
-        if let DecodingResult::F64(img_res) = buffer {
+        if let DecodingSampleBuffer::F64(img_res) = buffer {
             assert_eq!(image_data.len(), img_res.len());
             for (orig, decoded) in image_data.iter().zip(img_res.iter()) {
                 assert_eq!(
@@ -782,7 +782,7 @@ fn test_rows_per_strip() {
         for i in 0..50 {
             let img2 = [i; 2 * 100];
             match decoder.read_chunk(i as u32).unwrap() {
-                DecodingResult::U8(data) => assert_eq!(&img2[..], &data[..]),
+                DecodingSampleBuffer::U8(data) => assert_eq!(&img2[..], &data[..]),
                 other => panic!("Incorrect strip type {other:?}"),
             }
         }
