@@ -5,6 +5,7 @@ use crate::{
     bytecast,
     decoder::{BufferLayoutPreference, Limits},
     error::{TiffError, TiffResult, TiffUnsupportedError},
+    tags::{ByteOrder, EndianBytes, SampleFormat},
 };
 
 /// Result of a decoding process
@@ -131,6 +132,34 @@ impl DecodingSampleBuffer {
             DecodingSampleBuffer::I64(ref mut buf) => DecodingSampleSlice::I64(&mut buf[start..]),
         }
     }
+
+    pub fn sample_type(&self) -> DecodingSampleType {
+        match *self {
+            DecodingSampleBuffer::U8(_) => DecodingSampleType::U8,
+            DecodingSampleBuffer::U16(_) => DecodingSampleType::U16,
+            DecodingSampleBuffer::U32(_) => DecodingSampleType::U32,
+            DecodingSampleBuffer::U64(_) => DecodingSampleType::U64,
+            DecodingSampleBuffer::F16(_) => DecodingSampleType::F16,
+            DecodingSampleBuffer::F32(_) => DecodingSampleType::F32,
+            DecodingSampleBuffer::F64(_) => DecodingSampleType::F64,
+            DecodingSampleBuffer::I8(_) => DecodingSampleType::I8,
+            DecodingSampleBuffer::I16(_) => DecodingSampleType::I16,
+            DecodingSampleBuffer::I32(_) => DecodingSampleType::I32,
+            DecodingSampleBuffer::I64(_) => DecodingSampleType::I64,
+        }
+    }
+
+    /// Change the endianess of buffered data.
+    ///
+    /// This utility may be used to prepare a buffer for consumption by methods taking raw bytes or
+    /// after filling the buffer with raw bytes.
+    ///
+    /// After this, interpreting the buffer on the host may no longer produce any reasonable
+    /// results. For instance, floats in the wrong byte order may produce a `NaN` with varying
+    /// payloads. Despite unexpected result however, this operation is always sound.
+    pub fn convert_endian(&mut self, from: ByteOrder, to: ByteOrder) {
+        self.as_buffer(0).convert_endian(from, to)
+    }
 }
 
 // A buffer for image decoding
@@ -192,6 +221,51 @@ impl<'a> DecodingSampleSlice<'a> {
         }
     }
 
+    pub fn reborrow(&mut self) -> DecodingSampleSlice<'_> {
+        match self {
+            DecodingSampleSlice::U8(items) => DecodingSampleSlice::U8(items),
+            DecodingSampleSlice::I8(items) => DecodingSampleSlice::I8(items),
+            DecodingSampleSlice::U16(items) => DecodingSampleSlice::U16(items),
+            DecodingSampleSlice::I16(items) => DecodingSampleSlice::I16(items),
+            DecodingSampleSlice::U32(items) => DecodingSampleSlice::U32(items),
+            DecodingSampleSlice::I32(items) => DecodingSampleSlice::I32(items),
+            DecodingSampleSlice::U64(items) => DecodingSampleSlice::U64(items),
+            DecodingSampleSlice::I64(items) => DecodingSampleSlice::I64(items),
+            DecodingSampleSlice::F16(items) => DecodingSampleSlice::F16(items),
+            DecodingSampleSlice::F32(items) => DecodingSampleSlice::F32(items),
+            DecodingSampleSlice::F64(items) => DecodingSampleSlice::F64(items),
+        }
+    }
+
+    pub fn sample_type(&self) -> DecodingSampleType {
+        match *self {
+            DecodingSampleSlice::U8(_) => DecodingSampleType::U8,
+            DecodingSampleSlice::U16(_) => DecodingSampleType::U16,
+            DecodingSampleSlice::U32(_) => DecodingSampleType::U32,
+            DecodingSampleSlice::U64(_) => DecodingSampleType::U64,
+            DecodingSampleSlice::F16(_) => DecodingSampleType::F16,
+            DecodingSampleSlice::F32(_) => DecodingSampleType::F32,
+            DecodingSampleSlice::F64(_) => DecodingSampleType::F64,
+            DecodingSampleSlice::I8(_) => DecodingSampleType::I8,
+            DecodingSampleSlice::I16(_) => DecodingSampleType::I16,
+            DecodingSampleSlice::I32(_) => DecodingSampleType::I32,
+            DecodingSampleSlice::I64(_) => DecodingSampleType::I64,
+        }
+    }
+
+    /// Change the endianess of referenced data.
+    ///
+    /// This utility may be used to prepare a buffer for consumption by methods taking raw bytes or
+    /// after filling the buffer with raw bytes.
+    ///
+    /// After this, interpreting the buffer on the host may no longer produce any reasonable
+    /// results. For instance, floats in the wrong byte order may produce a `NaN` with varying
+    /// payloads. Despite unexpected result however, this operation is always sound.
+    pub fn convert_endian(&mut self, from: ByteOrder, to: ByteOrder) {
+        let byte_unit = self.sample_type().endian_bytes();
+        from.convert_endian_bytes(byte_unit, self.as_bytes_mut(), to);
+    }
+
     pub fn byte_len(&self) -> usize {
         self.as_bytes().len()
     }
@@ -213,6 +287,22 @@ pub enum DecodingSampleType {
 }
 
 impl DecodingSampleType {
+    pub fn sample_format(self) -> SampleFormat {
+        match self {
+            DecodingSampleType::U8 => SampleFormat::Uint,
+            DecodingSampleType::U16 => SampleFormat::Uint,
+            DecodingSampleType::U32 => SampleFormat::Uint,
+            DecodingSampleType::U64 => SampleFormat::Uint,
+            DecodingSampleType::F16 => SampleFormat::IEEEFP,
+            DecodingSampleType::F32 => SampleFormat::IEEEFP,
+            DecodingSampleType::F64 => SampleFormat::IEEEFP,
+            DecodingSampleType::I8 => SampleFormat::Int,
+            DecodingSampleType::I16 => SampleFormat::Int,
+            DecodingSampleType::I32 => SampleFormat::Int,
+            DecodingSampleType::I64 => SampleFormat::Int,
+        }
+    }
+
     pub(crate) fn extent_for_bytes(self, bytes: usize) -> DecodingExtent {
         match self {
             DecodingSampleType::U8 => DecodingExtent::U8(bytes),
@@ -226,6 +316,24 @@ impl DecodingSampleType {
             DecodingSampleType::F16 => DecodingExtent::F16(bytes.div_ceil(2)),
             DecodingSampleType::F32 => DecodingExtent::F32(bytes.div_ceil(4)),
             DecodingSampleType::F64 => DecodingExtent::F64(bytes.div_ceil(8)),
+        }
+    }
+
+    fn endian_bytes(self) -> EndianBytes {
+        use EndianBytes::*;
+
+        match self {
+            DecodingSampleType::U8 => One,
+            DecodingSampleType::U16 => Two,
+            DecodingSampleType::U32 => Four,
+            DecodingSampleType::U64 => Eight,
+            DecodingSampleType::F16 => Two,
+            DecodingSampleType::F32 => Four,
+            DecodingSampleType::F64 => Eight,
+            DecodingSampleType::I8 => One,
+            DecodingSampleType::I16 => Two,
+            DecodingSampleType::I32 => Four,
+            DecodingSampleType::I64 => Eight,
         }
     }
 }
