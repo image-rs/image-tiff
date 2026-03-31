@@ -66,7 +66,7 @@ impl<'lt, R> EntryBytesReader<'lt, R> {
 
                 IfdPointer(u64::from_ne_bytes(offset))
             } else {
-                let mut offset = *offset[..4].as_array::<4>().unwrap();
+                let mut offset = *offset.first_chunk::<4>().unwrap();
 
                 inner
                     .reader
@@ -95,7 +95,7 @@ impl<R: Read> Read for EntryBytesReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match &mut self.variant {
             Variant::Immediate { data, .. } => {
-                return data.read(buf);
+                data.read(buf)
             }
             Variant::InFile { remainder, .. } => {
                 let bound = usize::try_from(*remainder).unwrap_or(usize::MAX);
@@ -113,7 +113,7 @@ impl<R: Read> Read for EntryBytesReader<'_, R> {
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         match &mut self.variant {
             Variant::Immediate { data, .. } => {
-                return data.read_exact(buf);
+                data.read_exact(buf)
             }
             Variant::InFile { remainder, .. } => {
                 let bound = usize::try_from(*remainder).unwrap_or(usize::MAX);
@@ -197,7 +197,7 @@ impl<R: Read + Seek> Seek for EntryBytesReader<'_, R> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{decoder::Decoder, tags::Tag};
+    use crate::{decoder::Decoder, encoder, tags::Tag};
     use std::io::{Read as _, Seek as _, SeekFrom};
 
     #[test]
@@ -234,6 +234,51 @@ mod tests {
 
         let (first, second) = data.split_at(data.len() / 2);
         assert_eq!(first, second);
+
+        Ok(())
+    }
+
+    #[test]
+    fn seek_from_end() -> Result<(), crate::error::TiffError> {
+        const ARTIST: &str = "99 little bugs in the code";
+
+        let data = {
+            let mut data = std::io::Cursor::new(vec![]);
+            let mut encoder = encoder::TiffEncoder::new(&mut data)?;
+
+            let mut dir = encoder.image_directory()?;
+            dir.write_tag(Tag::Artist, ARTIST)?;
+            dir.finish()?;
+
+            data.into_inner()
+        };
+
+        let file = std::io::Cursor::new(data);
+        let mut decoder = Decoder::open(file).unwrap();
+        decoder.next_directory().unwrap();
+
+        let artist = decoder
+            .current_ifd()
+            .find_entry(Tag::Artist)
+            .expect("some artist is present");
+
+        let mut reader = decoder.read_entry(artist)?;
+
+        let mut value = vec![];
+        reader.read_to_end(&mut value)?;
+
+        let (&nul, value) = value.split_last().unwrap();
+        assert_eq!(value, ARTIST.as_bytes());
+        assert_eq!(nul, b'\0');
+
+        assert_eq!(reader.seek(SeekFrom::End(0))?, ARTIST.len() as u64 + 1);
+        assert!(reader.seek(SeekFrom::End(1)).is_err());
+
+        reader.seek(SeekFrom::End(-5))?;
+        let mut is_code = [0u8; 4];
+        reader.read_exact(&mut is_code)?;
+
+        assert_eq!(is_code, *value.last_chunk::<4>().unwrap());
 
         Ok(())
     }
