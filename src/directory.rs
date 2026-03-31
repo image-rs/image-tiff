@@ -18,6 +18,7 @@ use crate::{
 /// [`Decoder::read_directory_tags`](crate::decoder::Decoder::read_directory_tags) to read the
 /// values associated with tags from an underlying file.
 #[doc(alias = "IFD")]
+#[derive(Clone)]
 pub struct Directory {
     /// There are at most `u16::MAX` entries in any single directory, the count is stored as a
     /// 2-byte value. The order in the file is implied to be ascending by tag value (the decoder

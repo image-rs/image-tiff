@@ -725,6 +725,132 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(self.ensure_image_and_reader()?.0)
     }
 
+    /// Change to another reader in a new decoder, taking with it parsed data and limits.
+    ///
+    /// The reader will keep the IFD state but resources and in particular the parsed image are
+    /// transferred to the new decoder. This has two motivations. Firstly, it can not silently
+    /// duplicate any limits and exhaust more memory than expected. Secondly, this is compatible
+    /// with additional resources that can not be cloned at all.
+    ///
+    /// This method assumes that the alternate reader contains the same data as the current reader
+    /// (but not necessarily the same stream).
+    ///
+    /// The limits used by `self` get replaced with default limits. To keep using the reader that
+    /// is the receiver of this method you likely want to reinitialize it with
+    /// [`Self::with_limits`].
+    ///
+    /// # Examples
+    ///
+    /// This method can also be used to 'fork' the reader into multiple independent iterators over
+    /// the file, provided you use access to [`Self::inner`] to clone the underlying stream. Since
+    /// the first call takes the resources, keep that object separate if you want each worker to
+    /// get the same decoder (each with default configured limits).
+    ///
+    /// Here we show the functionality by opening cursors over data in-memory.
+    ///
+    /// ```
+    /// use std::io::Cursor;
+    /// use tiff::{decoder::Decoder, TiffError};
+    ///
+    /// let data: &[u8] = /* */
+    /// # &include_bytes!(concat!(
+    /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
+    /// # ))[..];
+    /// # const N: usize = 1;
+    /// let decoder = Decoder::open(Cursor::new(data))?;
+    ///
+    /// let mut workers = vec![decoder];
+    ///
+    /// for _ in 0..N {
+    ///     let decoder = workers.last_mut().unwrap();
+    ///     // Takes the resources with it, they are always in the last.
+    ///     let dup = decoder.take_with_reader(Cursor::new(data));
+    ///     workers.push(dup);
+    /// }
+    ///
+    /// let with_resources = workers.pop().unwrap();
+    ///
+    /// // Now all `workers` are at the same IFD but in a bare state.
+    ///
+    /// Ok::<_, TiffError>(())
+    /// ```
+    ///
+    /// Please note that you do **not** want to use [`File::try_clone`][`std::fs::File::open`], or
+    /// any other method where multiple readers share a single position variable, in combination
+    /// with concurrent use of decoders. When the independent decoders each seek the file
+    /// descriptor in parallel there is a race as to what position they then read from
+    /// (time-to-check-to-time-to-use). This of course applies to the original file passed to
+    /// [`Decoder::open`] already but may be more tempting here. Instead, use a file reader that
+    /// owns a position and uses [`read_at`] or equivalents.
+    ///
+    /// [`read_at`]: `std::os::unix::fs::FileExt::read_at`
+    ///
+    /// An *incorrect* use would be:
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tiff::{decoder::Decoder, TiffError};
+    ///
+    /// let file: File = /* */
+    /// # File::open(concat!(
+    /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
+    /// # ))?;
+    /// let mut decoder = Decoder::open(&file)?;
+    ///
+    /// let concurrent = decoder.inner().try_clone()?;
+    /// // ⚠️Do NOT attempt to use both decoder and racing_decoder in parallel!
+    /// // This will be defined behavior but likely cause both to fail.
+    /// let racing_decoder = decoder.take_with_reader(concurrent);
+    ///
+    /// # Ok::<_, TiffError>(())
+    /// ```
+    ///
+    /// In another use case you have a partially cached file backed by fast storage that you only
+    /// access from slow disk when any operation misses the cache. In that case you may use this
+    /// method to replace the cached reader with a file reader after a miss is detected, without
+    /// losing any of the state collected by the decoder.
+    ///
+    /// ```
+    /// use tiff::{decoder::Decoder, TiffError};
+    ///
+    /// let partial_file = /* */
+    /// # std::io::Cursor::new(include_bytes!(concat!(
+    /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
+    /// # )));
+    /// let mut decoder = Decoder::open(partial_file)?;
+    ///
+    /// # let backing_file = concat!(
+    /// #   env!("CARGO_MANIFEST_DIR"), "/tests/images/tiled-gray-i1.tif"
+    /// # );
+    ///
+    /// // Catch cache errors: we are out of pages we have for this cache..
+    /// if let Err(TiffError::IoError(e)) = decoder.next_image() {
+    ///     if e.kind() == std::io::ErrorKind::OutOfMemory {
+    ///         let file = std::fs::File::open(backing_file)?;
+    ///         let mut slow_decoder = decoder.take_with_reader(file);
+    ///         // Repeat the op, `next_image` is atomic on error.
+    ///         slow_decoder.next_image()?;
+    ///         // …
+    ///     }
+    /// }
+    ///
+    /// # Ok::<_, TiffError>(())
+    /// ```
+    pub fn take_with_reader<S: Read + Seek>(&mut self, reader: S) -> Decoder<S> {
+        Decoder {
+            value_reader: ValueReader {
+                reader: EndianReader::new(reader, self.value_reader.reader.byte_order),
+                bigtiff: self.value_reader.bigtiff,
+                limits: core::mem::take(&mut self.value_reader.limits),
+            },
+            ifd_offsets: self.ifd_offsets.clone(),
+            seen_ifds: self.seen_ifds.clone(),
+            directory: self.directory.clone(),
+            current_ifd_pointer: self.current_ifd_pointer,
+            image: core::mem::take(&mut self.image),
+        }
+    }
+
     /// The offset of the directory representing the current image.
     pub fn ifd_pointer(&mut self) -> Option<IfdPointer> {
         self.current_ifd_pointer
