@@ -966,6 +966,14 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns an error if the entry count exceeds the possible offset values or if the offset
     /// of the entry would overflow the offset in the underlying stream. Otherwise returns a reader
     /// that yields the bytes of the value.
+    ///
+    /// ## Design Notes
+    ///
+    /// This method does not appear on [`IfdDecoder`] as we assume the reader type may be important
+    /// to you. It also allows forward compatibility to additional trait implementations without
+    /// demanding them from all types as `dyn` would. There is also no `M×N` instantiation problem
+    /// with this method: you get one type per reader type and monomorphic methods from the traits
+    /// it implements.
     pub fn read_entry(&mut self, entry: ifd::Entry) -> TiffResult<EntryBytesReader<'_, R>> {
         EntryBytesReader::from_entry(&mut self.value_reader, entry)
     }
