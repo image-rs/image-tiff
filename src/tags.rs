@@ -426,13 +426,66 @@ impl ValueBuffer {
     }
 
     /// Create a value with native byte order from in-memory data.
-    pub fn from_value<T: TiffValue>(value: &T) -> Self {
+    ///
+    /// This is equivalent to calling [`Self::set_value`] on a newly created buffer.
+    ///
+    /// # Example
+    ///
+    /// Create a buffer representing a particular tag's value:
+    ///
+    /// ```
+    /// use tiff::tags::{ByteOrder, CompressionMethod, ValueBuffer};
+    ///
+    /// // A buffer with initial content, for instance a tag's value.
+    /// let buffer = ValueBuffer::from_value(&CompressionMethod::ModernJPEG);
+    /// assert_eq!(buffer.as_bytes().len(), 2);
+    ///
+    /// // Note that depends on host endianess which of these holds:
+    /// assert!(buffer.as_bytes() == [0, 7] || buffer.as_bytes() == [7, 0]);
+    /// ```
+    pub fn from_value<T: TiffValue + ?Sized>(value: &T) -> Self {
         ValueBuffer {
             bytes: value.data().into_owned(),
             ty: <T as TiffValue>::FIELD_TYPE,
             count: value.count() as u64,
             byte_order: ByteOrder::native(),
         }
+    }
+
+    /// Set the buffer to the defined value.
+    ///
+    /// The previous data is erased. This converts the value's representation to the byte order of
+    /// the buffer in the process (which is a no-op if the buffer uses host byte order).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use tiff::tags::{ByteOrder, CompressionMethod, ValueBuffer};
+    ///
+    /// // A buffer with initial content, for instance a tag's value.
+    /// let mut buffer = ValueBuffer::from_value(&CompressionMethod::JPEG);
+    /// assert_eq!(buffer.as_bytes().len(), 2);
+    ///
+    /// // Ensure a host-independent byte order for the following representation.
+    /// buffer.set_byte_order(ByteOrder::LittleEndian);
+    /// // slices and arrays of primitives are a possible `TiffValue`
+    /// buffer.set_value(&[0, 1, 42u16]);
+    ///
+    /// // The little endian representation of these numbers (2 bytes each)
+    /// assert_eq!(buffer.as_bytes(), [0, 0, 1, 0, 42, 0]);
+    /// ```
+    pub fn set_value<T: TiffValue + ?Sized>(&mut self, value: &T) {
+        self.bytes.clear();
+
+        match value.data() {
+            std::borrow::Cow::Borrowed(slice) => self.bytes.extend_from_slice(slice),
+            std::borrow::Cow::Owned(ref mut data) => self.bytes.append(data),
+        }
+
+        self.ty = <T as TiffValue>::FIELD_TYPE;
+        self.count = value.count() as u64;
+
+        ByteOrder::native().convert(self.ty, &mut self.bytes, self.byte_order);
     }
 
     pub fn byte_order(&self) -> ByteOrder {
