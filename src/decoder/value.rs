@@ -25,7 +25,7 @@ enum Variant {
         // the length relative to the base so we can seek relative without querying the position.
         value_bytes: u64,
         remainder: u64,
-        base: IfdPointer,
+        base: u64,
     },
 }
 
@@ -84,7 +84,7 @@ impl<'lt, R> EntryBytesReader<'lt, R> {
                 variant: Variant::InFile {
                     value_bytes,
                     remainder: value_bytes,
-                    base: pointer,
+                    base: pointer.0,
                 },
             })
         }
@@ -177,7 +177,7 @@ impl<R: Read + Seek> Seek for EntryBytesReader<'_, R> {
                 // We checked this against overflow on construction. Ignore the offset we get.
                 self.inner
                     .inner()
-                    .seek(io::SeekFrom::Start(base.0 + offset))?;
+                    .seek(io::SeekFrom::Start(base + offset))?;
 
                 self.variant = Variant::InFile {
                     value_bytes,
@@ -188,6 +188,34 @@ impl<R: Read + Seek> Seek for EntryBytesReader<'_, R> {
                 Ok(offset)
             }
         }
+    }
+
+    fn stream_position(&mut self) -> io::Result<u64> {
+        Ok(match &self.variant {
+            Variant::Immediate { data, value_bytes } => {
+                // Recall the value is at the end of the buffer.
+                let from_end = OFFSET_BUFFER_LEN as u64 - data.position();
+                u64::from(*value_bytes) - from_end
+            }
+            // Note: we might think about using the inner `stream_position` here. However that
+            // exposes something interesting: If the internal stream is modified concurrently from
+            // another instance (e.g. a shared `File`) then we may lose track of it anyways.
+            // Especially the `Read` implementation is not bounded on `Seek` so it could not
+            // acquire the position. And it should not since that is just a different form of race
+            // where we risk the position being modified by a different thread just as well.
+            //
+            // So in the interest of least surprise we just assume that we can track the position
+            // accurately here and that the inner reader uses for instance `read_at` consistently.
+            // We own the value (or mutable reference) it after all.
+            //
+            // Also this one MUST be compatible with `seek(SeekFrom::Current(0))` as per trait
+            // defintion—so at least keep those consistent if changing anything.
+            &Variant::InFile {
+                remainder,
+                value_bytes,
+                ..
+            } => value_bytes - remainder,
+        })
     }
 }
 
@@ -214,6 +242,8 @@ mod tests {
             .find_tag_buf(tags::Tag::StripByteCounts, &mut buffer)
             .expect("some strip byte count is present");
 
+        let bytes_of_value = buffer.as_bytes().len() as u64;
+
         let mut reader = decoder
             .read_tag(tags::Tag::StripByteCounts)?
             .expect("some strip byte count is present");
@@ -222,18 +252,22 @@ mod tests {
         reader.read_to_end(&mut data)?;
 
         // `ValueBuffer` also stores its data in the file endianess until converted.
+        assert_eq!(reader.stream_position()?, bytes_of_value);
         assert_eq!(buffer.as_bytes(), data);
 
         reader.seek(SeekFrom::Start(0))?;
+        assert_eq!(reader.stream_position()?, 0);
         reader.read_to_end(&mut data)?;
+        assert_eq!(reader.stream_position()?, bytes_of_value);
 
-        let (first, second) = data.split_at(data.len() / 2);
+        let (first, second) = data.split_at(bytes_of_value as usize);
         assert_eq!(first, second);
 
         Ok(())
     }
 
     #[test]
+    #[allow(clippy::seek_from_current)] // We want to test that functionality.
     fn seek_from_end() -> Result<(), crate::error::TiffError> {
         const ARTIST: &str = "99 little bugs in the code";
 
@@ -265,6 +299,7 @@ mod tests {
 
         assert_eq!(reader.seek(SeekFrom::End(0))?, ARTIST.len() as u64 + 1);
         assert!(reader.seek(SeekFrom::End(1)).is_err());
+        assert_eq!(reader.stream_position()?, ARTIST.len() as u64 + 1);
 
         // Check relative seeks by comparing against the "code"
         let code_offset = reader.seek(SeekFrom::End(-5))?;
@@ -273,11 +308,15 @@ mod tests {
         assert_eq!(is_code, *value.last_chunk::<4>().unwrap());
 
         assert_eq!(reader.seek(SeekFrom::Start(0))?, 0);
+        assert_eq!(reader.stream_position()?, 0);
         assert_eq!(reader.seek(SeekFrom::Current(0))?, 0);
+        assert_eq!(reader.stream_position()?, 0);
         assert!(reader.seek(SeekFrom::Current(-1)).is_err());
+        assert_eq!(reader.stream_position()?, 0);
 
         reader.seek(SeekFrom::Start(code_offset))?;
         reader.read_exact(&mut is_code)?;
+        assert_eq!(reader.stream_position()?, ARTIST.len() as u64);
         assert_eq!(is_code, *value.last_chunk::<4>().unwrap());
 
         Ok(())
