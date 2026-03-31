@@ -567,6 +567,13 @@ impl ValueBuffer {
     }
 }
 
+/// Create an empty value buffer with `Byte` type. This type choice is arbitrary.
+impl Default for ValueBuffer {
+    fn default() -> Self {
+        ValueBuffer::empty(Type::BYTE)
+    }
+}
+
 /// Byte order of the TIFF file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ByteOrder {

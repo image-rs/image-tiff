@@ -488,7 +488,8 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             self.writer.write_u16(entry.field_type().to_u16())?;
             let count = K::convert_offset(entry.count())?;
             count.write(self.writer)?;
-            self.writer.write_bytes(&entry.offset()[..offset_bytes])?;
+            self.writer
+                .write_bytes(&entry.offset_raw()[..offset_bytes])?;
         }
 
         Ok(offset)

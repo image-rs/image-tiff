@@ -393,7 +393,7 @@ impl Entry {
         self.count
     }
 
-    pub(crate) fn offset(&self) -> &[u8] {
+    pub(crate) fn offset_raw(&self) -> &[u8; 8] {
         &self.offset
     }
 
