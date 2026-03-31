@@ -15,15 +15,15 @@ use self::stream::EndianReader;
 
 mod buffer;
 mod cycles;
+mod entry_reader;
 pub mod ifd;
 mod image;
 mod logluv;
 mod stream;
 mod tag_reader;
-mod value;
 
 pub use self::buffer::{DecodingSampleBuffer, DecodingSampleSlice, DecodingSampleType};
-pub use self::value::EntryBytesReader;
+pub use self::entry_reader::EntryBytesReader;
 
 #[deprecated = "Renamed to `DecodingSampleBuffer`"]
 pub type DecodingResult = DecodingSampleBuffer;
