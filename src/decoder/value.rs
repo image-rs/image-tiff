@@ -194,3 +194,47 @@ impl<R: Read + Seek> Seek for EntryBytesReader<'_, R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{decoder::Decoder, tags::Tag};
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    #[test]
+    fn can_seek_tag_bytes() -> Result<(), crate::error::TiffError> {
+        let file = std::fs::File::open(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/images/int8_rgb.tif"
+        ))
+        .unwrap();
+
+        let mut decoder = Decoder::open(file).unwrap();
+        decoder.next_directory().unwrap();
+
+        let strips = decoder
+            .current_ifd()
+            .find_entry(Tag::StripByteCounts)
+            .expect("some strip byte count is present");
+
+        let mut buffer = crate::tags::ValueBuffer::default();
+
+        decoder
+            .current_ifd()
+            .find_tag_buf(Tag::StripByteCounts, &mut buffer)
+            .expect("some strip byte count is present");
+
+        let mut reader = decoder.read_entry(strips)?;
+
+        let mut data = vec![];
+        reader.read_to_end(&mut data)?;
+        assert_eq!(buffer.as_bytes(), data);
+
+        reader.seek(SeekFrom::Start(0))?;
+        reader.read_to_end(&mut data)?;
+
+        let (first, second) = data.split_at(data.len() / 2);
+        assert_eq!(first, second);
+
+        Ok(())
+    }
+}
