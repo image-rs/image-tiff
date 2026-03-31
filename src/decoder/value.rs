@@ -94,9 +94,7 @@ impl<'lt, R> EntryBytesReader<'lt, R> {
 impl<R: Read> Read for EntryBytesReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match &mut self.variant {
-            Variant::Immediate { data, .. } => {
-                data.read(buf)
-            }
+            Variant::Immediate { data, .. } => data.read(buf),
             Variant::InFile { remainder, .. } => {
                 let bound = usize::try_from(*remainder).unwrap_or(usize::MAX);
                 let avail = buf.len().min(bound);
@@ -112,9 +110,7 @@ impl<R: Read> Read for EntryBytesReader<'_, R> {
 
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         match &mut self.variant {
-            Variant::Immediate { data, .. } => {
-                data.read_exact(buf)
-            }
+            Variant::Immediate { data, .. } => data.read_exact(buf),
             Variant::InFile { remainder, .. } => {
                 let bound = usize::try_from(*remainder).unwrap_or(usize::MAX);
 
@@ -197,7 +193,7 @@ impl<R: Read + Seek> Seek for EntryBytesReader<'_, R> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{decoder::Decoder, encoder, tags::Tag};
+    use crate::{decoder::Decoder, encoder, tags};
     use std::io::{Read as _, Seek as _, SeekFrom};
 
     #[test]
@@ -211,22 +207,21 @@ mod tests {
         let mut decoder = Decoder::open(file).unwrap();
         decoder.next_directory().unwrap();
 
-        let strips = decoder
-            .current_ifd()
-            .find_entry(Tag::StripByteCounts)
-            .expect("some strip byte count is present");
-
         let mut buffer = crate::tags::ValueBuffer::default();
 
         decoder
             .current_ifd()
-            .find_tag_buf(Tag::StripByteCounts, &mut buffer)
+            .find_tag_buf(tags::Tag::StripByteCounts, &mut buffer)
             .expect("some strip byte count is present");
 
-        let mut reader = decoder.read_entry(strips)?;
+        let mut reader = decoder
+            .read_tag(tags::Tag::StripByteCounts)?
+            .expect("some strip byte count is present");
 
         let mut data = vec![];
         reader.read_to_end(&mut data)?;
+
+        // `ValueBuffer` also stores its data in the file endianess until converted.
         assert_eq!(buffer.as_bytes(), data);
 
         reader.seek(SeekFrom::Start(0))?;
@@ -247,7 +242,7 @@ mod tests {
             let mut encoder = encoder::TiffEncoder::new(&mut data)?;
 
             let mut dir = encoder.image_directory()?;
-            dir.write_tag(Tag::Artist, ARTIST)?;
+            dir.write_tag(tags::Tag::Artist, ARTIST)?;
             dir.finish()?;
 
             data.into_inner()
@@ -257,12 +252,9 @@ mod tests {
         let mut decoder = Decoder::open(file).unwrap();
         decoder.next_directory().unwrap();
 
-        let artist = decoder
-            .current_ifd()
-            .find_entry(Tag::Artist)
-            .expect("some artist is present");
-
-        let mut reader = decoder.read_entry(artist)?;
+        let mut reader = decoder
+            .read_tag(tags::Tag::Artist)?
+            .expect("the artist is present?");
 
         let mut value = vec![];
         reader.read_to_end(&mut value)?;
@@ -274,11 +266,57 @@ mod tests {
         assert_eq!(reader.seek(SeekFrom::End(0))?, ARTIST.len() as u64 + 1);
         assert!(reader.seek(SeekFrom::End(1)).is_err());
 
-        reader.seek(SeekFrom::End(-5))?;
+        // Check relative seeks by comparing against the "code"
+        let code_offset = reader.seek(SeekFrom::End(-5))?;
         let mut is_code = [0u8; 4];
         reader.read_exact(&mut is_code)?;
-
         assert_eq!(is_code, *value.last_chunk::<4>().unwrap());
+
+        assert_eq!(reader.seek(SeekFrom::Start(0))?, 0);
+        assert_eq!(reader.seek(SeekFrom::Current(0))?, 0);
+        assert!(reader.seek(SeekFrom::Current(-1)).is_err());
+
+        reader.seek(SeekFrom::Start(code_offset))?;
+        reader.read_exact(&mut is_code)?;
+        assert_eq!(is_code, *value.last_chunk::<4>().unwrap());
+
+        Ok(())
+    }
+
+    /// Check that the reader from an `offset` field also works.
+    #[test]
+    fn read_from_offset() -> Result<(), crate::error::TiffError> {
+        let data = {
+            let mut data = std::io::Cursor::new(vec![]);
+            let mut encoder = encoder::TiffEncoder::new(&mut data)?;
+
+            let mut dir = encoder.image_directory()?;
+            dir.write_tag(
+                tags::Tag::PlanarConfiguration,
+                tags::PlanarConfiguration::Planar,
+            )?;
+            dir.finish()?;
+
+            data.into_inner()
+        };
+
+        let file = std::io::Cursor::new(data);
+        let mut decoder = Decoder::open(file).unwrap();
+        decoder.next_directory().unwrap();
+        let bo = decoder.byte_order();
+
+        let mut reader = decoder
+            .read_tag(tags::Tag::PlanarConfiguration)?
+            .expect("some artist is present");
+
+        let mut buf = [0; 2];
+        reader.read_exact(&mut buf)?;
+
+        bo.convert(tags::Type::SHORT, &mut buf, tags::ByteOrder::BigEndian);
+        assert_eq!(buf, [0, 2]);
+
+        // Check relative seeks, this item is only two bytes long.
+        assert!(reader.seek(SeekFrom::End(-3)).is_err());
 
         Ok(())
     }

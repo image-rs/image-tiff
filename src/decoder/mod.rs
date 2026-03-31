@@ -852,6 +852,15 @@ impl<R: Read + Seek> Decoder<R> {
         self.value_reader.reader.byte_order
     }
 
+    /// Check if this file is a BigTIFF or a standard TIFF.
+    pub fn variant(&self) -> TiffVariant {
+        if self.value_reader.bigtiff {
+            TiffVariant::BigTiff
+        } else {
+            TiffVariant::Standard
+        }
+    }
+
     #[inline]
     pub fn read_ifd_offset(&mut self) -> Result<u64, io::Error> {
         if self.value_reader.bigtiff {
@@ -945,8 +954,30 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(val)
     }
 
+    /// Create a byte reader for the value of an arbitrary IFD entry.
+    ///
+    /// Small values are stored inline inside the offset field of the entry. The threshold for this
+    /// depends on the [`Self::variant`] of the file. Interpret entries that have not been
+    /// extracted from an IFD of the current decoder with care.
+    ///
+    /// The reader returned form this method reads raw bytes. Values retrieved in this way are not
+    /// yet converted to the host endianess.
+    ///
+    /// Returns an error if the entry count exceeds the possible offset values or if the offset
+    /// of the entry would overflow the offset in the underlying stream. Otherwise returns a reader
+    /// that yields the bytes of the value.
     pub fn read_entry(&mut self, entry: ifd::Entry) -> TiffResult<EntryBytesReader<'_, R>> {
         EntryBytesReader::from_entry(&mut self.value_reader, entry)
+    }
+
+    /// Utility to create a reader like [`Self::read_entry`], from the current IFD.
+    ///
+    /// Returns an `Ok(None)` if the tag is not found in the current directory.
+    pub fn read_tag(&mut self, tag: Tag) -> TiffResult<Option<EntryBytesReader<'_, R>>> {
+        match self.current_ifd().find_entry(tag) {
+            None => Ok(None),
+            Some(entry) => self.read_entry(entry).map(Some),
+        }
     }
 
     /// Reads a TIFF IFA offset/value field
