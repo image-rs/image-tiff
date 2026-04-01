@@ -709,14 +709,20 @@ impl<R: Read + Seek> Decoder<R> {
         self
     }
 
-    #[allow(clippy::unnecessary_unwrap)] // Lifetimes would overlap due to return.
-    fn ensure_image(&mut self) -> TiffResult<&mut Image> {
+    // FIXME: this tuple would be a good candidate for a proxy, like IfdDecoder. That has been
+    // requested in some form or another in a number of issues.
+    #[expect(clippy::unnecessary_unwrap)] // Lifetimes would overlap due to return.
+    fn ensure_image_and_reader(&mut self) -> TiffResult<(&mut Image, &mut ValueReader<R>)> {
         if self.image.is_some() {
-            return Ok(self.image.as_mut().unwrap());
+            return Ok((self.image.as_mut().unwrap(), &mut self.value_reader));
         }
 
         let image = Image::from_reader(&mut self.value_reader, &self.directory)?;
-        Ok(self.image.insert(image))
+        Ok((self.image.insert(image), &mut self.value_reader))
+    }
+
+    fn ensure_image(&mut self) -> TiffResult<&mut Image> {
+        Ok(self.ensure_image_and_reader()?.0)
     }
 
     /// The offset of the directory representing the current image.
@@ -1191,14 +1197,10 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         layout: &image::ReadoutLayout,
     ) -> TiffResult<()> {
-        let image = self.ensure_image()?;
+        let (image, value_reader) = self.ensure_image_and_reader()?;
         let offset = image.chunk_file_range(chunk_index)?.0;
-
-        self.goto_offset_u64(offset)?;
-
-        let image = self.image.as_mut().unwrap();
-        image.expand_chunk(&mut self.value_reader, buffer, layout, chunk_index)?;
-
+        value_reader.reader.goto_offset(offset)?;
+        image.expand_chunk(value_reader, buffer, layout, chunk_index)?;
         Ok(())
     }
 
@@ -1350,7 +1352,7 @@ impl<R: Read + Seek> Decoder<R> {
         slice: TiffCodingUnit,
         buffer: &mut [u8],
     ) -> TiffResult<()> {
-        let image = self.ensure_image()?;
+        let (image, value_reader) = self.ensure_image_and_reader()?;
 
         let (width, height) = image.chunk_data_dimensions(slice.0)?;
         let readout = image.readout_for_size(width, height)?;
@@ -1375,16 +1377,9 @@ impl<R: Read + Seek> Decoder<R> {
 
         for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
             let chunk = slice.0 + idx as u32 * readout.chunks_per_plane;
-            let offset = self.image.as_mut().unwrap().chunk_offsets[chunk as usize];
-            self.goto_offset_u64(offset)?;
-
-            let image = self.image.as_mut().unwrap();
-            image.expand_chunk(
-                &mut self.value_reader,
-                &mut buffer[plane_offset..],
-                readout,
-                chunk,
-            )?;
+            let offset = image.chunk_offsets[chunk as usize];
+            value_reader.reader.goto_offset(offset)?;
+            image.expand_chunk(value_reader, &mut buffer[plane_offset..], readout, chunk)?;
         }
 
         Ok(())
@@ -1555,7 +1550,8 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns an error if the buffer fits less than one plane. In particular, for non-planar
     /// images returns an error if the buffer does not fit the required size.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
-        let readout = self.ensure_image()?.readout_for_image()?;
+        let (image, value_reader) = self.ensure_image_and_reader()?;
+        let readout = image.readout_for_image()?;
 
         let ref layout @ image::PlaneLayout {
             ref plane_offsets,
@@ -1579,11 +1575,11 @@ impl<R: Read + Seek> Decoder<R> {
 
             for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
                 let chunk = chunk + idx as u32 * readout.chunks_per_plane;
-                let offset = self.image.as_ref().unwrap().chunk_offsets[chunk as usize];
-                self.goto_offset_u64(offset)?;
+                let offset = image.chunk_offsets[chunk as usize];
+                value_reader.reader.goto_offset(offset)?;
 
-                self.image.as_mut().unwrap().expand_chunk(
-                    &mut self.value_reader,
+                image.expand_chunk(
+                    value_reader,
                     &mut buffer[plane_offset..][buffer_offset..],
                     readout,
                     chunk,
