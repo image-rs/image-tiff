@@ -583,19 +583,19 @@ impl Entry {
 
         match self.type_ {
             Type::BYTE | Type::UNDEFINED => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(bytes.iter().copied().map(Byte))
                 })
             }
             Type::SBYTE => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(bytes.iter().copied().map(|v| SignedByte(v as i8)))
                 })
             }
             Type::SHORT => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -605,7 +605,7 @@ impl Entry {
                 })
             }
             Type::SSHORT => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -615,7 +615,7 @@ impl Entry {
                 })
             }
             Type::LONG => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -625,7 +625,7 @@ impl Entry {
                 })
             }
             Type::SLONG => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -635,7 +635,7 @@ impl Entry {
                 })
             }
             Type::FLOAT => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -645,7 +645,7 @@ impl Entry {
                 })
             }
             Type::DOUBLE => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -655,7 +655,7 @@ impl Entry {
                 })
             }
             Type::RATIONAL => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(bytes.chunks_exact(8).map(|ch| {
                         Rational(
@@ -666,7 +666,7 @@ impl Entry {
                 })
             }
             Type::SRATIONAL => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(bytes.chunks_exact(8).map(|ch| {
                         SRational(
@@ -677,7 +677,7 @@ impl Entry {
                 })
             }
             Type::LONG8 => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -687,7 +687,7 @@ impl Entry {
                 })
             }
             Type::SLONG8 => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -697,7 +697,7 @@ impl Entry {
                 })
             }
             Type::IFD => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -707,7 +707,7 @@ impl Entry {
                 })
             }
             Type::IFD8 => {
-                v = Self::vec_with_capacity(self.count, limits)?;
+                v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
                     v.extend(
                         bytes
@@ -719,8 +719,8 @@ impl Entry {
             Type::ASCII => {
                 let n = usize::try_from(self.count)?;
 
-                if n > limits.decoding_buffer_size {
-                    return Err(dbg!(TiffError::LimitsExceeded));
+                if n > limits.ifd_value_size {
+                    return Err(TiffError::LimitsExceeded);
                 }
 
                 let mut out = vec![0; n];
@@ -836,7 +836,7 @@ impl Entry {
 
         let allowed_length = usize::try_from(bytes)
             .ok()
-            .filter(|&n| n <= limits.decoding_buffer_size)
+            .filter(|&n| n <= limits.ifd_value_size)
             .ok_or(TiffError::LimitsExceeded)?;
 
         buf.prepare_length(allowed_length);
@@ -844,12 +844,23 @@ impl Entry {
         Ok(allowed_length)
     }
 
+    /// Check that the raw IFD value bytes do not exceed `ifd_value_size`, then
+    /// allocate a `Vec<Value>` with appropriate capacity (bounded by
+    /// `decoding_buffer_size` to limit in-memory representation).
     fn vec_with_capacity(
         value_count: u64,
+        type_: Type,
         limits: &super::Limits,
     ) -> Result<Vec<Value>, TiffError> {
-        let value_count = usize::try_from(value_count)?;
+        // Check raw file bytes against ifd_value_size.
+        let raw_bytes = type_.value_bytes(value_count)?;
+        let raw_len = usize::try_from(raw_bytes).map_err(|_| TiffError::LimitsExceeded)?;
+        if raw_len > limits.ifd_value_size {
+            return Err(TiffError::LimitsExceeded);
+        }
 
+        // Check in-memory Value representation against decoding_buffer_size.
+        let value_count = usize::try_from(value_count)?;
         if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
             return Err(TiffError::LimitsExceeded);
         }
