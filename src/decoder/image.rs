@@ -1153,9 +1153,16 @@ impl Image {
         let chunk_row_bytes: usize = layout.tiff_row_bytes;
         let data_row_bytes: usize = layout.chunk_row_bytes(data_dims.0)?;
 
-        // TODO: Should these return errors instead?
-        assert!(layout.minimum_row_stride >= data_row_bytes);
-        assert!(buf.len() >= layout.row_stride * (data_dims.1 as usize - 1) + data_row_bytes);
+        if layout.minimum_row_stride < data_row_bytes {
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
+        }
+        if buf.len() < layout.row_stride * (data_dims.1 as usize - 1) + data_row_bytes {
+            return Err(TiffError::FormatError(
+                TiffFormatError::InconsistentSizesEncountered,
+            ));
+        }
 
         let is_all_bits = samples == data_samples;
         let is_output_chunk_rows = layout.row_stride == chunk_row_bytes;
@@ -1206,7 +1213,7 @@ impl Image {
                     samples,
                     ByteOrder::native(),
                     predictor,
-                );
+                )?;
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(out_row, color_type, self.sample_format)?;
@@ -1224,7 +1231,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
-                );
+                )?;
             }
 
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1239,9 +1246,9 @@ impl Image {
 
                 let row = &mut row[..data_row_bytes];
                 match color_type.bit_depth() {
-                    16 => predict_f16(&mut encoded, row, samples),
-                    32 => predict_f32(&mut encoded, row, samples),
-                    64 => predict_f64(&mut encoded, row, samples),
+                    16 => predict_f16(&mut encoded, row, samples)?,
+                    32 => predict_f32(&mut encoded, row, samples)?,
+                    64 => predict_f64(&mut encoded, row, samples)?,
                     _ => unreachable!(),
                 }
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1270,7 +1277,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
-                );
+                )?;
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format)?;
@@ -1311,7 +1318,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
-                );
+                )?;
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format)?;

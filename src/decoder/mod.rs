@@ -357,7 +357,13 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
     }
 }
 
-fn predict_f32(input: &mut [u8], output: &mut [u8], samples: u16) {
+fn predict_f32(input: &mut [u8], output: &mut [u8], samples: u16) -> TiffResult<()> {
+    if !input.len().is_multiple_of(4) {
+        return Err(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ));
+    }
+
     let samples = usize::from(samples);
 
     for i in samples..input.len() {
@@ -372,9 +378,16 @@ fn predict_f32(input: &mut [u8], output: &mut [u8], samples: u16) {
             input[input.len() / 4 * 3 + i],
         ])));
     }
+    Ok(())
 }
 
-fn predict_f16(input: &mut [u8], output: &mut [u8], samples: u16) {
+fn predict_f16(input: &mut [u8], output: &mut [u8], samples: u16) -> TiffResult<()> {
+    if !input.len().is_multiple_of(2) {
+        return Err(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ));
+    }
+
     let samples = usize::from(samples);
 
     for i in samples..input.len() {
@@ -387,9 +400,16 @@ fn predict_f16(input: &mut [u8], output: &mut [u8], samples: u16) {
             input[input.len() / 2 + i],
         ])));
     }
+    Ok(())
 }
 
-fn predict_f64(input: &mut [u8], output: &mut [u8], samples: u16) {
+fn predict_f64(input: &mut [u8], output: &mut [u8], samples: u16) -> TiffResult<()> {
+    if !input.len().is_multiple_of(8) {
+        return Err(TiffError::FormatError(
+            TiffFormatError::InconsistentSizesEncountered,
+        ));
+    }
+
     let samples = usize::from(samples);
 
     for i in samples..input.len() {
@@ -408,6 +428,7 @@ fn predict_f64(input: &mut [u8], output: &mut [u8], samples: u16) {
             input[input.len() / 8 * 7 + i],
         ])));
     }
+    Ok(())
 }
 
 fn fix_endianness_and_predict(
@@ -416,7 +437,7 @@ fn fix_endianness_and_predict(
     samples: u16,
     byte_order: ByteOrder,
     predictor: Predictor,
-) {
+) -> TiffResult<()> {
     match predictor {
         Predictor::None => {
             fix_endianness(buf, byte_order, bit_depth);
@@ -428,13 +449,14 @@ fn fix_endianness_and_predict(
         Predictor::FloatingPoint => {
             let mut buffer_copy = buf.to_vec();
             match bit_depth {
-                16 => predict_f16(&mut buffer_copy, buf, samples),
-                32 => predict_f32(&mut buffer_copy, buf, samples),
-                64 => predict_f64(&mut buffer_copy, buf, samples),
+                16 => predict_f16(&mut buffer_copy, buf, samples)?,
+                32 => predict_f32(&mut buffer_copy, buf, samples)?,
+                64 => predict_f64(&mut buffer_copy, buf, samples)?,
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
     }
+    Ok(())
 }
 
 fn invert_colors(
@@ -1259,7 +1281,15 @@ impl<R: Read + Seek> Decoder<R> {
 
         for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
             let chunk = slice.0 + idx as u32 * readout.chunks_per_plane;
-            self.goto_offset_u64(self.image.chunk_offsets[chunk as usize])?;
+            let offset =
+                *self
+                    .image
+                    .chunk_offsets
+                    .get(chunk as usize)
+                    .ok_or(TiffError::FormatError(
+                        TiffFormatError::InconsistentSizesEncountered,
+                    ))?;
+            self.goto_offset_u64(offset)?;
 
             self.image.expand_chunk(
                 &mut self.value_reader,
@@ -1441,7 +1471,15 @@ impl<R: Read + Seek> Decoder<R> {
 
             for (idx, &plane_offset) in plane_offsets[..used_plane_offsets].iter().enumerate() {
                 let chunk = chunk + idx as u32 * readout.chunks_per_plane;
-                self.goto_offset_u64(self.image.chunk_offsets[chunk as usize])?;
+                let offset =
+                    *self
+                        .image
+                        .chunk_offsets
+                        .get(chunk as usize)
+                        .ok_or(TiffError::FormatError(
+                            TiffFormatError::InconsistentSizesEncountered,
+                        ))?;
+                self.goto_offset_u64(offset)?;
 
                 self.image.expand_chunk(
                     &mut self.value_reader,
@@ -1646,7 +1684,16 @@ impl<R: Seek + Read> ValueReader<R> {
         let mut entries: BTreeMap<_, _> = BTreeMap::new();
 
         let num_tags = if bigtiff {
-            reader.read_u64()?
+            let n = reader.read_u64()?;
+            // Cap BigTIFF IFD entry count to prevent DoS from crafted files.
+            // Standard TIFF allows at most u16::MAX entries; BigTIFF files
+            // should not need more in practice.
+            if n > u16::MAX as u64 {
+                return Err(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ));
+            }
+            n
         } else {
             reader.read_u16()?.into()
         };
