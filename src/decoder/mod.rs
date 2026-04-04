@@ -231,12 +231,19 @@ pub struct TiffHeader {
 
 /// The representation of a TIFF decoder
 ///
-/// Currently does not support decoding of interlaced images
+/// There are three groups of operations:
+///
+/// - [Manipulate the directory state](#header-manipulate-directory) to which the decoder currently
+///   refers in the file.
+/// - [Interact with the underlying stream](#header-stream-access) instead of entries in an IFD.
+/// - [Access the encoded image](#header-image).
+///
+/// ## Limitations
+///
+/// Currently does not support decoding of interlaced images. It also does not support images with
+/// downsampling in any direction; except if they are also JPEG or WebP compressed.
 #[derive(Debug)]
-pub struct Decoder<R>
-where
-    R: Read + Seek,
-{
+pub struct Decoder<R> {
     /// There are grouped for borrow checker reasons. This allows us to implement methods that
     /// borrow the stream access and the other fields mutably at the same time.
     value_reader: ValueReader<R>,
@@ -624,6 +631,7 @@ impl TiffHeader {
     }
 }
 
+/// <span id=header-manipulate-directory>Methods to manipulate the directory state</span>
 impl<R: Read + Seek> Decoder<R> {
     /// Parse the image header from the underlying file and create a decoder positioned before its
     /// first directory.
@@ -701,27 +709,23 @@ impl<R: Read + Seek> Decoder<R> {
         self
     }
 
-    pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
-        Ok((self.image.width, self.image.height))
-    }
-
-    pub fn colortype(&mut self) -> TiffResult<ColorType> {
-        self.image.colortype()
-    }
-
-    /// Returns the color map (palette) for the current image, if it uses
-    /// `PhotometricInterpretation::RGBPalette`.
-    ///
-    /// The returned slice contains `3 * 2^BitsPerSample` entries as u16 values,
-    /// laid out as: all red values, then all green values, then all blue values.
-    /// Each value is in the range `0..=65535` regardless of the actual bit depth.
-    pub fn color_map(&self) -> Option<&[u16]> {
-        self.image.color_map.as_deref()
-    }
-
     /// The offset of the directory representing the current image.
     pub fn ifd_pointer(&mut self) -> Option<IfdPointer> {
         self.current_ifd_pointer
+    }
+
+    /// Get the IFD decoder for our current IFD.
+    ///
+    /// This may be used with any directory, valid image or otherwise. When the decoder has not
+    /// read a directory yet (a state after [`TiffHeader::open`]) the decoder will represent an
+    /// empty directory with only the next pointer set.
+    pub fn current_ifd(&mut self) -> IfdDecoder<'_> {
+        IfdDecoder {
+            inner: tag_reader::TagReader {
+                decoder: &mut self.value_reader,
+                ifd: &self.directory,
+            },
+        }
     }
 
     /// Loads the IFD at the specified index in the list, if one exists
@@ -837,6 +841,64 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(())
     }
 
+    /// Read a tag-entry map from a known offset.
+    ///
+    /// A TIFF [`Directory`], aka. image file directory aka. IFD, refers to a map from
+    /// tags–identified by a `u16`–to a typed vector of elements. It is encoded as a list
+    /// of ascending tag values with the offset and type of their corresponding values. The
+    /// semantic interpretations of a tag and its type requirements depend on the context of the
+    /// directory. The main image directories, those iterated over by the `Decoder` after
+    /// construction, are represented by [`Tag`] and [`ifd::Value`]. Other forms are EXIF and GPS
+    /// data as well as thumbnail Sub-IFD representations associated with each image file.
+    ///
+    /// This method allows the decoding of a directory from an arbitrary offset in the image file
+    /// with no specific semantic interpretation. Such an offset is usually found as the value of
+    /// a tag, e.g. [`Tag::SubIfd`], [`Tag::ExifDirectory`], [`Tag::GpsDirectory`] and recovered
+    /// from the associated value by [`ifd::Value::into_ifd_pointer`].
+    ///
+    /// The library will not verify whether the offset overlaps any other directory or would form a
+    /// cycle with any other directory when calling this method. This will modify the position of
+    /// the reader, i.e. continuing with direct reads at a later point will require going back with
+    /// [`Self::goto_offset`].
+    pub fn read_directory(&mut self, ptr: IfdPointer) -> TiffResult<Directory> {
+        self.value_reader.read_directory(ptr)
+    }
+
+    /// Prepare reading values for tags of a given directory.
+    ///
+    /// # Examples
+    ///
+    /// This method may be used to read the values of tags in directories that have been previously
+    /// read with [`Decoder::read_directory`].
+    ///
+    /// ```no_run
+    /// use tiff::decoder::Decoder;
+    /// use tiff::tags::Tag;
+    ///
+    /// # use std::io::Cursor;
+    /// # let mut data = Cursor::new(vec![0]);
+    /// let mut decoder = Decoder::open(&mut data)?;
+    ///
+    /// decoder.next_directory()?;
+    /// let sub_ifds = decoder.get_tag(Tag::SubIfd)?.into_ifd_vec()?;
+    ///
+    /// for ifd in sub_ifds {
+    ///     let subdir = decoder.read_directory(ifd)?;
+    ///     let subfile = decoder.read_directory_tags(&subdir).find_tag(Tag::SubfileType)?;
+    ///     // omitted: handle the subfiles, e.g. thumbnails
+    /// }
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
+    /// ```
+    pub fn read_directory_tags<'ifd>(&'ifd mut self, ifd: &'ifd Directory) -> IfdDecoder<'ifd> {
+        IfdDecoder {
+            inner: tag_reader::TagReader {
+                decoder: &mut self.value_reader,
+                ifd,
+            },
+        }
+    }
+
     /// Returns `true` if there is at least one more image available.
     pub fn more_images(&self) -> bool {
         self.directory.next().is_some()
@@ -850,6 +912,14 @@ impl<R: Read + Seek> Decoder<R> {
     /// will correct to the host byte order automatically.
     pub fn byte_order(&self) -> ByteOrder {
         self.value_reader.reader.byte_order
+    }
+}
+
+/// <span id=header-stream-access>Methods that interact with the underlying reader.</span>
+impl<R: Read> Decoder<R> {
+    /// Returns a mutable reference to the stream being decoded.
+    pub fn inner(&mut self) -> &mut R {
+        self.value_reader.reader.inner()
     }
 
     /// Check if this file is a BigTIFF or a standard TIFF.
@@ -868,11 +938,6 @@ impl<R: Read + Seek> Decoder<R> {
         } else {
             self.read_long().map(u64::from)
         }
-    }
-
-    /// Returns a mutable reference to the stream being decoded.
-    pub fn inner(&mut self) -> &mut R {
-        self.value_reader.reader.inner()
     }
 
     /// Reads a TIFF byte value
@@ -998,38 +1063,24 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Moves the cursor to the specified offset
     #[inline]
-    pub fn goto_offset(&mut self, offset: u32) -> io::Result<()> {
+    pub fn goto_offset(&mut self, offset: u32) -> io::Result<()>
+    where
+        R: Seek,
+    {
         self.goto_offset_u64(offset.into())
     }
 
     #[inline]
-    pub fn goto_offset_u64(&mut self, offset: u64) -> io::Result<()> {
+    pub fn goto_offset_u64(&mut self, offset: u64) -> io::Result<()>
+    where
+        R: Seek,
+    {
         self.value_reader.reader.goto_offset(offset)
     }
+}
 
-    /// Read a tag-entry map from a known offset.
-    ///
-    /// A TIFF [`Directory`], aka. image file directory aka. IFD, refers to a map from
-    /// tags–identified by a `u16`–to a typed vector of elements. It is encoded as a list
-    /// of ascending tag values with the offset and type of their corresponding values. The
-    /// semantic interpretations of a tag and its type requirements depend on the context of the
-    /// directory. The main image directories, those iterated over by the `Decoder` after
-    /// construction, are represented by [`Tag`] and [`ifd::Value`]. Other forms are EXIF and GPS
-    /// data as well as thumbnail Sub-IFD representations associated with each image file.
-    ///
-    /// This method allows the decoding of a directory from an arbitrary offset in the image file
-    /// with no specific semantic interpretation. Such an offset is usually found as the value of
-    /// a tag, e.g. [`Tag::SubIfd`], [`Tag::ExifDirectory`], [`Tag::GpsDirectory`] and recovered
-    /// from the associated value by [`ifd::Value::into_ifd_pointer`].
-    ///
-    /// The library will not verify whether the offset overlaps any other directory or would form a
-    /// cycle with any other directory when calling this method. This will modify the position of
-    /// the reader, i.e. continuing with direct reads at a later point will require going back with
-    /// [`Self::goto_offset`].
-    pub fn read_directory(&mut self, ptr: IfdPointer) -> TiffResult<Directory> {
-        self.value_reader.read_directory(ptr)
-    }
-
+/// <span id=header-image>Methods that interact with the current directory as an image.</span>
+impl<R: Read + Seek> Decoder<R> {
     fn check_chunk_type(&self, expected: ChunkType) -> TiffResult<()> {
         if expected != self.image.chunk_type {
             return Err(TiffError::UsageError(UsageError::InvalidChunkType(
@@ -1039,6 +1090,24 @@ impl<R: Read + Seek> Decoder<R> {
         }
 
         Ok(())
+    }
+
+    pub fn dimensions(&mut self) -> TiffResult<(u32, u32)> {
+        Ok((self.image.width, self.image.height))
+    }
+
+    pub fn colortype(&mut self) -> TiffResult<ColorType> {
+        self.image.colortype()
+    }
+
+    /// Returns the color map (palette) for the current image, if it uses
+    /// `PhotometricInterpretation::RGBPalette`.
+    ///
+    /// The returned slice contains `3 * 2^BitsPerSample` entries as u16 values,
+    /// laid out as: all red values, then all green values, then all blue values.
+    /// Each value is in the range `0..=65535` regardless of the actual bit depth.
+    pub fn color_map(&self) -> Option<&[u16]> {
+        self.image.color_map.as_deref()
     }
 
     /// The chunk type (Strips / Tiles) of the image
@@ -1454,70 +1523,28 @@ impl<R: Read + Seek> Decoder<R> {
 
         Ok(())
     }
+}
 
-    /// Get the IFD decoder for our current IFD.
-    ///
-    /// This may be used with any directory, valid image or otherwise. When the decoder has not
-    /// read a directory yet (a state after [`TiffHeader::open`]) the decoder will represent an
-    /// empty directory with only the next pointer set.
-    pub fn current_ifd(&mut self) -> IfdDecoder<'_> {
-        IfdDecoder {
-            inner: tag_reader::TagReader {
-                decoder: &mut self.value_reader,
-                ifd: &self.directory,
-            },
-        }
-    }
-
-    /// Prepare reading values for tags of a given directory.
-    ///
-    /// # Examples
-    ///
-    /// This method may be used to read the values of tags in directories that have been previously
-    /// read with [`Decoder::read_directory`].
-    ///
-    /// ```no_run
-    /// use tiff::decoder::Decoder;
-    /// use tiff::tags::Tag;
-    ///
-    /// # use std::io::Cursor;
-    /// # let mut data = Cursor::new(vec![0]);
-    /// let mut decoder = Decoder::open(&mut data)?;
-    ///
-    /// decoder.next_directory()?;
-    /// let sub_ifds = decoder.get_tag(Tag::SubIfd)?.into_ifd_vec()?;
-    ///
-    /// for ifd in sub_ifds {
-    ///     let subdir = decoder.read_directory(ifd)?;
-    ///     let subfile = decoder.read_directory_tags(&subdir).find_tag(Tag::SubfileType)?;
-    ///     // omitted: handle the subfiles, e.g. thumbnails
-    /// }
-    ///
-    /// # Ok::<_, tiff::TiffError>(())
-    /// ```
-    pub fn read_directory_tags<'ifd>(&'ifd mut self, ifd: &'ifd Directory) -> IfdDecoder<'ifd> {
-        IfdDecoder {
-            inner: tag_reader::TagReader {
-                decoder: &mut self.value_reader,
-                ifd,
-            },
-        }
-    }
-
+#[doc(hidden)]
+#[allow(deprecated)]
+impl<R: Read + Seek> Decoder<R> {
     /// Tries to retrieve a tag from the current image directory.
     /// Return `Ok(None)` if the tag is not present.
+    #[deprecated = "Replace with `self.current_ifd().find_tag`"]
     pub fn find_tag(&mut self, tag: Tag) -> TiffResult<Option<ifd::Value>> {
         self.current_ifd().find_tag(tag)
     }
 
     /// Tries to retrieve a tag in the current image directory and convert it to the desired
     /// unsigned type.
+    #[deprecated = "Replace with `self.current_ifd().find_tag_unsigned`"]
     pub fn find_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<Option<T>> {
         self.current_ifd().find_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a vector of all a tag's values and convert them to the desired unsigned
     /// type.
+    #[deprecated = "Replace with `self.current_ifd().find_tag_unsigned_vec`"]
     pub fn find_tag_unsigned_vec<T: TryFrom<u64>>(
         &mut self,
         tag: Tag,
@@ -1527,67 +1554,81 @@ impl<R: Read + Seek> Decoder<R> {
 
     /// Tries to retrieve a tag from the current image directory and convert it to the desired
     /// unsigned type. Returns an error if the tag is not present.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_unsigned`"]
     pub fn get_tag_unsigned<T: TryFrom<u64>>(&mut self, tag: Tag) -> TiffResult<T> {
         self.current_ifd().get_tag_unsigned(tag)
     }
 
     /// Tries to retrieve a tag from the current image directory.
     /// Returns an error if the tag is not present
+    #[deprecated = "Replace with `self.current_ifd().get_tag`"]
     pub fn get_tag(&mut self, tag: Tag) -> TiffResult<ifd::Value> {
         self.current_ifd().get_tag(tag)
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u32`"]
     pub fn get_tag_u32(&mut self, tag: Tag) -> TiffResult<u32> {
         self.get_tag(tag)?.into_u32()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u64`"]
     pub fn get_tag_u64(&mut self, tag: Tag) -> TiffResult<u64> {
         self.get_tag(tag)?.into_u64()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f32`"]
     pub fn get_tag_f32(&mut self, tag: Tag) -> TiffResult<f32> {
         self.get_tag(tag)?.into_f32()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f64`"]
     pub fn get_tag_f64(&mut self, tag: Tag) -> TiffResult<f64> {
         self.get_tag(tag)?.into_f64()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u32_vec`"]
     pub fn get_tag_u32_vec(&mut self, tag: Tag) -> TiffResult<Vec<u32>> {
         self.get_tag(tag)?.into_u32_vec()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u16_vec`"]
     pub fn get_tag_u16_vec(&mut self, tag: Tag) -> TiffResult<Vec<u16>> {
         self.get_tag(tag)?.into_u16_vec()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u64_vec`"]
     pub fn get_tag_u64_vec(&mut self, tag: Tag) -> TiffResult<Vec<u64>> {
         self.get_tag(tag)?.into_u64_vec()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f32_vec`"]
     pub fn get_tag_f32_vec(&mut self, tag: Tag) -> TiffResult<Vec<f32>> {
         self.get_tag(tag)?.into_f32_vec()
     }
 
     /// Tries to retrieve a tag and convert it to the desired type.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_f64_vec`"]
     pub fn get_tag_f64_vec(&mut self, tag: Tag) -> TiffResult<Vec<f64>> {
         self.get_tag(tag)?.into_f64_vec()
     }
 
     /// Tries to retrieve a tag and convert it to a 8bit vector.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_u8_vec`"]
     pub fn get_tag_u8_vec(&mut self, tag: Tag) -> TiffResult<Vec<u8>> {
         self.get_tag(tag)?.into_u8_vec()
     }
 
     /// Tries to retrieve a tag and convert it to a ascii vector.
+    #[deprecated = "Replace with `self.current_ifd().get_tag_ascii_string`"]
     pub fn get_tag_ascii_string(&mut self, tag: Tag) -> TiffResult<String> {
         self.get_tag(tag)?.into_string()
     }
 
+    #[deprecated = "Replace with `self.current_ifd().tag_iter`"]
     pub fn tag_iter(&mut self) -> impl Iterator<Item = TiffResult<(Tag, ifd::Value)>> + '_ {
         self.current_ifd().tag_iter()
     }

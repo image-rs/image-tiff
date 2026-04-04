@@ -40,6 +40,7 @@ fn encode_decode() {
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
 
         let mut all_tags = decoder
+            .current_ifd()
             .tag_iter()
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
@@ -80,7 +81,7 @@ fn encode_decode() {
         );
 
         assert_eq!(
-            decoder.get_tag(Tag::Artist).unwrap(),
+            decoder.current_ifd().get_tag(Tag::Artist).unwrap(),
             ifd::Value::Ascii("Image-tiff".into())
         );
 
@@ -125,6 +126,7 @@ fn encode_decode_big() {
         assert_eq!(decoder.dimensions().unwrap(), (100, 100));
 
         let mut all_tags = decoder
+            .current_ifd()
             .tag_iter()
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
@@ -165,7 +167,7 @@ fn encode_decode_big() {
         );
 
         assert_eq!(
-            decoder.get_tag(Tag::Artist).unwrap(),
+            decoder.current_ifd().get_tag(Tag::Artist).unwrap(),
             ifd::Value::Ascii("Image-tiff".into())
         );
         let mut buffer = tiff::decoder::DecodingSampleBuffer::U8(vec![]);
@@ -539,37 +541,57 @@ trait AssertDecode {
 
 impl<R: std::io::Read + std::io::Seek> AssertDecode for Decoder<R> {
     fn assert_tag_u32(&mut self, tag: u16) -> u32 {
-        self.get_tag(Tag::Unknown(tag)).unwrap().into_u32().unwrap()
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
+            .unwrap()
+            .into_u32()
+            .unwrap()
     }
     fn assert_tag_u32_vec(&mut self, tag: u16) -> Vec<u32> {
-        self.get_tag(Tag::Unknown(tag))
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
             .unwrap()
             .into_u32_vec()
             .unwrap()
     }
     fn assert_tag_i32(&mut self, tag: u16) -> i32 {
-        self.get_tag(Tag::Unknown(tag)).unwrap().into_i32().unwrap()
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
+            .unwrap()
+            .into_i32()
+            .unwrap()
     }
     fn assert_tag_i32_vec(&mut self, tag: u16) -> Vec<i32> {
-        self.get_tag(Tag::Unknown(tag))
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
             .unwrap()
             .into_i32_vec()
             .unwrap()
     }
     fn assert_tag_u64(&mut self, tag: u16) -> u64 {
-        self.get_tag(Tag::Unknown(tag)).unwrap().into_u64().unwrap()
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
+            .unwrap()
+            .into_u64()
+            .unwrap()
     }
     fn assert_tag_u64_vec(&mut self, tag: u16) -> Vec<u64> {
-        self.get_tag(Tag::Unknown(tag))
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
             .unwrap()
             .into_u64_vec()
             .unwrap()
     }
     fn assert_tag_i64(&mut self, tag: u16) -> i64 {
-        self.get_tag(Tag::Unknown(tag)).unwrap().into_i64().unwrap()
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
+            .unwrap()
+            .into_i64()
+            .unwrap()
     }
     fn assert_tag_i64_vec(&mut self, tag: u16) -> Vec<i64> {
-        self.get_tag(Tag::Unknown(tag))
+        self.current_ifd()
+            .get_tag(Tag::Unknown(tag))
             .unwrap()
             .into_i64_vec()
             .unwrap()
@@ -776,7 +798,13 @@ fn test_rows_per_strip() {
     {
         let mut decoder = Decoder::open(&mut file).unwrap();
         decoder.next_image().unwrap();
-        assert_eq!(decoder.get_tag_u64(Tag::RowsPerStrip).unwrap(), 2);
+        assert_eq!(
+            decoder
+                .current_ifd()
+                .get_tag_u64(Tag::RowsPerStrip)
+                .unwrap(),
+            2
+        );
         assert_eq!(decoder.strip_count().unwrap(), 50);
 
         for i in 0..50 {
@@ -829,6 +857,7 @@ fn test_auxiliary_directory() {
         let _ = decoder.read_image().unwrap();
 
         let exif_location = decoder
+            .current_ifd()
             .get_tag(Tag::ExifDirectory)
             .expect("second directory missing Exif")
             .into_ifd_pointer()

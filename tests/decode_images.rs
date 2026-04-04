@@ -404,7 +404,10 @@ fn test_string_tags() {
         let img_file = File::open(path).expect("Cannot find test image!");
         let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
         decoder.next_image().expect("Cannot read image IFD");
-        let software = decoder.get_tag(tiff::tags::Tag::Software).unwrap();
+        let software = decoder
+            .current_ifd()
+            .get_tag(tiff::tags::Tag::Software)
+            .unwrap();
         match software {
             ifd::Value::Ascii(s) => assert_eq!(
                 &s,
@@ -478,7 +481,8 @@ fn test_inner_access() {
     decoder.next_image().expect("Cannot read image IFD");
     assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
 
-    let c = decoder
+    let mut ifd = decoder.current_ifd();
+    let c = ifd
         .get_tag(tiff::tags::Tag::Compression)
         .unwrap()
         .into_u16()
@@ -487,13 +491,13 @@ fn test_inner_access() {
 
     // Because the image is uncompressed, reading the first tile directly with the inner reader
     // should yield the same result as reading it with the decoder's read_chunk method.
-    let first_offset = decoder
+    let first_offset = ifd
         .get_tag_u32_vec(tiff::tags::Tag::TileOffsets)
         .unwrap()
         .into_iter()
         .next()
         .unwrap();
-    let first_byte_count = decoder
+    let first_byte_count = ifd
         .get_tag_u32_vec(tiff::tags::Tag::TileByteCounts)
         .unwrap()
         .into_iter()
