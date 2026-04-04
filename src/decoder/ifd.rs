@@ -720,7 +720,7 @@ impl Entry {
                 let n = usize::try_from(self.count)?;
 
                 if n > limits.decoding_buffer_size {
-                    return Err(dbg!(TiffError::LimitsExceeded));
+                    return Err(TiffError::LimitsExceeded);
                 }
 
                 let mut out = vec![0; n];
