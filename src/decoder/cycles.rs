@@ -11,7 +11,7 @@ use std::collections::HashMap;
 ///
 /// Since we only consider one child, we run union find to assign each pointer to a known chain.
 /// Then, when we insert a new edge we check if they belong to the same component.
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct IfdCycles {
     /// The root of each component union.
     component_union: HashMap<ComponentId, ComponentId>,
