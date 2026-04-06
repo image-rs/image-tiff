@@ -254,6 +254,9 @@ pub struct Decoder<R> {
     /// Map from the ifd into the `ifd_offsets` ordered list.
     seen_ifds: cycles::IfdCycles,
     image: Option<Image>,
+    /// Reusable scratch buffer for the floating-point predictor. Stored here so that the
+    /// allocation persists across strips/tiles and images, avoiding per-row heap allocation.
+    scratch: Vec<u8>,
 }
 
 /// All the information needed to read and interpret byte slices from the underlying file, i.e. to
@@ -273,13 +276,37 @@ pub struct IfdDecoder<'lt> {
     inner: tag_reader::TagReader<'lt, dyn tag_reader::EntryDecoder + 'lt>,
 }
 
-fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
-    fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
-        for i in N..buf.len() {
-            buf[i] = buf[i].wrapping_add(buf[i - N]);
+/// Byte-level prefix sum with compile-time stride. Each element is the wrapping sum of itself and
+/// the element N positions earlier. For N >= 2, the N interleaved channels are independent streams.
+///
+/// For N=3 (RGB) and N=4 (RGBA), we use an explicit `[u8; N]` accumulator so LLVM sees each
+/// channel as an independent scalar chain and can unroll effectively. Without this, LLVM emits a
+/// scalar byte-at-a-time loop for N=3 because 3 doesn't map cleanly to SIMD widths.
+fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
+    if N == 0 || buf.len() <= N {
+        return;
+    }
+
+    // Copy the first N bytes as the initial accumulator state.
+    let mut acc = [0u8; N];
+    acc.copy_from_slice(&buf[..N]);
+
+    // Process N bytes per iteration. Each channel's prefix sum is independent.
+    let mut chunks = buf[N..].chunks_exact_mut(N);
+    for chunk in &mut chunks {
+        for c in 0..N {
+            acc[c] = chunk[c].wrapping_add(acc[c]);
+            chunk[c] = acc[c];
         }
     }
 
+    // Handle trailing bytes (when buf.len() - N is not a multiple of N).
+    for (c, byte) in chunks.into_remainder().iter_mut().enumerate() {
+        *byte = byte.wrapping_add(acc[c]);
+    }
+}
+
+fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
     fn two_bytes_predict<const N: usize>(buf: &mut [u8]) {
         for i in (2 * N..buf.len()).step_by(2) {
             let v = u16::from_ne_bytes(buf[i..][..2].try_into().unwrap());
@@ -364,65 +391,150 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
     }
 }
 
+/// Undo the floating-point predictor: byte-level prefix sum, then de-interleave byte planes back
+/// into native-endian samples.
+///
+/// The TIFF float predictor splits each N-byte sample into N separate byte planes within the row,
+/// then delta-encodes each plane. Decoding reverses this: prefix-sum to undo the deltas, then
+/// transpose the N planes back into packed samples.
 fn predict_f32(input: &mut [u8], output: &mut [u8], samples: u16) {
-    let samples = usize::from(samples);
-
-    for i in samples..input.len() {
-        input[i] = input[i].wrapping_add(input[i - samples]);
-    }
-
-    for (i, chunk) in output.chunks_mut(4).enumerate() {
-        chunk.copy_from_slice(&u32::to_ne_bytes(u32::from_be_bytes([
-            input[i],
-            input[input.len() / 4 + i],
-            input[input.len() / 4 * 2 + i],
-            input[input.len() / 4 * 3 + i],
-        ])));
-    }
+    one_byte_predict_generic(input, usize::from(samples));
+    deinterleave_f32_planes(input, output);
 }
 
 fn predict_f16(input: &mut [u8], output: &mut [u8], samples: u16) {
-    let samples = usize::from(samples);
-
-    for i in samples..input.len() {
-        input[i] = input[i].wrapping_add(input[i - samples]);
-    }
-
-    for (i, chunk) in output.chunks_mut(2).enumerate() {
-        chunk.copy_from_slice(&u16::to_ne_bytes(u16::from_be_bytes([
-            input[i],
-            input[input.len() / 2 + i],
-        ])));
-    }
+    one_byte_predict_generic(input, usize::from(samples));
+    deinterleave_f16_planes(input, output);
 }
 
 fn predict_f64(input: &mut [u8], output: &mut [u8], samples: u16) {
-    let samples = usize::from(samples);
+    one_byte_predict_generic(input, usize::from(samples));
+    deinterleave_f64_planes(input, output);
+}
 
-    for i in samples..input.len() {
-        input[i] = input[i].wrapping_add(input[i - samples]);
-    }
-
-    for (i, chunk) in output.chunks_mut(8).enumerate() {
-        chunk.copy_from_slice(&u64::to_ne_bytes(u64::from_be_bytes([
-            input[i],
-            input[input.len() / 8 + i],
-            input[input.len() / 8 * 2 + i],
-            input[input.len() / 8 * 3 + i],
-            input[input.len() / 8 * 4 + i],
-            input[input.len() / 8 * 5 + i],
-            input[input.len() / 8 * 6 + i],
-            input[input.len() / 8 * 7 + i],
-        ])));
+/// Byte-level prefix sum: `buf[i] += buf[i - stride]` for all `i >= stride`.
+///
+/// Same operation as `one_byte_predict<N>` but dispatched at runtime. The most common float
+/// channel counts (1, 3, 4) get dedicated loops so LLVM can see the independent channel streams
+/// and vectorize each one separately.
+fn one_byte_predict_generic(buf: &mut [u8], stride: usize) {
+    match stride {
+        1 => one_byte_predict::<1>(buf),
+        2 => one_byte_predict::<2>(buf),
+        3 => one_byte_predict::<3>(buf),
+        4 => one_byte_predict::<4>(buf),
+        _ => {
+            for i in stride..buf.len() {
+                buf[i] = buf[i].wrapping_add(buf[i - stride]);
+            }
+        }
     }
 }
 
+/// Transpose byte-planes back into packed f16/f32/f64 samples with big-endian to native conversion.
+///
+/// Input layout: `[plane0: n bytes][plane1: n bytes]...[planeP: n bytes]` where each plane holds
+/// one byte position of each sample. Output: packed native-endian samples.
+///
+/// Each function splits the input into equal-sized plane slices, then gathers one byte per plane
+/// per sample. Using `from_be_bytes` for endian conversion lets LLVM recognise the byte-swap idiom
+/// and emit efficient code (bswap or movbe).
+fn deinterleave_f32_planes(input: &[u8], output: &mut [u8]) {
+    let n = output.len() / 4;
+    if n == 0 || input.len() < n * 4 {
+        return;
+    }
+    let (p0, rest) = input.split_at(n);
+    let (p1, rest) = rest.split_at(n);
+    let (p2, p3) = rest.split_at(n);
+
+    // Batch 4 samples (16 output bytes) per iteration. Fixed-size array slicing eliminates
+    // bounds checks in the inner loop.
+    let (out_chunks, out_rest) = output.as_chunks_mut::<16>();
+    let (p0_chunks, p0_rest) = p0.as_chunks::<4>();
+    let (p1_chunks, p1_rest) = p1.as_chunks::<4>();
+    let (p2_chunks, p2_rest) = p2.as_chunks::<4>();
+    let (p3_chunks, p3_rest) = p3.as_chunks::<4>();
+
+    for ((((out, b0), b1), b2), b3) in out_chunks
+        .iter_mut()
+        .zip(p0_chunks)
+        .zip(p1_chunks)
+        .zip(p2_chunks)
+        .zip(p3_chunks)
+    {
+        let s0 = u32::from_be_bytes([b0[0], b1[0], b2[0], b3[0]]).to_ne_bytes();
+        let s1 = u32::from_be_bytes([b0[1], b1[1], b2[1], b3[1]]).to_ne_bytes();
+        let s2 = u32::from_be_bytes([b0[2], b1[2], b2[2], b3[2]]).to_ne_bytes();
+        let s3 = u32::from_be_bytes([b0[3], b1[3], b2[3], b3[3]]).to_ne_bytes();
+        *out = [
+            s0[0], s0[1], s0[2], s0[3], s1[0], s1[1], s1[2], s1[3], s2[0], s2[1], s2[2], s2[3],
+            s3[0], s3[1], s3[2], s3[3],
+        ];
+    }
+
+    // Remaining 0–3 samples.
+    for (j, out) in out_rest.chunks_exact_mut(4).enumerate() {
+        out.copy_from_slice(
+            &u32::from_be_bytes([p0_rest[j], p1_rest[j], p2_rest[j], p3_rest[j]]).to_ne_bytes(),
+        );
+    }
+}
+
+fn deinterleave_f16_planes(input: &[u8], output: &mut [u8]) {
+    let n = output.len() / 2;
+    if n == 0 || input.len() < n * 2 {
+        return;
+    }
+    let (p0, p1) = input.split_at(n);
+
+    for (out, (b0, b1)) in output.chunks_exact_mut(2).zip(p0.iter().zip(p1)) {
+        out.copy_from_slice(&u16::from_be_bytes([*b0, *b1]).to_ne_bytes());
+    }
+}
+
+fn deinterleave_f64_planes(input: &[u8], output: &mut [u8]) {
+    let n = output.len() / 8;
+    if n == 0 || input.len() < n * 8 {
+        return;
+    }
+    let (p0, rest) = input.split_at(n);
+    let (p1, rest) = rest.split_at(n);
+    let (p2, rest) = rest.split_at(n);
+    let (p3, rest) = rest.split_at(n);
+    let (p4, rest) = rest.split_at(n);
+    let (p5, rest) = rest.split_at(n);
+    let (p6, p7) = rest.split_at(n);
+
+    // Zip all 8 planes with the output to avoid indexed access and bounds checks.
+    let iter = output.chunks_exact_mut(8).zip(
+        p0.iter()
+            .zip(p1)
+            .zip(p2)
+            .zip(p3)
+            .zip(p4)
+            .zip(p5)
+            .zip(p6)
+            .zip(p7),
+    );
+    for (out, (((((((b0, b1), b2), b3), b4), b5), b6), b7)) in iter {
+        out.copy_from_slice(
+            &u64::from_be_bytes([*b0, *b1, *b2, *b3, *b4, *b5, *b6, *b7]).to_ne_bytes(),
+        );
+    }
+}
+
+/// Fix byte order and apply the inverse predictor for one row of decoded data.
+///
+/// `scratch` is a reusable buffer for the floating-point predictor (which needs a working copy of
+/// the input). Callers should pass the same buffer across rows to avoid per-row heap allocation.
 fn fix_endianness_and_predict(
     buf: &mut [u8],
     bit_depth: u8,
     samples: u16,
     byte_order: ByteOrder,
     predictor: Predictor,
+    scratch: &mut Vec<u8>,
 ) {
     match predictor {
         Predictor::None => {
@@ -433,11 +545,14 @@ fn fix_endianness_and_predict(
             rev_hpredict_nsamp(buf, bit_depth, samples);
         }
         Predictor::FloatingPoint => {
-            let mut buffer_copy = buf.to_vec();
+            // The float predictor reads from scattered byte planes, so it needs a separate input
+            // buffer.
+            scratch.resize(buf.len(), 0);
+            scratch.copy_from_slice(buf);
             match bit_depth {
-                16 => predict_f16(&mut buffer_copy, buf, samples),
-                32 => predict_f32(&mut buffer_copy, buf, samples),
-                64 => predict_f64(&mut buffer_copy, buf, samples),
+                16 => predict_f16(scratch, buf, samples),
+                32 => predict_f32(scratch, buf, samples),
+                64 => predict_f64(scratch, buf, samples),
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
@@ -627,6 +742,7 @@ impl TiffHeader {
             },
             seen_ifds: cycles::IfdCycles::new(),
             image: None,
+            scratch: Vec::new(),
         }
     }
 }
@@ -712,13 +828,23 @@ impl<R: Read + Seek> Decoder<R> {
     // FIXME: this tuple would be a good candidate for a proxy, like IfdDecoder. That has been
     // requested in some form or another in a number of issues.
     #[expect(clippy::unnecessary_unwrap)] // Lifetimes would overlap due to return.
-    fn ensure_image_and_reader(&mut self) -> TiffResult<(&mut Image, &mut ValueReader<R>)> {
+    fn ensure_image_and_reader(
+        &mut self,
+    ) -> TiffResult<(&mut Image, &mut ValueReader<R>, &mut Vec<u8>)> {
         if self.image.is_some() {
-            return Ok((self.image.as_mut().unwrap(), &mut self.value_reader));
+            return Ok((
+                self.image.as_mut().unwrap(),
+                &mut self.value_reader,
+                &mut self.scratch,
+            ));
         }
 
         let image = Image::from_reader(&mut self.value_reader, &self.directory)?;
-        Ok((self.image.insert(image), &mut self.value_reader))
+        Ok((
+            self.image.insert(image),
+            &mut self.value_reader,
+            &mut self.scratch,
+        ))
     }
 
     fn ensure_image(&mut self) -> TiffResult<&mut Image> {
@@ -848,6 +974,7 @@ impl<R: Read + Seek> Decoder<R> {
             directory: self.directory.clone(),
             current_ifd_pointer: self.current_ifd_pointer,
             image: core::mem::take(&mut self.image),
+            scratch: core::mem::take(&mut self.scratch),
         }
     }
 
@@ -1323,10 +1450,10 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         layout: &image::ReadoutLayout,
     ) -> TiffResult<()> {
-        let (image, value_reader) = self.ensure_image_and_reader()?;
+        let (image, value_reader, scratch) = self.ensure_image_and_reader()?;
         let offset = image.chunk_file_range(chunk_index)?.0;
         value_reader.reader.goto_offset(offset)?;
-        image.expand_chunk(value_reader, buffer, layout, chunk_index)?;
+        image.expand_chunk(value_reader, buffer, layout, chunk_index, scratch)?;
         Ok(())
     }
 
@@ -1478,7 +1605,7 @@ impl<R: Read + Seek> Decoder<R> {
         slice: TiffCodingUnit,
         buffer: &mut [u8],
     ) -> TiffResult<()> {
-        let (image, value_reader) = self.ensure_image_and_reader()?;
+        let (image, value_reader, scratch) = self.ensure_image_and_reader()?;
 
         let (width, height) = image.chunk_data_dimensions(slice.0)?;
         let readout = image.readout_for_size(width, height)?;
@@ -1505,7 +1632,13 @@ impl<R: Read + Seek> Decoder<R> {
             let chunk = slice.0 + idx as u32 * readout.chunks_per_plane;
             let offset = image.chunk_offsets[chunk as usize];
             value_reader.reader.goto_offset(offset)?;
-            image.expand_chunk(value_reader, &mut buffer[plane_offset..], readout, chunk)?;
+            image.expand_chunk(
+                value_reader,
+                &mut buffer[plane_offset..],
+                readout,
+                chunk,
+                scratch,
+            )?;
         }
 
         Ok(())
@@ -1676,7 +1809,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns an error if the buffer fits less than one plane. In particular, for non-planar
     /// images returns an error if the buffer does not fit the required size.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
-        let (image, value_reader) = self.ensure_image_and_reader()?;
+        let (image, value_reader, scratch) = self.ensure_image_and_reader()?;
         let readout = image.readout_for_image()?;
 
         let ref layout @ image::PlaneLayout {
@@ -1709,6 +1842,7 @@ impl<R: Read + Seek> Decoder<R> {
                     &mut buffer[plane_offset..][buffer_offset..],
                     readout,
                     chunk,
+                    scratch,
                 )?;
             }
         }

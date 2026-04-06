@@ -1009,6 +1009,7 @@ impl Image {
         buf: &mut [u8],
         layout: &ReadoutLayout,
         chunk_index: u32,
+        scratch: &mut Vec<u8>,
     ) -> TiffResult<()> {
         let ValueReader {
             reader,
@@ -1191,6 +1192,7 @@ impl Image {
                     samples,
                     ByteOrder::native(),
                     predictor,
+                    scratch,
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1209,6 +1211,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
+                    scratch,
                 );
             }
 
@@ -1255,6 +1258,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
+                    scratch,
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1296,6 +1300,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
+                    scratch,
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
