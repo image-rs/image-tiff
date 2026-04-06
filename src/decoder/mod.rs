@@ -273,13 +273,37 @@ pub struct IfdDecoder<'lt> {
     inner: tag_reader::TagReader<'lt, dyn tag_reader::EntryDecoder + 'lt>,
 }
 
-fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
-    fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
-        for i in N..buf.len() {
-            buf[i] = buf[i].wrapping_add(buf[i - N]);
+/// Byte-level prefix sum with compile-time stride. Each element is the wrapping sum of itself and
+/// the element N positions earlier. For N >= 2, the N interleaved channels are independent streams.
+///
+/// For N=3 (RGB) and N=4 (RGBA), we use an explicit `[u8; N]` accumulator so LLVM sees each
+/// channel as an independent scalar chain and can unroll effectively. Without this, LLVM emits a
+/// scalar byte-at-a-time loop for N=3 because 3 doesn't map cleanly to SIMD widths.
+fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
+    if N == 0 || buf.len() <= N {
+        return;
+    }
+
+    // Copy the first N bytes as the initial accumulator state.
+    let mut acc = [0u8; N];
+    acc.copy_from_slice(&buf[..N]);
+
+    // Process N bytes per iteration. Each channel's prefix sum is independent.
+    for chunk in buf[N..].chunks_exact_mut(N) {
+        for c in 0..N {
+            acc[c] = chunk[c].wrapping_add(acc[c]);
+            chunk[c] = acc[c];
         }
     }
 
+    // Handle trailing bytes (when buf.len() - N is not a multiple of N).
+    let aligned = N + (buf.len() - N) / N * N;
+    for i in aligned..buf.len() {
+        buf[i] = buf[i].wrapping_add(buf[i - N]);
+    }
+}
+
+fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
     fn two_bytes_predict<const N: usize>(buf: &mut [u8]) {
         for i in (2 * N..buf.len()).step_by(2) {
             let v = u16::from_ne_bytes(buf[i..][..2].try_into().unwrap());
@@ -364,65 +388,141 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
     }
 }
 
+/// Undo the floating-point predictor: byte-level prefix sum, then de-interleave byte planes back
+/// into native-endian samples.
+///
+/// The TIFF float predictor splits each N-byte sample into N separate byte planes within the row,
+/// then delta-encodes each plane. Decoding reverses this: prefix-sum to undo the deltas, then
+/// transpose the N planes back into packed samples.
 fn predict_f32(input: &mut [u8], output: &mut [u8], samples: u16) {
-    let samples = usize::from(samples);
-
-    for i in samples..input.len() {
-        input[i] = input[i].wrapping_add(input[i - samples]);
-    }
-
-    for (i, chunk) in output.chunks_mut(4).enumerate() {
-        chunk.copy_from_slice(&u32::to_ne_bytes(u32::from_be_bytes([
-            input[i],
-            input[input.len() / 4 + i],
-            input[input.len() / 4 * 2 + i],
-            input[input.len() / 4 * 3 + i],
-        ])));
-    }
+    one_byte_predict_generic(input, usize::from(samples));
+    deinterleave_f32_planes(input, output);
 }
 
 fn predict_f16(input: &mut [u8], output: &mut [u8], samples: u16) {
-    let samples = usize::from(samples);
-
-    for i in samples..input.len() {
-        input[i] = input[i].wrapping_add(input[i - samples]);
-    }
-
-    for (i, chunk) in output.chunks_mut(2).enumerate() {
-        chunk.copy_from_slice(&u16::to_ne_bytes(u16::from_be_bytes([
-            input[i],
-            input[input.len() / 2 + i],
-        ])));
-    }
+    one_byte_predict_generic(input, usize::from(samples));
+    deinterleave_f16_planes(input, output);
 }
 
 fn predict_f64(input: &mut [u8], output: &mut [u8], samples: u16) {
-    let samples = usize::from(samples);
+    one_byte_predict_generic(input, usize::from(samples));
+    deinterleave_f64_planes(input, output);
+}
 
-    for i in samples..input.len() {
-        input[i] = input[i].wrapping_add(input[i - samples]);
-    }
-
-    for (i, chunk) in output.chunks_mut(8).enumerate() {
-        chunk.copy_from_slice(&u64::to_ne_bytes(u64::from_be_bytes([
-            input[i],
-            input[input.len() / 8 + i],
-            input[input.len() / 8 * 2 + i],
-            input[input.len() / 8 * 3 + i],
-            input[input.len() / 8 * 4 + i],
-            input[input.len() / 8 * 5 + i],
-            input[input.len() / 8 * 6 + i],
-            input[input.len() / 8 * 7 + i],
-        ])));
+/// Byte-level prefix sum: `buf[i] += buf[i - stride]` for all `i >= stride`.
+///
+/// Same operation as `one_byte_predict<N>` but dispatched at runtime. The most common float
+/// channel counts (1, 3, 4) get dedicated loops so LLVM can see the independent channel streams
+/// and vectorize each one separately.
+fn one_byte_predict_generic(buf: &mut [u8], stride: usize) {
+    match stride {
+        1 => one_byte_predict::<1>(buf),
+        3 => one_byte_predict::<3>(buf),
+        4 => one_byte_predict::<4>(buf),
+        _ => {
+            for i in stride..buf.len() {
+                buf[i] = buf[i].wrapping_add(buf[i - stride]);
+            }
+        }
     }
 }
 
+/// Transpose byte-planes back into packed f16/f32/f64 samples with big-endian to native conversion.
+///
+/// Input layout: `[plane0: n bytes][plane1: n bytes]...[planeP: n bytes]` where each plane holds
+/// one byte position of each sample. Output: packed native-endian samples.
+///
+/// Each function splits the input into equal-sized plane slices, then gathers one byte per plane
+/// per sample. Using `from_be_bytes` for endian conversion lets LLVM recognise the byte-swap idiom
+/// and emit efficient code (bswap or movbe).
+fn deinterleave_f32_planes(input: &[u8], output: &mut [u8]) {
+    let n = output.len() / 4;
+    if n == 0 || input.len() < n * 4 {
+        return;
+    }
+    let (p0, rest) = input.split_at(n);
+    let (p1, rest) = rest.split_at(n);
+    let (p2, p3) = rest.split_at(n);
+
+    // Batch 4 samples (16 output bytes) per iteration. Converting each plane chunk to a
+    // fixed-size &[u8; 4] eliminates bounds checks in the inner loop. Writing the 4 results
+    // through a u128 gives LLVM a single wide store to work with.
+    let chunks = output
+        .chunks_exact_mut(16)
+        .zip(p0.chunks_exact(4))
+        .zip(p1.chunks_exact(4))
+        .zip(p2.chunks_exact(4))
+        .zip(p3.chunks_exact(4));
+    for ((((out, b0), b1), b2), b3) in chunks {
+        let out: &mut [u8; 16] = out.try_into().unwrap();
+        let b0: &[u8; 4] = b0.try_into().unwrap();
+        let b1: &[u8; 4] = b1.try_into().unwrap();
+        let b2: &[u8; 4] = b2.try_into().unwrap();
+        let b3: &[u8; 4] = b3.try_into().unwrap();
+        // Convert 4 big-endian→native f32 samples. The fixed-size [u8; 16] output lets LLVM
+        // see the full write and merge stores.
+        let s0 = u32::from_be_bytes([b0[0], b1[0], b2[0], b3[0]]).to_ne_bytes();
+        let s1 = u32::from_be_bytes([b0[1], b1[1], b2[1], b3[1]]).to_ne_bytes();
+        let s2 = u32::from_be_bytes([b0[2], b1[2], b2[2], b3[2]]).to_ne_bytes();
+        let s3 = u32::from_be_bytes([b0[3], b1[3], b2[3], b3[3]]).to_ne_bytes();
+        *out = [
+            s0[0], s0[1], s0[2], s0[3], s1[0], s1[1], s1[2], s1[3], s2[0], s2[1], s2[2], s2[3],
+            s3[0], s3[1], s3[2], s3[3],
+        ];
+    }
+
+    // Remaining 0–3 samples.
+    let done = n - n % 4;
+    for j in done..n {
+        let val = u32::from_be_bytes([p0[j], p1[j], p2[j], p3[j]]);
+        output[j * 4..j * 4 + 4].copy_from_slice(&val.to_ne_bytes());
+    }
+}
+
+fn deinterleave_f16_planes(input: &[u8], output: &mut [u8]) {
+    let n = output.len() / 2;
+    if n == 0 || input.len() < n * 2 {
+        return;
+    }
+    let (p0, p1) = input.split_at(n);
+
+    for (j, out) in output.chunks_exact_mut(2).enumerate() {
+        out.copy_from_slice(&u16::from_be_bytes([p0[j], p1[j]]).to_ne_bytes());
+    }
+}
+
+fn deinterleave_f64_planes(input: &[u8], output: &mut [u8]) {
+    let n = output.len() / 8;
+    if n == 0 || input.len() < n * 8 {
+        return;
+    }
+    let (p0, rest) = input.split_at(n);
+    let (p1, rest) = rest.split_at(n);
+    let (p2, rest) = rest.split_at(n);
+    let (p3, rest) = rest.split_at(n);
+    let (p4, rest) = rest.split_at(n);
+    let (p5, rest) = rest.split_at(n);
+    let (p6, p7) = rest.split_at(n);
+
+    for (j, out) in output.chunks_exact_mut(8).enumerate() {
+        out.copy_from_slice(
+            &u64::from_be_bytes([p0[j], p1[j], p2[j], p3[j], p4[j], p5[j], p6[j], p7[j]])
+                .to_ne_bytes(),
+        );
+    }
+}
+
+/// Fix byte order and apply the inverse predictor for one row of decoded data.
+///
+/// `scratch` is an optional reusable buffer for the floating-point predictor (which needs a copy of
+/// the input). Passing `Some` avoids a per-row heap allocation; passing `None` allocates internally.
 fn fix_endianness_and_predict(
     buf: &mut [u8],
     bit_depth: u8,
     samples: u16,
     byte_order: ByteOrder,
     predictor: Predictor,
+    scratch: Option<&mut Vec<u8>>,
 ) {
     match predictor {
         Predictor::None => {
@@ -433,11 +533,24 @@ fn fix_endianness_and_predict(
             rev_hpredict_nsamp(buf, bit_depth, samples);
         }
         Predictor::FloatingPoint => {
-            let mut buffer_copy = buf.to_vec();
+            // The float predictor reads from scattered byte planes, so it needs a separate input
+            // buffer. Reuse the caller's scratch buffer when available.
+            let mut owned;
+            let work = match scratch {
+                Some(s) => {
+                    s.resize(buf.len(), 0);
+                    s.copy_from_slice(buf);
+                    s.as_mut_slice()
+                }
+                None => {
+                    owned = buf.to_vec();
+                    &mut owned
+                }
+            };
             match bit_depth {
-                16 => predict_f16(&mut buffer_copy, buf, samples),
-                32 => predict_f32(&mut buffer_copy, buf, samples),
-                64 => predict_f64(&mut buffer_copy, buf, samples),
+                16 => predict_f16(work, buf, samples),
+                32 => predict_f32(work, buf, samples),
+                64 => predict_f64(work, buf, samples),
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }

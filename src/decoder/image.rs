@@ -1191,6 +1191,7 @@ impl Image {
                     samples,
                     ByteOrder::native(),
                     predictor,
+                    None,
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1202,6 +1203,14 @@ impl Image {
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
             reader.read_exact(tile)?;
 
+            // Allocate the scratch buffer once, reused across all rows (avoids per-row allocation
+            // in the floating-point predictor path).
+            let mut scratch = if predictor == Predictor::FloatingPoint {
+                Some(Vec::with_capacity(chunk_row_bytes))
+            } else {
+                None
+            };
+
             for row in tile.chunks_mut(chunk_row_bytes) {
                 super::fix_endianness_and_predict(
                     row,
@@ -1209,6 +1218,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
+                    scratch.as_mut(),
                 );
             }
 
@@ -1235,6 +1245,11 @@ impl Image {
             }
         } else if is_all_bits {
             // We read row-by-row but each row fits in its output buffer.
+            let mut scratch = if predictor == Predictor::FloatingPoint {
+                Some(Vec::with_capacity(data_row_bytes))
+            } else {
+                None
+            };
             for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
                 let row = &mut row[..data_row_bytes];
                 let used = data_row_bytes.min(chunk_row_bytes);
@@ -1255,6 +1270,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
+                    scratch.as_mut(),
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1296,6 +1312,7 @@ impl Image {
                     samples,
                     decompressed_byte_order,
                     predictor,
+                    None,
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
