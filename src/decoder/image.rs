@@ -1227,9 +1227,18 @@ impl Image {
 
                 let row = &mut row[..data_row_bytes];
                 match color_type.bit_depth() {
-                    16 => predict_f16(&mut encoded, row, samples),
-                    32 => predict_f32(&mut encoded, row, samples),
-                    64 => predict_f64(&mut encoded, row, samples),
+                    16 => {
+                        let (out, _) = row.as_chunks_mut::<2>();
+                        predict_f16(&mut encoded, out, samples);
+                    }
+                    32 => {
+                        let (out, _) = row.as_chunks_mut::<4>();
+                        predict_f32(&mut encoded, out, samples);
+                    }
+                    64 => {
+                        let (out, _) = row.as_chunks_mut::<8>();
+                        predict_f64(&mut encoded, out, samples);
+                    }
                     _ => unreachable!(),
                 }
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
