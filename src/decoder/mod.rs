@@ -397,17 +397,17 @@ fn rev_hpredict_nsamp(buf: &mut [u8], bit_depth: u8, samples: u16) {
 /// The TIFF float predictor splits each N-byte sample into N separate byte planes within the row,
 /// then delta-encodes each plane. Decoding reverses this: prefix-sum to undo the deltas, then
 /// transpose the N planes back into packed samples.
-fn predict_f32(input: &mut [u8], output: &mut [u8], samples: u16) {
+fn predict_f32(input: &mut [u8], output: &mut [[u8; 4]], samples: u16) {
     one_byte_predict_generic(input, usize::from(samples));
     deinterleave_f32_planes(input, output);
 }
 
-fn predict_f16(input: &mut [u8], output: &mut [u8], samples: u16) {
+fn predict_f16(input: &mut [u8], output: &mut [[u8; 2]], samples: u16) {
     one_byte_predict_generic(input, usize::from(samples));
     deinterleave_f16_planes(input, output);
 }
 
-fn predict_f64(input: &mut [u8], output: &mut [u8], samples: u16) {
+fn predict_f64(input: &mut [u8], output: &mut [[u8; 8]], samples: u16) {
     one_byte_predict_generic(input, usize::from(samples));
     deinterleave_f64_planes(input, output);
 }
@@ -439,8 +439,8 @@ fn one_byte_predict_generic(buf: &mut [u8], stride: usize) {
 /// Each function splits the input into equal-sized plane slices, then gathers one byte per plane
 /// per sample. Using `from_be_bytes` for endian conversion lets LLVM recognise the byte-swap idiom
 /// and emit efficient code (bswap or movbe).
-fn deinterleave_f32_planes(input: &[u8], output: &mut [u8]) {
-    let n = output.len() / 4;
+fn deinterleave_f32_planes(input: &[u8], output: &mut [[u8; 4]]) {
+    let n = output.len();
     if n == 0 || input.len() < n * 4 {
         return;
     }
@@ -448,13 +448,12 @@ fn deinterleave_f32_planes(input: &[u8], output: &mut [u8]) {
     let (p1, rest) = rest.split_at(n);
     let (p2, p3) = rest.split_at(n);
 
-    // Batch 4 samples (16 output bytes) per iteration. Fixed-size array slicing eliminates
-    // bounds checks in the inner loop.
-    let (out_chunks, out_rest) = output.as_chunks_mut::<16>();
-    let (p0_chunks, p0_rest) = p0.as_chunks::<4>();
-    let (p1_chunks, p1_rest) = p1.as_chunks::<4>();
-    let (p2_chunks, p2_rest) = p2.as_chunks::<4>();
-    let (p3_chunks, p3_rest) = p3.as_chunks::<4>();
+    // Batch 4 samples per iteration. Fixed-size array slicing eliminates bounds checks.
+    let (out_chunks, out_rest) = output.as_chunks_mut::<4>();
+    let (p0_chunks, _) = p0.as_chunks::<4>();
+    let (p1_chunks, _) = p1.as_chunks::<4>();
+    let (p2_chunks, _) = p2.as_chunks::<4>();
+    let (p3_chunks, _) = p3.as_chunks::<4>();
 
     for ((((out, b0), b1), b2), b3) in out_chunks
         .iter_mut()
@@ -467,34 +466,34 @@ fn deinterleave_f32_planes(input: &[u8], output: &mut [u8]) {
         let s1 = u32::from_be_bytes([b0[1], b1[1], b2[1], b3[1]]).to_ne_bytes();
         let s2 = u32::from_be_bytes([b0[2], b1[2], b2[2], b3[2]]).to_ne_bytes();
         let s3 = u32::from_be_bytes([b0[3], b1[3], b2[3], b3[3]]).to_ne_bytes();
-        *out = [
-            s0[0], s0[1], s0[2], s0[3], s1[0], s1[1], s1[2], s1[3], s2[0], s2[1], s2[2], s2[3],
-            s3[0], s3[1], s3[2], s3[3],
-        ];
+        out[0] = s0;
+        out[1] = s1;
+        out[2] = s2;
+        out[3] = s3;
     }
 
     // Remaining 0–3 samples.
-    for (j, out) in out_rest.chunks_exact_mut(4).enumerate() {
-        out.copy_from_slice(
-            &u32::from_be_bytes([p0_rest[j], p1_rest[j], p2_rest[j], p3_rest[j]]).to_ne_bytes(),
-        );
+    let base = out_chunks.len() * 4;
+    for (j, out) in out_rest.iter_mut().enumerate() {
+        *out = u32::from_be_bytes([p0[base + j], p1[base + j], p2[base + j], p3[base + j]])
+            .to_ne_bytes();
     }
 }
 
-fn deinterleave_f16_planes(input: &[u8], output: &mut [u8]) {
-    let n = output.len() / 2;
+fn deinterleave_f16_planes(input: &[u8], output: &mut [[u8; 2]]) {
+    let n = output.len();
     if n == 0 || input.len() < n * 2 {
         return;
     }
     let (p0, p1) = input.split_at(n);
 
-    for (out, (b0, b1)) in output.chunks_exact_mut(2).zip(p0.iter().zip(p1)) {
-        out.copy_from_slice(&u16::from_be_bytes([*b0, *b1]).to_ne_bytes());
+    for (out, (b0, b1)) in output.iter_mut().zip(p0.iter().zip(p1)) {
+        *out = u16::from_be_bytes([*b0, *b1]).to_ne_bytes();
     }
 }
 
-fn deinterleave_f64_planes(input: &[u8], output: &mut [u8]) {
-    let n = output.len() / 8;
+fn deinterleave_f64_planes(input: &[u8], output: &mut [[u8; 8]]) {
+    let n = output.len();
     if n == 0 || input.len() < n * 8 {
         return;
     }
@@ -506,8 +505,7 @@ fn deinterleave_f64_planes(input: &[u8], output: &mut [u8]) {
     let (p5, rest) = rest.split_at(n);
     let (p6, p7) = rest.split_at(n);
 
-    // Zip all 8 planes with the output to avoid indexed access and bounds checks.
-    let iter = output.chunks_exact_mut(8).zip(
+    for (out, (((((((b0, b1), b2), b3), b4), b5), b6), b7)) in output.iter_mut().zip(
         p0.iter()
             .zip(p1)
             .zip(p2)
@@ -516,11 +514,8 @@ fn deinterleave_f64_planes(input: &[u8], output: &mut [u8]) {
             .zip(p5)
             .zip(p6)
             .zip(p7),
-    );
-    for (out, (((((((b0, b1), b2), b3), b4), b5), b6), b7)) in iter {
-        out.copy_from_slice(
-            &u64::from_be_bytes([*b0, *b1, *b2, *b3, *b4, *b5, *b6, *b7]).to_ne_bytes(),
-        );
+    ) {
+        *out = u64::from_be_bytes([*b0, *b1, *b2, *b3, *b4, *b5, *b6, *b7]).to_ne_bytes();
     }
 }
 
@@ -550,9 +545,21 @@ fn fix_endianness_and_predict(
             scratch.resize(buf.len(), 0);
             scratch.copy_from_slice(buf);
             match bit_depth {
-                16 => predict_f16(scratch, buf, samples),
-                32 => predict_f32(scratch, buf, samples),
-                64 => predict_f64(scratch, buf, samples),
+                16 => {
+                    let (output, rest) = buf.as_chunks_mut::<2>();
+                    debug_assert!(rest.is_empty(), "f16 row buffer not a multiple of 2 bytes");
+                    predict_f16(scratch, output, samples);
+                }
+                32 => {
+                    let (output, rest) = buf.as_chunks_mut::<4>();
+                    debug_assert!(rest.is_empty(), "f32 row buffer not a multiple of 4 bytes");
+                    predict_f32(scratch, output, samples);
+                }
+                64 => {
+                    let (output, rest) = buf.as_chunks_mut::<8>();
+                    debug_assert!(rest.is_empty(), "f64 row buffer not a multiple of 8 bytes");
+                    predict_f64(scratch, output, samples);
+                }
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
             }
         }
