@@ -23,3 +23,9 @@ name = "decode_image"
 path = "fuzz_targets/decode_image.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "decode_comprehensive"
+path = "fuzz_targets/decode_comprehensive.rs"
+test = false
+doc = false
