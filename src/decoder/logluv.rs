@@ -87,6 +87,7 @@ fn packbits_decode<R: Read, const N: usize>(
     reader: &mut R,
     buf: &mut [[u8; N]],
 ) -> std::io::Result<()> {
+    let expected = buf.len();
     for offset in (0..N).rev() {
         let mut i = 0;
         let mut code = [0u8; 1];
@@ -123,6 +124,13 @@ fn packbits_decode<R: Read, const N: usize>(
 
                 i += usize::from(repeat);
             }
+        }
+
+        if i < expected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "PackBits RLE decoded fewer pixels than expected",
+            ));
         }
     }
 
