@@ -448,7 +448,7 @@ impl Group3Reader {
     ) -> Option<u16> {
         let mut sum = 0u16;
         while let Some(n) = decoder(reader) {
-            sum += n;
+            sum = sum.checked_add(n)?;
             if n < 64 {
                 return Some(sum);
             }
@@ -475,7 +475,10 @@ impl Read for Group3Reader {
                 };
                 match run {
                     Some(len) => {
-                        a0 += len;
+                        a0 = match a0.checked_add(len) {
+                            Some(v) => v,
+                            None => break, // overflow = corrupt data
+                        };
                         transitions.push(a0);
                         is_white = !is_white;
                     }
