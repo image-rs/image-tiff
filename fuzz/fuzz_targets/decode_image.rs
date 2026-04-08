@@ -2,7 +2,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let mut decoder = if let Ok(d) = tiff::decoder::Decoder::new(std::io::Cursor::new(data)) {
+    let mut decoder = if let Ok(d) = tiff::decoder::Decoder::open(std::io::Cursor::new(data)) {
         d
     } else {
         return;
@@ -16,16 +16,14 @@ fuzz_target!(|data: &[u8]| {
     decoder = decoder.with_limits(limits);
     
     loop {
-        if let Err(_) = decoder.read_image() {
-            break;
-        }
-
         if !decoder.more_images() {
             break;
         }
 
-        if let Err(_) = decoder.next_image() {
+        if let Err(_) = decoder.next_directory() {
             break;
         }
+
+        let _ = decoder.read_image();
     }
 });
