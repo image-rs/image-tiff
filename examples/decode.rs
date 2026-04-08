@@ -13,17 +13,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = DecodingSampleBuffer::I8(vec![]);
 
     for i in 0u32.. {
+        if !reader.more_images() {
+            break;
+        }
+
+        reader.next_directory()?;
+
         let colortype = reader.colortype()?;
         let dimensions = reader.dimensions()?;
         let layout = reader.read_image_to_buffer(&mut data)?;
 
         debug_planes(i, &mut data, &layout, &colortype, dimensions);
-
-        if !reader.more_images() {
-            break;
-        }
-
-        reader.next_image()?
     }
 
     Ok(())
