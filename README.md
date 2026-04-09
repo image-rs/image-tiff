@@ -55,4 +55,4 @@ This crate uses [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) in order t
 
 After installing it with `cargo install cargo-fuzz` on a nightly rustc, the
 fuzzing harness can be run with recommended settings using 
-`cargo fuzz run decode_image -snone -- -timeout=5`.
+`cargo fuzz run decode_comprehensive -snone -- -dict=fuzz/tiff.dict -timeout=5`.
