@@ -1,0 +1,38 @@
+# TIFF byte order and magic
+"\x49\x49\x2A\x00"
+"\x4D\x4D\x00\x2A"
+
+# Common IFD tags as 2-byte LE pairs
+# 256 = ImageWidth
+"\x00\x01"
+# 257 = ImageLength
+"\x01\x01"
+# 258 = BitsPerSample
+"\x02\x01"
+# 259 = Compression
+"\x03\x01"
+# 262 = PhotometricInterpretation
+"\x06\x01"
+# 273 = StripOffsets
+"\x11\x01"
+# 277 = SamplesPerPixel
+"\x15\x01"
+# 278 = RowsPerStrip
+"\x16\x01"
+# 279 = StripByteCounts
+"\x17\x01"
+# 282 = XResolution
+"\x1A\x01"
+# 283 = YResolution
+"\x1B\x01"
+
+# Common IFD tags as 2-byte BE pairs
+"\x01\x00"
+"\x01\x01"
+"\x01\x02"
+"\x01\x03"
+"\x01\x06"
+"\x01\x11"
+"\x01\x15"
+"\x01\x16"
+"\x01\x17"
