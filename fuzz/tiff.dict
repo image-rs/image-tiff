@@ -1,38 +1,139 @@
-# TIFF byte order and magic
+# === File headers ===
+
+# Classic TIFF (LE, BE)
 "\x49\x49\x2A\x00"
 "\x4D\x4D\x00\x2A"
+# BigTIFF (LE, BE) — version 43, 8-byte offsets, different parsing paths
+"\x49\x49\x2B\x00\x08\x00\x00\x00"
+"\x4D\x4D\x00\x2B\x00\x08\x00\x00"
 
-# Common IFD tags as 2-byte LE pairs
-# 256 = ImageWidth
+# === IFD field type codes (2-byte LE) ===
+# Decoder switches on these; wrong types exercise error paths
+
+"\x01\x00"
+"\x02\x00"
+"\x03\x00"
+"\x04\x00"
+"\x05\x00"
+"\x06\x00"
+"\x07\x00"
+"\x08\x00"
+"\x09\x00"
+"\x0A\x00"
+"\x0B\x00"
+"\x0C\x00"
+"\x0D\x00"
+"\x10\x00"
+"\x11\x00"
+"\x12\x00"
+
+# === IFD tag numbers (2-byte LE) ===
+
+# 256=ImageWidth 257=ImageLength 258=BitsPerSample
 "\x00\x01"
-# 257 = ImageLength
 "\x01\x01"
-# 258 = BitsPerSample
 "\x02\x01"
-# 259 = Compression
+# 259=Compression 262=PhotometricInterpretation
 "\x03\x01"
-# 262 = PhotometricInterpretation
 "\x06\x01"
-# 273 = StripOffsets
+# 273=StripOffsets 274=Orientation
 "\x11\x01"
-# 277 = SamplesPerPixel
+"\x12\x01"
+# 277=SamplesPerPixel 278=RowsPerStrip 279=StripByteCounts
 "\x15\x01"
-# 278 = RowsPerStrip
 "\x16\x01"
-# 279 = StripByteCounts
 "\x17\x01"
-# 282 = XResolution
+# 282=XResolution 283=YResolution 284=PlanarConfiguration
 "\x1A\x01"
-# 283 = YResolution
 "\x1B\x01"
+"\x1C\x01"
+# 317=Predictor 320=ColorMap
+"\x3D\x01"
+"\x40\x01"
+# 322=TileWidth 323=TileLength 324=TileOffsets 325=TileByteCounts
+"\x42\x01"
+"\x43\x01"
+"\x44\x01"
+"\x45\x01"
+# 330=SubIfd 338=ExtraSamples 339=SampleFormat
+"\x4A\x01"
+"\x52\x01"
+"\x53\x01"
+# 347=JPEGTables 530=ChromaSubsampling
+"\x5B\x01"
+"\x12\x02"
+# 34665=ExifDirectory 34675=IccProfile 34853=GpsDirectory
+"\x69\x87"
+"\x73\x87"
+"\x25\x88"
 
-# Common IFD tags as 2-byte BE pairs
+# === IFD tag numbers (2-byte BE) ===
+
 "\x01\x00"
 "\x01\x01"
 "\x01\x02"
 "\x01\x03"
 "\x01\x06"
 "\x01\x11"
+"\x01\x12"
 "\x01\x15"
 "\x01\x16"
 "\x01\x17"
+"\x01\x1A"
+"\x01\x1B"
+"\x01\x1C"
+"\x01\x3D"
+"\x01\x40"
+"\x01\x42"
+"\x01\x43"
+"\x01\x44"
+"\x01\x45"
+"\x01\x4A"
+"\x01\x52"
+"\x01\x53"
+"\x01\x5B"
+"\x02\x12"
+"\x87\x69"
+"\x87\x73"
+"\x88\x25"
+
+# === Compression codes (4-byte LE inline SHORT values) ===
+# These are the values stored in the IFD entry for tag 259
+
+# 1=None 2=Huffman 3=Fax3 4=Fax4 5=LZW
+"\x01\x00\x00\x00"
+"\x02\x00\x00\x00"
+"\x03\x00\x00\x00"
+"\x04\x00\x00\x00"
+"\x05\x00\x00\x00"
+# 6=OldJPEG 7=ModernJPEG 8=Deflate
+"\x06\x00\x00\x00"
+"\x07\x00\x00\x00"
+"\x08\x00\x00\x00"
+# 0x8005=PackBits 0x80B2=OldDeflate
+"\x05\x80\x00\x00"
+"\xB2\x80\x00\x00"
+
+# === Useful small values (4-byte LE) ===
+# BitsPerSample=16, =32 (8 already covered as Deflate compression above)
+
+"\x10\x00\x00\x00"
+"\x20\x00\x00\x00"
+
+# === Minimal IFD entries (12-byte LE: tag + type SHORT + count 1 + value) ===
+# These let the fuzzer splice complete valid entries into an IFD
+
+# ImageWidth=1
+"\x00\x01\x03\x00\x01\x00\x00\x00\x01\x00\x00\x00"
+# ImageLength=1
+"\x01\x01\x03\x00\x01\x00\x00\x00\x01\x00\x00\x00"
+# BitsPerSample=8
+"\x02\x01\x03\x00\x01\x00\x00\x00\x08\x00\x00\x00"
+# Compression=None
+"\x03\x01\x03\x00\x01\x00\x00\x00\x01\x00\x00\x00"
+# PhotometricInterpretation=BlackIsZero
+"\x06\x01\x03\x00\x01\x00\x00\x00\x01\x00\x00\x00"
+# SamplesPerPixel=1
+"\x15\x01\x03\x00\x01\x00\x00\x00\x01\x00\x00\x00"
+# RowsPerStrip=1
+"\x16\x01\x03\x00\x01\x00\x00\x00\x01\x00\x00\x00"
