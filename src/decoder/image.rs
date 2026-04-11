@@ -591,10 +591,17 @@ impl Image {
                     ),
                 )),
             },
-            // CIE L*a*b* uses signed a/b channels whereas ICC L*a*b* uses unsigned
-            // with a +128 bias. For 8-bit, the byte-level data is the same size — we
-            // re-bias a/b from signed to unsigned during expand_chunk so that callers
-            // can treat CIELab identically to ICCLab (both return Lab(8)).
+            // CIE L*a*b* (TIFF6 Section 23, pp 110-115) encodes a/b as signed int8
+            // (-128..127) while ICC L*a*b* uses unsigned with +128 bias. For 8-bit we
+            // re-bias a/b during expand_chunk so callers see the same encoding as ICCLab.
+            //
+            // libtiff takes the same approach — accepts only 8-bit CIELab and converts
+            // without checking SampleFormat:
+            // https://libtiff.gitlab.io/libtiff/functions/TIFFcolor.html
+            // https://gitlab.com/libtiff/libtiff/-/blob/master/libtiff/tif_getimage.c
+            //
+            // 16-bit CIELab would need L=uint16 + a/b=int16, which SampleFormat can't
+            // express (it applies uniformly). libtiff doesn't support it either.
             PhotometricInterpretation::CIELab => match self.photometric_samples {
                 3 if matches!(self.bits_per_sample, 8) => Ok(ColorType::Lab(self.bits_per_sample)),
                 _ => Err(TiffError::UnsupportedError(
@@ -1033,6 +1040,7 @@ impl Image {
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
             | ColorType::Palette(n)
+            | ColorType::Lab(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,
@@ -1044,6 +1052,7 @@ impl Image {
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
             | ColorType::Palette(n)
+            | ColorType::Lab(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,

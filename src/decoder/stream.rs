@@ -170,12 +170,6 @@ impl<R: Read> Read for LZWReader<R> {
                     }
                 }
                 Ok(weezl::LzwStatus::NoProgress) => {
-                    // Some encoders omit the LZW end-of-information code. If we
-                    // already produced output this call, treat it as a clean EOF
-                    // rather than an error — the decoded data up to this point is valid.
-                    if result.consumed_out > 0 {
-                        return Ok(result.consumed_out);
-                    }
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "no lzw end code found",

@@ -3,8 +3,8 @@ use std::io::{self, Read, Seek};
 use std::num::NonZeroUsize;
 
 use crate::tags::{
-    ByteOrder, IfdPointer, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
-    Tag, TiffVariant, Type, ValueBuffer,
+    ByteOrder, IfdPointer, PlanarConfiguration, Predictor, SampleFormat, Tag, TiffVariant, Type,
+    ValueBuffer,
 };
 use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -659,95 +659,18 @@ fn invert_colors(
     Ok(())
 }
 
-/// Convert CIE L*a*b* (photometric=8) byte encoding to ICC L*a*b* (photometric=9).
+/// Re-bias CIE L*a*b* a/b channels from signed to unsigned encoding.
 ///
-/// CIELab stores a/b as signed int8 (-128..127). ICCLab stores them as uint8 with
-/// a +128 bias (0..255, where 128 = neutral). The L channel is identical in both.
-/// This re-biases a/b so that downstream code can treat CIELab the same as ICCLab.
+/// CIELab (photometric=8) stores a/b as int8 where 0 is neutral.
+/// ICCLab (photometric=9) stores them as uint8 where 128 is neutral.
+/// Adding 128 (wrapping) converts between the two representations.
+/// See libtiff's TIFFCIELabToXYZ for reference:
+/// https://gitlab.com/libtiff/libtiff/-/blob/master/libtiff/tif_color.c
 fn cielab_to_icclab(buf: &mut [u8]) {
     for pixel in buf.chunks_exact_mut(3) {
-        // L stays as-is; a and b get +128 (wrapping handles the two's complement)
         pixel[1] = pixel[1].wrapping_add(128);
         pixel[2] = pixel[2].wrapping_add(128);
     }
-}
-
-/// Expand palette indices in `buf` to RGB using the color map.
-///
-/// `buf` contains packed palette indices at `bits_per_sample` depth. The color map
-/// has layout `[R0..Rn, G0..Gn, B0..Bn]` with 16-bit entries. Each index is looked
-/// up and replaced with an 8-bit RGB triplet (high byte of the 16-bit color map value).
-///
-/// Returns a new `Vec<u8>` with 3 bytes (R,G,B) per pixel. Sub-byte indices (1, 2, 4-bit)
-/// are unpacked from the row-aligned packed representation.
-fn expand_palette(
-    buf: &[u8],
-    color_map: &[u16],
-    width: u32,
-    height: u32,
-    bits_per_sample: u8,
-) -> Vec<u8> {
-    let num_colors = 1usize << bits_per_sample;
-    let pixels = (width as usize) * (height as usize);
-    let mut rgb = Vec::with_capacity(pixels * 3);
-
-    if bits_per_sample == 8 {
-        for &idx in buf.iter().take(pixels) {
-            let i = idx as usize;
-            if i < num_colors {
-                rgb.push((color_map[i] >> 8) as u8);
-                rgb.push((color_map[num_colors + i] >> 8) as u8);
-                rgb.push((color_map[2 * num_colors + i] >> 8) as u8);
-            } else {
-                rgb.extend_from_slice(&[0, 0, 0]);
-            }
-        }
-    } else if bits_per_sample == 16 {
-        for chunk in buf.chunks(2).take(pixels) {
-            if chunk.len() < 2 {
-                break;
-            }
-            let i = u16::from_ne_bytes([chunk[0], chunk[1]]) as usize;
-            if i < num_colors {
-                rgb.push((color_map[i] >> 8) as u8);
-                rgb.push((color_map[num_colors + i] >> 8) as u8);
-                rgb.push((color_map[2 * num_colors + i] >> 8) as u8);
-            } else {
-                rgb.extend_from_slice(&[0, 0, 0]);
-            }
-        }
-    } else {
-        // Sub-byte (1, 2, 4-bit): rows are byte-aligned with padding bits at end
-        let samples_per_byte = 8 / bits_per_sample as usize;
-        let bytes_per_row = ((width as usize) * bits_per_sample as usize).div_ceil(8);
-
-        for row in 0..height as usize {
-            let row_start = row * bytes_per_row;
-            let row_end = (row_start + bytes_per_row).min(buf.len());
-            let mut col = 0u32;
-
-            for &byte in &buf[row_start..row_end] {
-                for bit_idx in (0..samples_per_byte).rev() {
-                    if col >= width {
-                        break;
-                    }
-                    let shift = bit_idx as u8 * bits_per_sample;
-                    let mask = ((1u16 << bits_per_sample) - 1) as u8;
-                    let i = ((byte >> shift) & mask) as usize;
-                    if i < num_colors {
-                        rgb.push((color_map[i] >> 8) as u8);
-                        rgb.push((color_map[num_colors + i] >> 8) as u8);
-                        rgb.push((color_map[2 * num_colors + i] >> 8) as u8);
-                    } else {
-                        rgb.extend_from_slice(&[0, 0, 0]);
-                    }
-                    col += 1;
-                }
-            }
-        }
-    }
-
-    rgb
 }
 
 /// Fix endianness. If `byte_order` matches the host, then conversion is a no-op.
@@ -1474,28 +1397,6 @@ impl<R: Read + Seek> Decoder<R> {
     /// Each value is in the range `0..=65535` regardless of the actual bit depth.
     pub fn color_map(&self) -> Option<&[u16]> {
         self.image.as_ref().and_then(|img| img.color_map.as_deref())
-    }
-
-    /// Expand a palette-indexed image buffer to 8-bit RGB.
-    ///
-    /// Takes the raw decoded buffer (palette indices at `bits_per_sample` depth) and
-    /// returns a new buffer with 3 bytes per pixel (R, G, B), using the image's color map.
-    /// Sub-byte indices (1, 2, 4-bit) are unpacked from the row-aligned representation.
-    ///
-    /// Returns `None` if the current image is not a palette image or has no color map.
-    pub fn expand_palette_to_rgb(&self, indices: &[u8]) -> Option<Vec<u8>> {
-        let image = self.image.as_ref()?;
-        let color_map = image.color_map.as_ref()?;
-        if image.photometric_interpretation != PhotometricInterpretation::RGBPalette {
-            return None;
-        }
-        Some(expand_palette(
-            indices,
-            color_map,
-            image.width,
-            image.height,
-            image.bits_per_sample,
-        ))
     }
 
     /// Read a tag-entry map from a known offset.
