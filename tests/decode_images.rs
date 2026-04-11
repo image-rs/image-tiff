@@ -1107,7 +1107,8 @@ fn build_raw_tiff(
 fn test_transparency_mask() {
     // 2x2 mask: values 0, 255, 128, 64
     let data = build_raw_tiff(4, 8, 1, &[0, 255, 128, 64]);
-    let mut decoder = Decoder::new(Cursor::new(&data)).unwrap();
+    let mut decoder = Decoder::open(Cursor::new(&data)).unwrap();
+    decoder.next_image().unwrap();
 
     assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
 
@@ -1140,7 +1141,8 @@ fn test_cielab_decode() {
     ];
 
     let data = build_raw_tiff(8, 8, 3, &pixels);
-    let mut decoder = Decoder::new(Cursor::new(&data)).unwrap();
+    let mut decoder = Decoder::open(Cursor::new(&data)).unwrap();
+    decoder.next_image().unwrap();
 
     assert_eq!(decoder.colortype().unwrap(), ColorType::Lab(8));
 
