@@ -5,7 +5,7 @@ use tiff::tags::{ByteOrder, Type};
 use tiff::ColorType;
 
 use std::fs::File;
-use std::io::{Read, Seek};
+use std::io::{Cursor, Read, Seek};
 use std::path::PathBuf;
 
 const TEST_IMAGE_DIR: &str = "./tests/images/";
@@ -1056,4 +1056,121 @@ fn test_gray_u7() {
 fn test_gray_u12_hpredict() {
     // Delta-encoded 12-bit values: [100, 200, 300, 400, 1000, 2000, 3000, 4000]
     test_image_sum_u16("hpredict-1c-12b.tiff", ColorType::Gray(12), 11000);
+}
+
+// ---- TransparencyMask ----
+
+/// Build a minimal uncompressed TIFF in memory with the given photometric interpretation.
+/// Returns a 2x2 image with the provided pixel data as a single strip.
+fn build_raw_tiff(
+    photometric: u16,
+    bits_per_sample: u16,
+    samples_per_pixel: u16,
+    pixel_data: &[u8],
+) -> Vec<u8> {
+    let width: u16 = 2;
+    let height: u16 = 2;
+    let num_tags: u16 = 8;
+    let ifd_offset: u32 = 8;
+    let ifd_size = 2 + (num_tags as u32) * 12 + 4;
+    let strip_offset = 8 + ifd_size;
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(b"II");
+    buf.extend_from_slice(&42u16.to_le_bytes());
+    buf.extend_from_slice(&ifd_offset.to_le_bytes());
+    buf.extend_from_slice(&num_tags.to_le_bytes());
+
+    // IFD entries (must be ascending tag order)
+    for &(tag, typ, value) in &[
+        (256u16, 3u16, width as u32),       // ImageWidth
+        (257, 3, height as u32),            // ImageLength
+        (258, 3, bits_per_sample as u32),   // BitsPerSample
+        (259, 3, 1),                        // Compression = None
+        (262, 3, photometric as u32),       // PhotometricInterpretation
+        (273, 4, strip_offset),             // StripOffsets
+        (277, 3, samples_per_pixel as u32), // SamplesPerPixel
+        (279, 4, pixel_data.len() as u32),  // StripByteCounts
+    ] {
+        buf.extend_from_slice(&tag.to_le_bytes());
+        buf.extend_from_slice(&typ.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.extend_from_slice(&value.to_le_bytes());
+    }
+
+    buf.extend_from_slice(&0u32.to_le_bytes()); // next IFD = 0
+    buf.extend_from_slice(pixel_data);
+    buf
+}
+
+#[test]
+fn test_transparency_mask() {
+    // 2x2 mask: values 0, 255, 128, 64
+    let data = build_raw_tiff(4, 8, 1, &[0, 255, 128, 64]);
+    let mut decoder = Decoder::open(Cursor::new(&data)).unwrap();
+    decoder.next_image().unwrap();
+
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(8));
+
+    let result = decoder.read_image().unwrap();
+    match result {
+        DecodingSampleBuffer::U8(pixels) => {
+            // TransparencyMask is decoded as grayscale
+            assert_eq!(pixels.len(), 4);
+            assert_eq!(pixels[0], 0);
+            assert_eq!(pixels[1], 255);
+            assert_eq!(pixels[2], 128);
+            assert_eq!(pixels[3], 64);
+        }
+        _ => panic!("Expected U8 buffer"),
+    }
+}
+
+// ---- CIE L*a*b* ----
+
+#[test]
+fn test_cielab_decode() {
+    // 2x2 CIELab image: 3 bytes per pixel (L, a, b)
+    // L=128, a=0 (signed neutral), b=0 (signed neutral)
+    // After re-biasing: a=128 (unsigned neutral), b=128 (unsigned neutral)
+    let pixels: Vec<u8> = vec![
+        128, 0, 0, // pixel 0: L=128, a=0, b=0 (neutral gray)
+        255, 50, 50, // pixel 1: L=255, a=+50, b=+50
+        100, 206, 206, // pixel 2: L=100, a=-50 (as i8), b=-50 (as i8)
+        0, 128, 128, // pixel 3: L=0, a=-128 (as i8), b=-128 (as i8)
+    ];
+
+    let data = build_raw_tiff(8, 8, 3, &pixels);
+    let mut decoder = Decoder::open(Cursor::new(&data)).unwrap();
+    decoder.next_image().unwrap();
+
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Lab(8));
+
+    let result = decoder.read_image().unwrap();
+    match result {
+        DecodingSampleBuffer::U8(decoded) => {
+            assert_eq!(decoded.len(), 12); // 4 pixels * 3 channels
+
+            // Pixel 0: L=128, a=0+128=128, b=0+128=128
+            assert_eq!(decoded[0], 128);
+            assert_eq!(decoded[1], 128);
+            assert_eq!(decoded[2], 128);
+
+            // Pixel 1: L=255, a=50+128=178, b=50+128=178
+            assert_eq!(decoded[3], 255);
+            assert_eq!(decoded[4], 178);
+            assert_eq!(decoded[5], 178);
+
+            // Pixel 2: L=100, a=206+128=78 (wrapping), b=206+128=78
+            assert_eq!(decoded[6], 100);
+            assert_eq!(decoded[7], 78);
+            assert_eq!(decoded[8], 78);
+
+            // Pixel 3: L=0, a=128+128=0 (wrapping), b=128+128=0
+            assert_eq!(decoded[9], 0);
+            assert_eq!(decoded[10], 0);
+            assert_eq!(decoded[11], 0);
+        }
+        _ => panic!("Expected U8 buffer"),
+    }
 }

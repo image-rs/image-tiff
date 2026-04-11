@@ -659,6 +659,20 @@ fn invert_colors(
     Ok(())
 }
 
+/// Re-bias CIE L*a*b* a/b channels from signed to unsigned encoding.
+///
+/// CIELab (photometric=8) stores a/b as int8 where 0 is neutral.
+/// ICCLab (photometric=9) stores them as uint8 where 128 is neutral.
+/// Adding 128 (wrapping) converts between the two representations.
+/// See libtiff's TIFFCIELabToXYZ for reference:
+/// https://gitlab.com/libtiff/libtiff/-/blob/master/libtiff/tif_color.c
+fn cielab_to_icclab(buf: &mut [u8]) {
+    for pixel in buf.chunks_exact_mut(3) {
+        pixel[1] = pixel[1].wrapping_add(128);
+        pixel[2] = pixel[2].wrapping_add(128);
+    }
+}
+
 /// Fix endianness. If `byte_order` matches the host, then conversion is a no-op.
 fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
     let host = ByteOrder::native();

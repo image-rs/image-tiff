@@ -591,20 +591,26 @@ impl Image {
                     ),
                 )),
             },
-            // Unsupported due to inherently heterogeneous sample types. This is represented as:
-            // ```
-            // struct TiffLab /* Interpretation 8* {
-            //     pub L: u8, // SampleFormat::Uint
-            //     pub a: i8, // SampleFormat::Int
-            //     pub b: i8, // SampleFormat::Int
-            // }
-            // ```
-            PhotometricInterpretation::CIELab => Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::InterpretationWithBits(
-                    PhotometricInterpretation::CIELab,
-                    vec![self.bits_per_sample; self.samples as usize],
-                ),
-            )),
+            // CIE L*a*b* (TIFF6 Section 23, pp 110-115) encodes a/b as signed int8
+            // (-128..127) while ICC L*a*b* uses unsigned with +128 bias. For 8-bit we
+            // re-bias a/b during expand_chunk so callers see the same encoding as ICCLab.
+            //
+            // libtiff takes the same approach — accepts only 8-bit CIELab and converts
+            // without checking SampleFormat:
+            // https://libtiff.gitlab.io/libtiff/functions/TIFFcolor.html
+            // https://gitlab.com/libtiff/libtiff/-/blob/master/libtiff/tif_getimage.c
+            //
+            // 16-bit CIELab would need L=uint16 + a/b=int16, which SampleFormat can't
+            // express (it applies uniformly). libtiff doesn't support it either.
+            PhotometricInterpretation::CIELab => match self.photometric_samples {
+                3 if matches!(self.bits_per_sample, 8) => Ok(ColorType::Lab(self.bits_per_sample)),
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        PhotometricInterpretation::CIELab,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                )),
+            },
             PhotometricInterpretation::CIELogL => match self.samples {
                 1 if matches!(self.bits_per_sample, 32)
                     && matches!(self.sample_format, SampleFormat::IEEEFP) =>
@@ -660,12 +666,10 @@ impl Image {
                 ),
             )),
             PhotometricInterpretation::RGBPalette => Ok(ColorType::Palette(self.bits_per_sample)),
-            PhotometricInterpretation::TransparencyMask => Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::InterpretationWithBits(
-                    self.photometric_interpretation,
-                    vec![self.bits_per_sample; self.samples as usize],
-                ),
-            )),
+            // TransparencyMask is a single-channel mask, treat as grayscale.
+            PhotometricInterpretation::TransparencyMask => {
+                Ok(ColorType::Gray(self.bits_per_sample))
+            }
         }
     }
 
@@ -1036,6 +1040,7 @@ impl Image {
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
             | ColorType::Palette(n)
+            | ColorType::Lab(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,
@@ -1047,6 +1052,7 @@ impl Image {
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
             | ColorType::Palette(n)
+            | ColorType::Lab(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,
@@ -1199,6 +1205,9 @@ impl Image {
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(out_row, color_type, self.sample_format)?;
                 }
+                if photometric_interpretation == PhotometricInterpretation::CIELab {
+                    super::cielab_to_icclab(out_row);
+                }
             }
         } else if is_output_chunk_rows && is_all_bits {
             // Here we can read directly into the output buffer itself.
@@ -1218,6 +1227,9 @@ impl Image {
 
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(tile, color_type, self.sample_format)?;
+            }
+            if photometric_interpretation == PhotometricInterpretation::CIELab {
+                super::cielab_to_icclab(tile);
             }
         } else if chunk_row_bytes > data_row_bytes && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
@@ -1244,6 +1256,9 @@ impl Image {
                 }
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format)?;
+                }
+                if photometric_interpretation == PhotometricInterpretation::CIELab {
+                    super::cielab_to_icclab(row);
                 }
             }
         } else if is_all_bits {
@@ -1273,6 +1288,9 @@ impl Image {
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format)?;
+                }
+                if photometric_interpretation == PhotometricInterpretation::CIELab {
+                    super::cielab_to_icclab(row);
                 }
             }
         } else {
@@ -1315,6 +1333,9 @@ impl Image {
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format)?;
+                }
+                if photometric_interpretation == PhotometricInterpretation::CIELab {
+                    super::cielab_to_icclab(row);
                 }
             }
         }
