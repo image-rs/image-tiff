@@ -946,6 +946,15 @@ impl Image {
                     TiffUnsupportedError::ChromaSubsampling,
                 ));
             }
+            // Predictor reversal currently runs after upsampling, so the stored
+            // MCU-block layout the predictor was encoded against is already
+            // expanded by the time prediction runs. Reject non-None predictors
+            // until prediction can be applied before the upsampling reader.
+            if self.predictor != Predictor::None {
+                return Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::ChromaSubsampling,
+                ));
+            }
         }
 
         Ok(ReadoutLayout {
