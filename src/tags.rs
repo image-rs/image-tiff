@@ -92,7 +92,7 @@ pub enum Tag(u16) unknown(
     Compression = 259, // TODO add support for 2 and 32773
     DateTime = 306,
     ExtraSamples = 338, // TODO add support
-    FillOrder = 266, // TODO add support
+    FillOrder = 266, // fax compression decoders honor this
     FreeByteCounts = 289, // TODO add support
     FreeOffsets = 288, // TODO add support
     GrayResponseCurve = 291, // TODO add support
