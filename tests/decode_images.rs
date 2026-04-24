@@ -118,6 +118,11 @@ fn compute_tiff_hash<R: Read + Seek>(reader: R) -> u32 {
     hasher.finalize()
 }
 
+fn open_test_image(file: &str) -> File {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
+    File::open(path).expect("Cannot find test image!")
+}
+
 /// Verify all TIFF files in tests/images/seq/ against their filename-embedded CRC32 hash.
 ///
 /// Each file is named `<description>-<8hex>.tiff` where the last segment before `.tiff`
@@ -812,6 +817,37 @@ fn timeout() {
 #[test]
 fn test_no_rows_per_strip() {
     test_image_sum_u8("no_rows_per_strip.tiff", ColorType::RGB(8), 99448840);
+}
+
+#[test]
+#[cfg(feature = "fax")]
+fn test_fax4_fill_order_lsb() {
+    let mut decoder = Decoder::open(open_test_image("fax4-fillorder-lsb.tiff")).unwrap();
+    decoder.next_image().unwrap();
+
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(1));
+    assert_eq!(decoder.dimensions().unwrap(), (315, 101));
+    assert_eq!(
+        compute_tiff_hash(open_test_image("fax4-fillorder-lsb.tiff")),
+        779_278_313,
+    );
+}
+
+#[test]
+#[cfg(feature = "fax")]
+fn test_fax4_oversized_rows_per_strip() {
+    let mut decoder = Decoder::open(open_test_image("fax4-rowsperstrip-oversize.tiff")).unwrap();
+    decoder.next_image().unwrap();
+
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(1));
+    assert_eq!(decoder.dimensions().unwrap(), (83, 38));
+    assert_eq!(decoder.strip_count().unwrap(), 1);
+    assert_eq!(decoder.chunk_dimensions(), (83, 38));
+    assert_eq!(decoder.chunk_data_dimensions(0), (83, 38));
+    assert_eq!(
+        compute_tiff_hash(open_test_image("fax4-rowsperstrip-oversize.tiff")),
+        731_354_899,
+    );
 }
 
 #[test]

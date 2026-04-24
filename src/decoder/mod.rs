@@ -1430,15 +1430,11 @@ impl<R: Read + Seek> Decoder<R> {
             return Ok(0);
         }
 
-        // rows_per_strip - 1 can never fail since we know it's at least 1
-        let height = match image.height.checked_add(rows_per_strip - 1) {
-            Some(h) => h,
-            None => return Err(TiffError::IntSizeError),
-        };
-
         let strips = match image.planar_config {
-            PlanarConfiguration::Chunky => height / rows_per_strip,
-            PlanarConfiguration::Planar => height / rows_per_strip * image.samples as u32,
+            PlanarConfiguration::Chunky => image.height.div_ceil(rows_per_strip),
+            PlanarConfiguration::Planar => {
+                image.height.div_ceil(rows_per_strip) * image.samples as u32
+            }
         };
 
         Ok(strips)
