@@ -518,7 +518,7 @@ impl Image {
         let is_alpha_extra_samples = matches!(
             self.extra_samples.as_slice(),
             [ExtraSamples::AssociatedAlpha, ..] | [ExtraSamples::UnassociatedAlpha, ..]
-        );
+        ) || self.samples > self.photometric_samples;
 
         match self.photometric_interpretation {
             PhotometricInterpretation::RGB => match self.photometric_samples {
