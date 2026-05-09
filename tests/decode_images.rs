@@ -975,7 +975,7 @@ fn extra_bits_gray() {
 
 #[test]
 fn extra_bits_rgb() {
-    test_image_sum_u8("extra_bits_rgb_8b.tiff", ColorType::RGB(8), 0);
+    test_image_sum_u8("extra_bits_rgb_8b.tiff", ColorType::RGBA(8), 64);
 }
 
 #[test]
