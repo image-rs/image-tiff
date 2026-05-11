@@ -170,9 +170,20 @@ impl<R: Read> Read for LZWReader<R> {
                     }
                 }
                 Ok(weezl::LzwStatus::NoProgress) => {
+                    // The decoder neither consumed input nor produced output.
+                    // If the underlying input is exhausted before an LZW
+                    // end-of-information code was seen, treat it as graceful
+                    // EOF. libtiff does the same, and real-world encoders
+                    // (notably GDAL) omit the EOI marker. If input still
+                    // remains, the decoder is really stuck and we return an
+                    // error.
+                    let remaining = self.reader.fill_buf()?;
+                    if remaining.is_empty() {
+                        return Ok(result.consumed_out);
+                    }
                     return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "no lzw end code found",
+                        io::ErrorKind::InvalidData,
+                        "lzw decoder made no progress with input remaining",
                     ));
                 }
                 Ok(weezl::LzwStatus::Done) => {
@@ -588,5 +599,39 @@ mod test {
             0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
         ];
         assert_eq!(decoded, expected);
+    }
+
+    /// Some real-world LZW-compressed TIFFs omit the trailing
+    /// EndOfInformation code (libtiff accepts this with a warning).
+    /// Don't fail with `UnexpectedEof` in this case.
+    #[cfg(feature = "lzw")]
+    #[test]
+    fn test_missing_eoi() {
+        use weezl::{encode::Encoder, BitOrder};
+        let plaintext: &[u8] =
+            b"some bytes to compress, repeated. some bytes to compress, repeated.";
+        let mut encoded = Encoder::with_tiff_size_switch(BitOrder::Msb, 8)
+            .encode(plaintext)
+            .expect("encoding succeeds");
+        // Strip the EndOfInformation code
+        assert!(encoded.len() > 2);
+        encoded.truncate(encoded.len() - 2);
+
+        let len = encoded.len();
+        let mut decoder = LZWReader::new(io::Cursor::new(encoded), len);
+        let mut decoded = Vec::new();
+        decoder
+            .read_to_end(&mut decoded)
+            .expect("missing end marker must not be a fatal error");
+
+        // We may lose the trailing code(s), but a substantial prefix must
+        // decode correctly.
+        assert!(
+            decoded.len() + 4 >= plaintext.len(),
+            "expected most of {} bytes decoded, got {}",
+            plaintext.len(),
+            decoded.len()
+        );
+        assert_eq!(decoded.as_slice(), &plaintext[..decoded.len()]);
     }
 }
