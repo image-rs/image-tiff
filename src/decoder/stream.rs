@@ -182,7 +182,7 @@ impl<R: Read> Read for LZWReader<R> {
                         return Ok(result.consumed_out);
                     }
                     return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
+                        io::ErrorKind::UnexpectedEof,
                         "lzw decoder made no progress with input remaining",
                     ));
                 }
