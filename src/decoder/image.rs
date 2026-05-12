@@ -1190,7 +1190,7 @@ impl Image {
                 super::fix_endianness_and_predict(
                     out_row,
                     color_type.bit_depth(),
-                    samples,
+                    data_samples,
                     ByteOrder::native(),
                     predictor,
                     scratch,
