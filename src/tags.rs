@@ -295,7 +295,10 @@ pub enum CompressionMethod(u16) unknown(
 }
 
 tags! {
-pub enum PhotometricInterpretation(u16) {
+pub enum PhotometricInterpretation(u16) unknown(
+    /// A private or extension tag
+    unknown
+) {
     WhiteIsZero = 0,
     BlackIsZero = 1,
     RGB = 2,
