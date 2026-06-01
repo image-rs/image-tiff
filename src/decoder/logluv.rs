@@ -92,11 +92,7 @@ fn packbits_decode<R: Read, const N: usize>(
         let mut i = 0;
         let mut code = [0u8; 1];
 
-        loop {
-            let Some(pixels) = buf.get_mut(i..) else {
-                break;
-            };
-
+        while let Some(pixels) = buf.get_mut(i..) {
             if pixels.is_empty() {
                 break;
             }

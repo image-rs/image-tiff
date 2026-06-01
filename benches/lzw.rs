@@ -9,9 +9,9 @@ use tiff::decoder::Decoder;
 fn read_image(image: &[u8]) {
     let image = std::io::Cursor::new(image);
     let decoder = Decoder::open(black_box(image));
-
     let mut reader = decoder.unwrap();
     while reader.more_images() {
+        reader.next_directory().unwrap();
         reader.read_image().unwrap();
     }
 }
