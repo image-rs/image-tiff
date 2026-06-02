@@ -660,12 +660,14 @@ impl Image {
                 ),
             )),
             PhotometricInterpretation::RGBPalette => Ok(ColorType::Palette(self.bits_per_sample)),
-            PhotometricInterpretation::TransparencyMask => Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::InterpretationWithBits(
-                    self.photometric_interpretation,
-                    vec![self.bits_per_sample; self.samples as usize],
-                ),
-            )),
+            PhotometricInterpretation::TransparencyMask | PhotometricInterpretation::Unknown(_) => {
+                Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        self.photometric_interpretation,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                ))
+            }
         }
     }
 
