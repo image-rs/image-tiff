@@ -626,7 +626,9 @@ fn invert_colors(
             let max = (1u16 << n) - 1;
             for chunk in buf.as_chunks_mut::<2>().0 {
                 let v = u16::from_ne_bytes(*chunk);
-                *chunk = (max - v).to_ne_bytes();
+                // saturating: a value above the declared bit depth (malformed
+                // input) would otherwise underflow `max - v` and panic in debug.
+                *chunk = max.saturating_sub(v).to_ne_bytes();
             }
         }
         (ColorType::Gray(n @ 17..=31), SampleFormat::Uint) => {
@@ -634,7 +636,8 @@ fn invert_colors(
             let max = (1u32 << n) - 1;
             for chunk in buf.as_chunks_mut::<4>().0 {
                 let v = u32::from_ne_bytes(*chunk);
-                *chunk = (max - v).to_ne_bytes();
+                // saturating: see the 9..=15 arm above.
+                *chunk = max.saturating_sub(v).to_ne_bytes();
             }
         }
         (ColorType::Gray(32), SampleFormat::IEEEFP) => {
