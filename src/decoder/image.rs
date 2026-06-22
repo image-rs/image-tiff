@@ -518,7 +518,7 @@ impl Image {
     }
 
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
-        let is_alpha_extra_samples = match self.extra_samples.as_slice().get(0) {
+        let is_alpha_extra_samples = match self.extra_samples.as_slice().first() {
             Some(ExtraSamples::AssociatedAlpha) | Some(ExtraSamples::UnassociatedAlpha) => true,
             // In lenient mode, keep unspecified alpha interpretation logic compatible with libtiff
             // See Issue #341
