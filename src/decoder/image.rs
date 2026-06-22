@@ -97,6 +97,7 @@ pub(crate) struct Image {
     /// run on samples directly and thus skip the outer byte order entirely, except potentially
     /// they have interior byte order treatment.
     pub decompression_to_host_endian: bool,
+    pub lenient: bool,
 }
 
 /// Describes how to read a tile-aligned portion of the image.
@@ -155,9 +156,10 @@ pub(crate) struct ReadoutLayout {
 }
 
 impl Image {
-    pub fn from_reader<R: Read + Seek>(
+    pub fn from_reader_with_options<R: Read + Seek>(
         decoder: &mut ValueReader<R>,
         ifd: &Directory,
+        lenient: bool,
     ) -> TiffResult<Image> {
         let mut tag_reader = TagReader { decoder, ifd };
 
@@ -500,6 +502,7 @@ impl Image {
                 compression_method,
                 CompressionMethod::SgiLog | CompressionMethod::SgiLog24
             ),
+            lenient,
         })
     }
 
@@ -515,10 +518,13 @@ impl Image {
     }
 
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
-        let is_alpha_extra_samples = matches!(
-            self.extra_samples.as_slice(),
-            [ExtraSamples::AssociatedAlpha, ..] | [ExtraSamples::UnassociatedAlpha, ..]
-        );
+        let is_alpha_extra_samples = match self.extra_samples.as_slice().get(0) {
+            Some(ExtraSamples::AssociatedAlpha) | Some(ExtraSamples::UnassociatedAlpha) => true,
+            // In lenient mode, keep unspecified alpha interpretation logic compatible with libtiff
+            // See Issue #341
+            Some(ExtraSamples::Unspecified) if self.lenient && self.samples > 3 => true,
+            _ => false,
+        };
 
         match self.photometric_interpretation {
             PhotometricInterpretation::RGB => match self.photometric_samples {
@@ -1192,7 +1198,7 @@ impl Image {
                 super::fix_endianness_and_predict(
                     out_row,
                     color_type.bit_depth(),
-                    samples,
+                    data_samples,
                     ByteOrder::native(),
                     predictor,
                     scratch,

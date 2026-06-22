@@ -227,6 +227,7 @@ pub struct TiffHeader {
     pub byte_order: ByteOrder,
     pub variant: TiffVariant,
     pub first_ifd: IfdPointer,
+    lenient: bool,
 }
 
 /// The representation of a TIFF decoder
@@ -257,6 +258,8 @@ pub struct Decoder<R> {
     /// Reusable scratch buffer for the floating-point predictor. Stored here so that the
     /// allocation persists across strips/tiles and images, avoiding per-row heap allocation.
     scratch: Vec<u8>,
+    /// Leniency flag that allows libtiff-like TIFF color interpretation behavior
+    lenient: bool,
 }
 
 /// All the information needed to read and interpret byte slices from the underlying file, i.e. to
@@ -674,7 +677,11 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
 }
 
 impl TiffHeader {
-    pub fn parse<R: Read + Seek>(mut r: R) -> TiffResult<Self> {
+    pub fn parse<R: Read + Seek>(r: R) -> TiffResult<Self> {
+        Self::parse_with_options(r, false)
+    }
+
+    pub fn parse_with_options<R: Read + Seek>(mut r: R, lenient: bool) -> TiffResult<Self> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
@@ -727,6 +734,7 @@ impl TiffHeader {
                 TiffVariant::Standard
             },
             first_ifd: next_ifd,
+            lenient,
         })
     }
 
@@ -750,6 +758,7 @@ impl TiffHeader {
             seen_ifds: cycles::IfdCycles::new(),
             image: None,
             scratch: Vec::new(),
+            lenient: self.lenient,
         }
     }
 }
@@ -789,6 +798,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// The [`TiffHeader`] type allows opening a file with a custom offset.
     pub fn open(mut r: R) -> TiffResult<Decoder<R>> {
         let header = TiffHeader::parse(&mut r)?;
+        Ok(header.open(r))
+    }
+
+    pub fn open_with_options(mut r: R, lenient: bool) -> TiffResult<Decoder<R>> {
+        let header = TiffHeader::parse_with_options(&mut r, lenient)?;
         Ok(header.open(r))
     }
 
@@ -846,7 +860,8 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let image = Image::from_reader(&mut self.value_reader, &self.directory)?;
+        let image =
+            Image::from_reader_with_options(&mut self.value_reader, &self.directory, self.lenient)?;
         Ok((
             self.image.insert(image),
             &mut self.value_reader,
@@ -982,6 +997,7 @@ impl<R: Read + Seek> Decoder<R> {
             current_ifd_pointer: self.current_ifd_pointer,
             image: core::mem::take(&mut self.image),
             scratch: core::mem::take(&mut self.scratch),
+            lenient: self.lenient,
         }
     }
 
@@ -1030,7 +1046,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// error is returned.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
-        self.image = Some(Image::from_reader(&mut self.value_reader, &directory)?);
+        self.image = Some(Image::from_reader_with_options(
+            &mut self.value_reader,
+            &directory,
+            self.lenient,
+        )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
         Ok(())
@@ -1123,7 +1143,11 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn next_image(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
-        self.image = Some(Image::from_reader(&mut self.value_reader, &directory)?);
+        self.image = Some(Image::from_reader_with_options(
+            &mut self.value_reader,
+            &directory,
+            self.lenient,
+        )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
         Ok(())
