@@ -568,6 +568,56 @@ fn fix_endianness_and_predict(
     }
 }
 
+/// Reduce promoted extended-depth samples (9–15 bits → `u16`, 17–31 bits →
+/// `u32`) modulo their declared bit depth, i.e. mask with `(1 << n) - 1`.
+///
+/// An n-bit horizontal-predicted sample stores its delta in exactly n bits,
+/// i.e. modulo `2^n`, so reconstruction is also defined modulo `2^n`. The
+/// predictor accumulates `prev + delta` in the promoted storage width
+/// (`u16`/`u32`, see `rev_hpredict_nsamp`); since `2^n` divides the storage
+/// modulus, masking once after the predictor yields exactly the mod-`2^n`
+/// value for every sample — including legitimate wrap-arounds (a 9-bit
+/// `511, 0` pair is stored as delta `1`, and `511 + 1 = 512` masks back to
+/// `0`). Masking also bounds any out-of-range sample in malformed input, so
+/// all downstream consumers (`invert_colors`' `max - v` and the non-inverted
+/// output path) see in-range values. For samples already in range it is a
+/// no-op.
+///
+/// This runs in every integer decode branch of `expand_chunk` so the
+/// branches cannot diverge. Outside the unpacking branch it reduces to the
+/// two guards below and touches nothing: promoted layouts (`declared <
+/// storage`) exist only there — standard depths have `declared == storage`,
+/// and sub-byte depths keep byte-granular storage.
+#[inline]
+fn mask_samples_to_bit_depth(
+    buf: &mut [u8],
+    declared_bits: u8,
+    storage_bits: u8,
+    sample_format: SampleFormat,
+) {
+    // Only unsigned samples are promoted with zero-extension; signed
+    // extended depths would need sign extension instead and are not
+    // supported by the unpacking path.
+    if sample_format != SampleFormat::Uint {
+        return;
+    }
+    match storage_bits {
+        16 if declared_bits < 16 => {
+            let mask = (1u16 << declared_bits) - 1;
+            for chunk in buf.as_chunks_mut::<2>().0 {
+                *chunk = (u16::from_ne_bytes(*chunk) & mask).to_ne_bytes();
+            }
+        }
+        32 if declared_bits < 32 => {
+            let mask = (1u32 << declared_bits) - 1;
+            for chunk in buf.as_chunks_mut::<4>().0 {
+                *chunk = (u32::from_ne_bytes(*chunk) & mask).to_ne_bytes();
+            }
+        }
+        _ => {}
+    }
+}
+
 fn invert_colors(
     buf: &mut [u8],
     color_type: ColorType,
