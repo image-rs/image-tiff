@@ -3,4 +3,3 @@
 **/*.rs.bk
 Cargo.lock
 tests/benches/corpus/
-.DS_Store

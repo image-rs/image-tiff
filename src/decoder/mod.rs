@@ -227,7 +227,6 @@ pub struct TiffHeader {
     pub byte_order: ByteOrder,
     pub variant: TiffVariant,
     pub first_ifd: IfdPointer,
-    lenient: bool,
 }
 
 /// The representation of a TIFF decoder
@@ -677,11 +676,7 @@ fn fix_endianness(buf: &mut [u8], byte_order: ByteOrder, bit_depth: u8) {
 }
 
 impl TiffHeader {
-    pub fn parse<R: Read + Seek>(r: R) -> TiffResult<Self> {
-        Self::parse_with_options(r, false)
-    }
-
-    pub fn parse_with_options<R: Read + Seek>(mut r: R, lenient: bool) -> TiffResult<Self> {
+    pub fn parse<R: Read + Seek>(mut r: R) -> TiffResult<Self> {
         let mut endianess = Vec::with_capacity(2);
         (&mut r).take(2).read_to_end(&mut endianess)?;
         let byte_order = match &*endianess {
@@ -734,7 +729,6 @@ impl TiffHeader {
                 TiffVariant::Standard
             },
             first_ifd: next_ifd,
-            lenient,
         })
     }
 
@@ -758,7 +752,7 @@ impl TiffHeader {
             seen_ifds: cycles::IfdCycles::new(),
             image: None,
             scratch: Vec::new(),
-            lenient: self.lenient,
+            lenient: false,
         }
     }
 }
@@ -801,11 +795,6 @@ impl<R: Read + Seek> Decoder<R> {
         Ok(header.open(r))
     }
 
-    pub fn open_with_options(mut r: R, lenient: bool) -> TiffResult<Decoder<R>> {
-        let header = TiffHeader::parse_with_options(&mut r, lenient)?;
-        Ok(header.open(r))
-    }
-
     /// Create a decoder and attempt to parse the first image directory.
     ///
     /// To open a file without parsing any directory yet (for instance to retain a [`Decoder`] on
@@ -843,6 +832,15 @@ impl<R: Read + Seek> Decoder<R> {
     /// the decoder returned form [`Self::current_ifd`].
     pub fn with_limits(mut self, limits: Limits) -> Decoder<R> {
         self.value_reader.limits = limits;
+        self
+    }
+
+    /// Use a lenient decoder.
+    ///
+    /// Configuring this make the parser respect libtiff's behavior to maintain compatibility with
+    /// some older softwares (e.g. some old Adobe suite products).
+    pub fn with_lenient(mut self, lenient: bool) -> Decoder<R> {
+        self.lenient = lenient;
         self
     }
 

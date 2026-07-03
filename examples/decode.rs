@@ -2,13 +2,15 @@ use tiff::decoder::{BufferLayoutPreference, Decoder, DecodingSampleBuffer, Decod
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(image) = std::env::args_os().nth(1) else {
-        eprintln!("Usage: decode FILE");
+        eprintln!("Usage: decode FILE [--lenient]");
         return Ok(());
     };
 
+    let lenient = std::env::args().nth(2).as_deref() == Some("--lenient");
+
     let file = std::fs::File::open(image)?;
     let io = std::io::BufReader::new(file);
-    let mut reader = Decoder::open(io)?;
+    let mut reader = Decoder::open(io)?.with_lenient(lenient);
 
     let mut data = DecodingSampleBuffer::I8(vec![]);
 
