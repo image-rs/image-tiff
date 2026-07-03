@@ -257,6 +257,8 @@ pub struct Decoder<R> {
     /// Reusable scratch buffer for the floating-point predictor. Stored here so that the
     /// allocation persists across strips/tiles and images, avoiding per-row heap allocation.
     scratch: Vec<u8>,
+    /// Leniency flag that allows libtiff-like TIFF color interpretation behavior
+    lenient: bool,
 }
 
 /// All the information needed to read and interpret byte slices from the underlying file, i.e. to
@@ -750,6 +752,7 @@ impl TiffHeader {
             seen_ifds: cycles::IfdCycles::new(),
             image: None,
             scratch: Vec::new(),
+            lenient: false,
         }
     }
 }
@@ -832,6 +835,15 @@ impl<R: Read + Seek> Decoder<R> {
         self
     }
 
+    /// Use a lenient decoder.
+    ///
+    /// Configuring this make the parser respect libtiff's behavior to maintain compatibility with
+    /// some older softwares (e.g. some old Adobe suite products).
+    pub fn with_lenient(mut self, lenient: bool) -> Decoder<R> {
+        self.lenient = lenient;
+        self
+    }
+
     // FIXME: this tuple would be a good candidate for a proxy, like IfdDecoder. That has been
     // requested in some form or another in a number of issues.
     #[expect(clippy::unnecessary_unwrap)] // Lifetimes would overlap due to return.
@@ -846,7 +858,7 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let image = Image::from_reader(&mut self.value_reader, &self.directory)?;
+        let image = Image::from_reader(&mut self.value_reader, &self.directory, self.lenient)?;
         Ok((
             self.image.insert(image),
             &mut self.value_reader,
@@ -982,6 +994,7 @@ impl<R: Read + Seek> Decoder<R> {
             current_ifd_pointer: self.current_ifd_pointer,
             image: core::mem::take(&mut self.image),
             scratch: core::mem::take(&mut self.scratch),
+            lenient: self.lenient,
         }
     }
 
@@ -1030,7 +1043,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// error is returned.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
-        self.image = Some(Image::from_reader(&mut self.value_reader, &directory)?);
+        self.image = Some(Image::from_reader(
+            &mut self.value_reader,
+            &directory,
+            self.lenient,
+        )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
         Ok(())
@@ -1123,7 +1140,11 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn next_image(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
-        self.image = Some(Image::from_reader(&mut self.value_reader, &directory)?);
+        self.image = Some(Image::from_reader(
+            &mut self.value_reader,
+            &directory,
+            self.lenient,
+        )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
         Ok(())
