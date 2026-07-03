@@ -156,7 +156,7 @@ pub(crate) struct ReadoutLayout {
 }
 
 impl Image {
-    pub fn from_reader_with_options<R: Read + Seek>(
+    pub fn from_reader<R: Read + Seek>(
         decoder: &mut ValueReader<R>,
         ifd: &Directory,
         lenient: bool,

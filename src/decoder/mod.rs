@@ -858,8 +858,7 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let image =
-            Image::from_reader_with_options(&mut self.value_reader, &self.directory, self.lenient)?;
+        let image = Image::from_reader(&mut self.value_reader, &self.directory, self.lenient)?;
         Ok((
             self.image.insert(image),
             &mut self.value_reader,
@@ -1044,7 +1043,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// error is returned.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
-        self.image = Some(Image::from_reader_with_options(
+        self.image = Some(Image::from_reader(
             &mut self.value_reader,
             &directory,
             self.lenient,
@@ -1141,7 +1140,7 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn next_image(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
-        self.image = Some(Image::from_reader_with_options(
+        self.image = Some(Image::from_reader(
             &mut self.value_reader,
             &directory,
             self.lenient,
