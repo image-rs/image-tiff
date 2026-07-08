@@ -1,5 +1,12 @@
 # Version 0.12.0 (unreleased)
 
+Fixes:
+- Decoding a tiled image whose width is not a multiple of the tile width no
+  longer corrupts the columns below the right border tiles when extra samples
+  are discarded (e.g. RGB with an unspecified extra sample). The horizontal
+  tile padding was written past the end of the output row, spilling into the
+  leftmost columns of the following row.
+
 Additions:
 - Added the `TiffHeader` type. It can be used to create a `Decoder` in a state
   before the first IFD and allows opening files at an arbitrary first IFD
