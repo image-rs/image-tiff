@@ -34,6 +34,10 @@ criterion = "0.3.1"
 crc32fast = "1.5"
 libtest-mimic = "0.8.1"
 walkdir = "2.5"
+# Used directly by tests/lzw_missing_eoi.rs to build a synthetic LZW stream
+# with a deliberately omitted end-of-information code; version kept in sync
+# with the `weezl` entry in `[dependencies]`.
+weezl = "0.2.1"
 
 [features]
 default = ["deflate", "fax", "jpeg", "lzw"]

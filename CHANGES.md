@@ -17,6 +17,14 @@ Compatibility:
   from either StripOffsets or TileOffsets with the latter taking precedence.
   This is closer to the behavior of libtiff.
 
+Fixes:
+- LZW strips/tiles whose compressed stream ends without an explicit
+  end-of-information (EOI) code are now tolerated instead of failing with
+  "no lzw end code found", as long as all data implied by the strip/tile
+  geometry has been produced. This matches libtiff, which stops at the
+  expected output size regardless of a trailing EOI code. Genuinely
+  truncated streams still fail to decode.
+
 # Version 0.11.3
 
 Additions:

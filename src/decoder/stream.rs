@@ -170,6 +170,34 @@ impl<R: Read> Read for LZWReader<R> {
                     }
                 }
                 Ok(weezl::LzwStatus::NoProgress) => {
+                    // `NoProgress` means the decoder consumed all available input and
+                    // produced no new output this round (`consumed_out` is always `0`
+                    // here; see `weezl`'s own `LzwStatus::NoProgress` invariant). This
+                    // happens in two situations that are indistinguishable from here:
+                    //
+                    //   1. The stream is missing its end-of-information (EOI) code.
+                    //      Some encoders omit it on the final strip/tile of an image
+                    //      (see <https://github.com/image-rs/image-tiff/issues/395>
+                    //      for a real-world tiled LZW TIFF exhibiting this). libtiff
+                    //      does not require the EOI code: it decodes until the strip's
+                    //      known-in-advance output size is reached and stops there,
+                    //      regardless of whether an EOI code follows.
+                    //   2. The stream is genuinely truncated or corrupt and simply
+                    //      ends before producing all the data the caller expects.
+                    //
+                    // We cannot tell these apart locally, and deliberately don't try:
+                    // this is the same ambiguity libtiff accepts. Instead, treat
+                    // input exhaustion as a normal end-of-stream (`Ok(0)`) rather than
+                    // a hard error, the same way a well-formed EOI-terminated stream
+                    // would be reported once fully consumed. The caller (e.g.
+                    // `Read::read_exact`, driven by the strip/tile geometry that is
+                    // already known independently of this stream) still surfaces an
+                    // `UnexpectedEof` on its own if fewer bytes were actually produced
+                    // than expected, so case 2 above is still reported as an error --
+                    // just by the caller instead of by this reader.
+                    if self.reader.fill_buf()?.is_empty() {
+                        return Ok(0);
+                    }
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "no lzw end code found",
