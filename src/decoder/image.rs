@@ -1204,6 +1204,14 @@ impl Image {
                     scratch,
                 );
 
+                // An n-bit predictor delta is stored modulo 2^n, but the
+                // reconstruction above accumulated it in the promoted u16/u32
+                // storage width. Reduce back modulo the declared depth so both
+                // the inverted and non-inverted paths see exact, in-range
+                // values (2^n divides the storage modulus, so one mask after
+                // the row is exact).
+                super::mask_samples_to_bit_depth(out_row, tiff_bps, out_bps, self.sample_format);
+
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(out_row, color_type, self.sample_format)?;
                 }
@@ -1223,6 +1231,16 @@ impl Image {
                     scratch,
                 );
             }
+
+            // No-op in this branch: promoted layouts (declared depth < storage
+            // width) are handled exclusively by the unpacking branch above.
+            // Called in every integer branch so they cannot diverge.
+            super::mask_samples_to_bit_depth(
+                tile,
+                layout.tiff_bits_per_sample,
+                layout.output_bits_per_sample,
+                self.sample_format,
+            );
 
             if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                 super::invert_colors(tile, color_type, self.sample_format)?;
@@ -1250,6 +1268,8 @@ impl Image {
                     }
                     _ => unreachable!(),
                 }
+                // No masking here: the floating point predictor requires
+                // IEEEFP samples, which are never depth-promoted.
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
                     super::invert_colors(row, color_type, self.sample_format)?;
                 }
@@ -1277,6 +1297,16 @@ impl Image {
                     decompressed_byte_order,
                     predictor,
                     scratch,
+                );
+
+                // No-op in this branch: promoted layouts only occur in the
+                // unpacking branch. Called so the integer branches cannot
+                // diverge.
+                super::mask_samples_to_bit_depth(
+                    row,
+                    layout.tiff_bits_per_sample,
+                    layout.output_bits_per_sample,
+                    self.sample_format,
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
@@ -1319,6 +1349,16 @@ impl Image {
                     decompressed_byte_order,
                     predictor,
                     scratch,
+                );
+
+                // No-op in this branch: promoted layouts only occur in the
+                // unpacking branch. Called so the integer branches cannot
+                // diverge.
+                super::mask_samples_to_bit_depth(
+                    row,
+                    layout.tiff_bits_per_sample,
+                    layout.output_bits_per_sample,
+                    self.sample_format,
                 );
 
                 if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
