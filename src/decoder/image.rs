@@ -720,6 +720,8 @@ impl Image {
             )),
             #[cfg(feature = "zstd")]
             CompressionMethod::ZSTD => Box::new(zstd::Decoder::new(reader)?),
+            #[cfg(all(not(feature = "zstd"), feature = "zstd-safe-rust"))]
+            CompressionMethod::ZSTD => Box::new(zrip_decode::streaming::FrameDecoder::new(reader)),
             CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
             #[cfg(feature = "deflate")]
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
