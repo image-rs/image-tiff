@@ -1340,6 +1340,10 @@ impl Image {
             let photo_range = photometric_bit_end / 8..bits_per_pixel / 8;
             let mut encoded = vec![0u8; chunk_row_bytes];
             for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
+                // Clip to the chunk's data width: border chunks are stored at the full chunk
+                // width, and writing their horizontal padding would spill into the following
+                // output row (and predict/invert would run past the chunk's own columns).
+                let row = &mut row[..data_row_bytes];
                 reader.read_exact(&mut encoded)?;
 
                 Self::compact_photometric_bytes(&mut encoded, row, &photo_range);

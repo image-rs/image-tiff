@@ -476,6 +476,37 @@ fn test_tiled_rect_rgb_u8() {
 }
 
 #[test]
+fn test_tiled_extra_samples_border_u8() {
+    // Regression test for https://github.com/image-rs/image-tiff/issues/400
+    //
+    // A tiled image whose dimensions are not multiples of the tile size, with
+    // an extra sample that is discarded on decode. The horizontal padding of
+    // the right border tiles used to be written past the end of the output
+    // row, spilling into the leftmost columns of the following row. The
+    // fixture's tile padding is filled with 0xEE so any spill is visible.
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-extra-samples-border-u8.tif");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
+    assert_eq!(decoder.dimensions().unwrap(), (40, 40));
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+
+    let DecodingSampleBuffer::U8(data) = decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+
+    let mut expected = Vec::with_capacity(40 * 40 * 3);
+    for y in 0..40u32 {
+        for x in 0..40u32 {
+            expected.push(((x * 3) % 251) as u8);
+            expected.push(((y * 7) % 251) as u8);
+            expected.push(((x + y) % 251) as u8);
+        }
+    }
+    assert_eq!(data, expected);
+}
+
+#[test]
 fn test_inner_access() {
     let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-rect-rgb-u8.tif");
     let img_file = File::open(path).expect("Cannot find test image!");
