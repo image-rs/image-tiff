@@ -3,8 +3,8 @@ use std::io::{self, Read, Seek};
 use std::num::NonZeroUsize;
 
 use crate::tags::{
-    ByteOrder, IfdPointer, PlanarConfiguration, Predictor, SampleFormat, Tag, TiffVariant, Type,
-    ValueBuffer,
+    ByteOrder, IfdPointer, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
+    Tag, TiffVariant, Type, ValueBuffer,
 };
 use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -667,10 +667,30 @@ fn invert_colors(
 /// See libtiff's TIFFCIELabToXYZ for reference:
 /// https://gitlab.com/libtiff/libtiff/-/blob/master/libtiff/tif_color.c
 fn cielab_to_icclab(buf: &mut [u8]) {
-    for pixel in buf.chunks_exact_mut(3) {
-        pixel[1] = pixel[1].wrapping_add(128);
-        pixel[2] = pixel[2].wrapping_add(128);
+    for [_, a, b] in buf.as_chunks_mut::<3>().0 {
+        *a = a.wrapping_add(128);
+        *b = b.wrapping_add(128);
     }
+}
+
+/// Apply photometric-interpretation-specific post-processing to a decoded row.
+///
+/// Some interpretations need a fixup once the raw samples are in the output
+/// buffer: `WhiteIsZero` inverts intensities, and `CIELab` re-biases the signed
+/// a/b channels into the unsigned ICCLab encoding. These are mutually exclusive,
+/// so at most one applies to any given row.
+fn post_process_row(
+    buf: &mut [u8],
+    photometric_interpretation: PhotometricInterpretation,
+    color_type: ColorType,
+    sample_format: SampleFormat,
+) -> TiffResult<()> {
+    match photometric_interpretation {
+        PhotometricInterpretation::WhiteIsZero => invert_colors(buf, color_type, sample_format)?,
+        PhotometricInterpretation::CIELab => cielab_to_icclab(buf),
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Fix endianness. If `byte_order` matches the host, then conversion is a no-op.

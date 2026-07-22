@@ -1,7 +1,7 @@
 extern crate tiff;
 
 use tiff::decoder::{ifd, Decoder, DecodingSampleBuffer};
-use tiff::tags::{ByteOrder, Type};
+use tiff::tags::{ByteOrder, PhotometricInterpretation, Type};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -1063,7 +1063,7 @@ fn test_gray_u12_hpredict() {
 /// Build a minimal uncompressed TIFF in memory with the given photometric interpretation.
 /// Returns a 2x2 image with the provided pixel data as a single strip.
 fn build_raw_tiff(
-    photometric: u16,
+    photometric: PhotometricInterpretation,
     bits_per_sample: u16,
     samples_per_pixel: u16,
     pixel_data: &[u8],
@@ -1081,19 +1081,20 @@ fn build_raw_tiff(
     buf.extend_from_slice(&ifd_offset.to_le_bytes());
     buf.extend_from_slice(&num_tags.to_le_bytes());
 
-    // IFD entries (must be ascending tag order)
+    // IFD entries (must be ascending tag order). Tag IDs stay raw for the
+    // ascending-order property; the field type uses the `Type` enum.
     for &(tag, typ, value) in &[
-        (256u16, 3u16, width as u32),       // ImageWidth
-        (257, 3, height as u32),            // ImageLength
-        (258, 3, bits_per_sample as u32),   // BitsPerSample
-        (259, 3, 1),                        // Compression = None
-        (262, 3, photometric as u32),       // PhotometricInterpretation
-        (273, 4, strip_offset),             // StripOffsets
-        (277, 3, samples_per_pixel as u32), // SamplesPerPixel
-        (279, 4, pixel_data.len() as u32),  // StripByteCounts
+        (256u16, Type::SHORT, width as u32),             // ImageWidth
+        (257, Type::SHORT, height as u32),               // ImageLength
+        (258, Type::SHORT, bits_per_sample as u32),      // BitsPerSample
+        (259, Type::SHORT, 1),                           // Compression = None
+        (262, Type::SHORT, photometric.to_u16() as u32), // PhotometricInterpretation
+        (273, Type::LONG, strip_offset),                 // StripOffsets
+        (277, Type::SHORT, samples_per_pixel as u32),    // SamplesPerPixel
+        (279, Type::LONG, pixel_data.len() as u32),      // StripByteCounts
     ] {
         buf.extend_from_slice(&tag.to_le_bytes());
-        buf.extend_from_slice(&typ.to_le_bytes());
+        buf.extend_from_slice(&typ.to_u16().to_le_bytes());
         buf.extend_from_slice(&1u32.to_le_bytes());
         buf.extend_from_slice(&value.to_le_bytes());
     }
@@ -1106,7 +1107,12 @@ fn build_raw_tiff(
 #[test]
 fn test_transparency_mask() {
     // 2x2 mask: values 0, 255, 128, 64
-    let data = build_raw_tiff(4, 8, 1, &[0, 255, 128, 64]);
+    let data = build_raw_tiff(
+        PhotometricInterpretation::TransparencyMask,
+        8,
+        1,
+        &[0, 255, 128, 64],
+    );
     let mut decoder = Decoder::open(Cursor::new(&data)).unwrap();
     decoder.next_image().unwrap();
 
@@ -1140,7 +1146,7 @@ fn test_cielab_decode() {
         0, 128, 128, // pixel 3: L=0, a=-128 (as i8), b=-128 (as i8)
     ];
 
-    let data = build_raw_tiff(8, 8, 3, &pixels);
+    let data = build_raw_tiff(PhotometricInterpretation::CIELab, 8, 3, &pixels);
     let mut decoder = Decoder::open(Cursor::new(&data)).unwrap();
     decoder.next_image().unwrap();
 

@@ -592,16 +592,15 @@ impl Image {
                 )),
             },
             // CIE L*a*b* (TIFF6 Section 23, pp 110-115) encodes a/b as signed int8
-            // (-128..127) while ICC L*a*b* uses unsigned with +128 bias. For 8-bit we
-            // re-bias a/b during expand_chunk so callers see the same encoding as ICCLab.
+            // (-128..=127) while ICC L*a*b* (photometric=9) uses unsigned samples with
+            // a +128 bias. For 8-bit we re-bias a/b in post-processing (see
+            // `cielab_to_icclab`) so callers see the same encoding as ICCLab.
             //
-            // libtiff takes the same approach — accepts only 8-bit CIELab and converts
-            // without checking SampleFormat:
-            // https://libtiff.gitlab.io/libtiff/functions/TIFFcolor.html
-            // https://gitlab.com/libtiff/libtiff/-/blob/master/libtiff/tif_getimage.c
-            //
-            // 16-bit CIELab would need L=uint16 + a/b=int16, which SampleFormat can't
-            // express (it applies uniformly). libtiff doesn't support it either.
+            // Only 8-bit is accepted here. 16-bit CIELab is a valid format that libtiff
+            // does decode (`putcontig8bitCIELab16`, selected by `initCIELabConversion`
+            // in tif_getimage.c line 2216 @ 04884181e8903915038be553bfab404302d98ea0),
+            // but it uses L=uint16 with a/b=int16 — a mixed layout that `SampleFormat`,
+            // which applies uniformly to every sample, cannot express. Left as follow-up.
             PhotometricInterpretation::CIELab => match self.photometric_samples {
                 3 if matches!(self.bits_per_sample, 8) => Ok(ColorType::Lab(self.bits_per_sample)),
                 _ => Err(TiffError::UnsupportedError(
@@ -1202,12 +1201,12 @@ impl Image {
                     scratch,
                 );
 
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(out_row, color_type, self.sample_format)?;
-                }
-                if photometric_interpretation == PhotometricInterpretation::CIELab {
-                    super::cielab_to_icclab(out_row);
-                }
+                super::post_process_row(
+                    out_row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         } else if is_output_chunk_rows && is_all_bits {
             // Here we can read directly into the output buffer itself.
@@ -1225,12 +1224,12 @@ impl Image {
                 );
             }
 
-            if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                super::invert_colors(tile, color_type, self.sample_format)?;
-            }
-            if photometric_interpretation == PhotometricInterpretation::CIELab {
-                super::cielab_to_icclab(tile);
-            }
+            super::post_process_row(
+                tile,
+                photometric_interpretation,
+                color_type,
+                self.sample_format,
+            )?;
         } else if chunk_row_bytes > data_row_bytes && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
@@ -1254,12 +1253,12 @@ impl Image {
                     }
                     _ => unreachable!(),
                 }
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format)?;
-                }
-                if photometric_interpretation == PhotometricInterpretation::CIELab {
-                    super::cielab_to_icclab(row);
-                }
+                super::post_process_row(
+                    row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         } else if is_all_bits {
             // We read row-by-row but each row fits in its output buffer.
@@ -1286,12 +1285,12 @@ impl Image {
                     scratch,
                 );
 
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format)?;
-                }
-                if photometric_interpretation == PhotometricInterpretation::CIELab {
-                    super::cielab_to_icclab(row);
-                }
+                super::post_process_row(
+                    row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         } else {
             // The encoded data potentially takes up more space than the output data so we must be
@@ -1331,12 +1330,12 @@ impl Image {
                     scratch,
                 );
 
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format)?;
-                }
-                if photometric_interpretation == PhotometricInterpretation::CIELab {
-                    super::cielab_to_icclab(row);
-                }
+                super::post_process_row(
+                    row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         }
 
