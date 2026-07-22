@@ -16,7 +16,9 @@ macro_rules! test_image_sum {
         fn $name(file: &str, expected_type: ColorType, expected_sum: $sum_ty) {
             let path = PathBuf::from(TEST_IMAGE_DIR).join(file);
             let img_file = File::open(path).expect("Cannot find test image!");
-            let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+            let mut decoder = Decoder::open(img_file)
+                .expect("Cannot create decoder")
+                .with_lenient(true);
 
             decoder.next_image().expect("Cannot read image IFD");
             assert_eq!(decoder.colortype().unwrap(), expected_type);
@@ -825,7 +827,7 @@ fn test_predictor_3_gray_f32() {
 }
 
 #[test]
-#[cfg(feature = "zstd")]
+#[cfg(any(feature = "zstd", feature = "zstd-safe-rust"))]
 fn test_zstd_compression() {
     // gdal_translate -co COMPRESS=ZSTD -co ZSTD_LEVEL=20 int16.tif int16_zstd.tif
     test_image_sum_i16("int16_zstd.tif", ColorType::Gray(16), 354396);
@@ -975,7 +977,7 @@ fn extra_bits_gray() {
 
 #[test]
 fn extra_bits_rgb() {
-    test_image_sum_u8("extra_bits_rgb_8b.tiff", ColorType::RGB(8), 0);
+    test_image_sum_u8("extra_bits_rgb_8b.tiff", ColorType::RGBA(8), 64);
 }
 
 #[test]

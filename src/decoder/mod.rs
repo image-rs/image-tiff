@@ -257,6 +257,8 @@ pub struct Decoder<R> {
     /// Reusable scratch buffer for the floating-point predictor. Stored here so that the
     /// allocation persists across strips/tiles and images, avoiding per-row heap allocation.
     scratch: Vec<u8>,
+    /// Leniency flag that allows libtiff-like TIFF color interpretation behavior
+    lenient: bool,
 }
 
 /// All the information needed to read and interpret byte slices from the underlying file, i.e. to
@@ -566,6 +568,56 @@ fn fix_endianness_and_predict(
     }
 }
 
+/// Reduce promoted extended-depth samples (9–15 bits → `u16`, 17–31 bits →
+/// `u32`) modulo their declared bit depth, i.e. mask with `(1 << n) - 1`.
+///
+/// An n-bit horizontal-predicted sample stores its delta in exactly n bits,
+/// i.e. modulo `2^n`, so reconstruction is also defined modulo `2^n`. The
+/// predictor accumulates `prev + delta` in the promoted storage width
+/// (`u16`/`u32`, see `rev_hpredict_nsamp`); since `2^n` divides the storage
+/// modulus, masking once after the predictor yields exactly the mod-`2^n`
+/// value for every sample — including legitimate wrap-arounds (a 9-bit
+/// `511, 0` pair is stored as delta `1`, and `511 + 1 = 512` masks back to
+/// `0`). Masking also bounds any out-of-range sample in malformed input, so
+/// all downstream consumers (`invert_colors`' `max - v` and the non-inverted
+/// output path) see in-range values. For samples already in range it is a
+/// no-op.
+///
+/// This runs in every integer decode branch of `expand_chunk` so the
+/// branches cannot diverge. Outside the unpacking branch it reduces to the
+/// two guards below and touches nothing: promoted layouts (`declared <
+/// storage`) exist only there — standard depths have `declared == storage`,
+/// and sub-byte depths keep byte-granular storage.
+#[inline]
+fn mask_samples_to_bit_depth(
+    buf: &mut [u8],
+    declared_bits: u8,
+    storage_bits: u8,
+    sample_format: SampleFormat,
+) {
+    // Only unsigned samples are promoted with zero-extension; signed
+    // extended depths would need sign extension instead and are not
+    // supported by the unpacking path.
+    if sample_format != SampleFormat::Uint {
+        return;
+    }
+    match storage_bits {
+        16 if declared_bits < 16 => {
+            let mask = (1u16 << declared_bits) - 1;
+            for chunk in buf.as_chunks_mut::<2>().0 {
+                *chunk = (u16::from_ne_bytes(*chunk) & mask).to_ne_bytes();
+            }
+        }
+        32 if declared_bits < 32 => {
+            let mask = (1u32 << declared_bits) - 1;
+            for chunk in buf.as_chunks_mut::<4>().0 {
+                *chunk = (u32::from_ne_bytes(*chunk) & mask).to_ne_bytes();
+            }
+        }
+        _ => {}
+    }
+}
+
 fn invert_colors(
     buf: &mut [u8],
     color_type: ColorType,
@@ -664,8 +716,8 @@ fn invert_colors(
 /// CIELab (photometric=8) stores a/b as int8 where 0 is neutral.
 /// ICCLab (photometric=9) stores them as uint8 where 128 is neutral.
 /// Adding 128 (wrapping) converts between the two representations.
-/// See libtiff's TIFFCIELabToXYZ for reference:
-/// https://gitlab.com/libtiff/libtiff/-/blob/master/libtiff/tif_color.c
+/// See libtiff's `TIFFCIELabToXYZ` for reference (tif_color.c line 45
+/// @ 04884181e8903915038be553bfab404302d98ea0).
 fn cielab_to_icclab(buf: &mut [u8]) {
     for [_, a, b] in buf.as_chunks_mut::<3>().0 {
         *a = a.wrapping_add(128);
@@ -784,6 +836,7 @@ impl TiffHeader {
             seen_ifds: cycles::IfdCycles::new(),
             image: None,
             scratch: Vec::new(),
+            lenient: false,
         }
     }
 }
@@ -866,6 +919,15 @@ impl<R: Read + Seek> Decoder<R> {
         self
     }
 
+    /// Use a lenient decoder.
+    ///
+    /// Configuring this make the parser respect libtiff's behavior to maintain compatibility with
+    /// some older softwares (e.g. some old Adobe suite products).
+    pub fn with_lenient(mut self, lenient: bool) -> Decoder<R> {
+        self.lenient = lenient;
+        self
+    }
+
     // FIXME: this tuple would be a good candidate for a proxy, like IfdDecoder. That has been
     // requested in some form or another in a number of issues.
     #[expect(clippy::unnecessary_unwrap)] // Lifetimes would overlap due to return.
@@ -880,7 +942,7 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let image = Image::from_reader(&mut self.value_reader, &self.directory)?;
+        let image = Image::from_reader(&mut self.value_reader, &self.directory, self.lenient)?;
         Ok((
             self.image.insert(image),
             &mut self.value_reader,
@@ -1016,6 +1078,7 @@ impl<R: Read + Seek> Decoder<R> {
             current_ifd_pointer: self.current_ifd_pointer,
             image: core::mem::take(&mut self.image),
             scratch: core::mem::take(&mut self.scratch),
+            lenient: self.lenient,
         }
     }
 
@@ -1064,7 +1127,11 @@ impl<R: Read + Seek> Decoder<R> {
     /// error is returned.
     pub fn seek_to_image(&mut self, ifd_index: usize) -> TiffResult<()> {
         let (offset, directory) = self.find_nth_ifd(ifd_index)?;
-        self.image = Some(Image::from_reader(&mut self.value_reader, &directory)?);
+        self.image = Some(Image::from_reader(
+            &mut self.value_reader,
+            &directory,
+            self.lenient,
+        )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
         Ok(())
@@ -1157,7 +1224,11 @@ impl<R: Read + Seek> Decoder<R> {
     pub fn next_image(&mut self) -> TiffResult<()> {
         let next_ifd = self.directory.next();
         let (offset, directory) = self.read_chained_ifd(self.current_ifd_pointer, next_ifd)?;
-        self.image = Some(Image::from_reader(&mut self.value_reader, &directory)?);
+        self.image = Some(Image::from_reader(
+            &mut self.value_reader,
+            &directory,
+            self.lenient,
+        )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
         Ok(())

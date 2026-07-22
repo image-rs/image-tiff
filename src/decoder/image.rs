@@ -97,6 +97,7 @@ pub(crate) struct Image {
     /// run on samples directly and thus skip the outer byte order entirely, except potentially
     /// they have interior byte order treatment.
     pub decompression_to_host_endian: bool,
+    pub lenient: bool,
 }
 
 /// Describes how to read a tile-aligned portion of the image.
@@ -158,6 +159,7 @@ impl Image {
     pub fn from_reader<R: Read + Seek>(
         decoder: &mut ValueReader<R>,
         ifd: &Directory,
+        lenient: bool,
     ) -> TiffResult<Image> {
         let mut tag_reader = TagReader { decoder, ifd };
 
@@ -500,6 +502,7 @@ impl Image {
                 compression_method,
                 CompressionMethod::SgiLog | CompressionMethod::SgiLog24
             ),
+            lenient,
         })
     }
 
@@ -515,10 +518,13 @@ impl Image {
     }
 
     pub(crate) fn colortype(&self) -> TiffResult<ColorType> {
-        let is_alpha_extra_samples = matches!(
-            self.extra_samples.as_slice(),
-            [ExtraSamples::AssociatedAlpha, ..] | [ExtraSamples::UnassociatedAlpha, ..]
-        );
+        let is_alpha_extra_samples = match self.extra_samples.as_slice().first() {
+            Some(ExtraSamples::AssociatedAlpha) | Some(ExtraSamples::UnassociatedAlpha) => true,
+            // In lenient mode, keep unspecified alpha interpretation logic compatible with libtiff
+            // See Issue #341
+            Some(ExtraSamples::Unspecified) if self.lenient && self.samples > 3 => true,
+            _ => false,
+        };
 
         match self.photometric_interpretation {
             PhotometricInterpretation::RGB => match self.photometric_samples {
@@ -669,6 +675,12 @@ impl Image {
             PhotometricInterpretation::TransparencyMask => {
                 Ok(ColorType::Gray(self.bits_per_sample))
             }
+            PhotometricInterpretation::Unknown(_) => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::InterpretationWithBits(
+                    self.photometric_interpretation,
+                    vec![self.bits_per_sample; self.samples as usize],
+                ),
+            )),
         }
     }
 
@@ -715,6 +727,8 @@ impl Image {
             )),
             #[cfg(feature = "zstd")]
             CompressionMethod::ZSTD => Box::new(zstd::Decoder::new(reader)?),
+            #[cfg(all(not(feature = "zstd"), feature = "zstd-safe-rust"))]
+            CompressionMethod::ZSTD => Box::new(zrip_decode::streaming::FrameDecoder::new(reader)),
             CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
             #[cfg(feature = "deflate")]
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
@@ -1195,11 +1209,19 @@ impl Image {
                 super::fix_endianness_and_predict(
                     out_row,
                     color_type.bit_depth(),
-                    samples,
+                    data_samples,
                     ByteOrder::native(),
                     predictor,
                     scratch,
                 );
+
+                // An n-bit predictor delta is stored modulo 2^n, but the
+                // reconstruction above accumulated it in the promoted u16/u32
+                // storage width. Reduce back modulo the declared depth so both
+                // the inverted and non-inverted paths see exact, in-range
+                // values (2^n divides the storage modulus, so one mask after
+                // the row is exact).
+                super::mask_samples_to_bit_depth(out_row, tiff_bps, out_bps, self.sample_format);
 
                 super::post_process_row(
                     out_row,
@@ -1223,6 +1245,16 @@ impl Image {
                     scratch,
                 );
             }
+
+            // No-op in this branch: promoted layouts (declared depth < storage
+            // width) are handled exclusively by the unpacking branch above.
+            // Called in every integer branch so they cannot diverge.
+            super::mask_samples_to_bit_depth(
+                tile,
+                layout.tiff_bits_per_sample,
+                layout.output_bits_per_sample,
+                self.sample_format,
+            );
 
             super::post_process_row(
                 tile,
@@ -1253,6 +1285,8 @@ impl Image {
                     }
                     _ => unreachable!(),
                 }
+                // No masking here: the floating point predictor requires
+                // IEEEFP samples, which are never depth-promoted.
                 super::post_process_row(
                     row,
                     photometric_interpretation,
@@ -1283,6 +1317,16 @@ impl Image {
                     decompressed_byte_order,
                     predictor,
                     scratch,
+                );
+
+                // No-op in this branch: promoted layouts only occur in the
+                // unpacking branch. Called so the integer branches cannot
+                // diverge.
+                super::mask_samples_to_bit_depth(
+                    row,
+                    layout.tiff_bits_per_sample,
+                    layout.output_bits_per_sample,
+                    self.sample_format,
                 );
 
                 super::post_process_row(
@@ -1328,6 +1372,16 @@ impl Image {
                     decompressed_byte_order,
                     predictor,
                     scratch,
+                );
+
+                // No-op in this branch: promoted layouts only occur in the
+                // unpacking branch. Called so the integer branches cannot
+                // diverge.
+                super::mask_samples_to_bit_depth(
+                    row,
+                    layout.tiff_bits_per_sample,
+                    layout.output_bits_per_sample,
+                    self.sample_format,
                 );
 
                 super::post_process_row(
