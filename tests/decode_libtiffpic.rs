@@ -173,7 +173,7 @@ const FILES: &[(&str, Option<u32>)] = &[
     ("tests/libtiffpic/depth/genimages", None),
     ("tests/libtiffpic/depth/README.txt", None),
     ("tests/libtiffpic/depth/summary.txt", None),
-    ("tests/libtiffpic/dscf0013.tif", Some(0)), // unsupported YCbCr chroma subsampling
+    ("tests/libtiffpic/dscf0013.tif", Some(0x6896e83a)),
     ("tests/libtiffpic/fax2d.tif", Some(0xc2f30c6f)),
     // No support for direct CCITT Group 3 1D format
     ("tests/libtiffpic/g3test.g3", None),
@@ -193,11 +193,11 @@ const FILES: &[(&str, Option<u32>)] = &[
     ("tests/libtiffpic/quad-lzw.tif", Some(0)), // invalid LZW stream
     ("tests/libtiffpic/quad-tile.tif", Some(0x6055f9ee)),
     ("tests/libtiffpic/README", None),
-    ("tests/libtiffpic/smallliz.tif", Some(0)), // unsupported YCbCr chroma subsampling
+    ("tests/libtiffpic/smallliz.tif", Some(0)), // unsupported Old JPEG compression (type 6)
     ("tests/libtiffpic/strike.tif", Some(0x016b0f6a)),
     ("tests/libtiffpic/text.tif", Some(0)), // unsupported compression
-    ("tests/libtiffpic/ycbcr-cat.tif", Some(0)), // unsupported YCbCr chroma subsampling
-    ("tests/libtiffpic/zackthecat.tif", Some(0)), // unsupported YCbCr chroma subsampling
+    ("tests/libtiffpic/ycbcr-cat.tif", Some(0x388a9d8f)),
+    ("tests/libtiffpic/zackthecat.tif", Some(0)), // unsupported Old JPEG compression (type 6)
 ];
 
 fn main() {

@@ -510,6 +510,90 @@ impl Read for Group3Reader {
     }
 }
 
+/// Converts YCbCr data from chroma-subsampled block layout to full-resolution
+/// 3-bytes-per-pixel YCbCr output. Each block of h×v pixels stores h*v Y samples
+/// plus one shared Cb and one shared Cr sample. This reader expands those into
+/// per-pixel (Y, Cb, Cr) triples.
+pub struct YCbCrUpsamplingReader<R: Read> {
+    reader: R,
+    width: u32,
+    horiz_sub: u32,
+    vert_sub: u32,
+    height: u32,
+    current_row: u32,
+    output_buf: io::Cursor<Vec<u8>>,
+}
+
+impl<R: Read> YCbCrUpsamplingReader<R> {
+    pub fn new(reader: R, dimensions: (u32, u32), chroma: (u16, u16)) -> Self {
+        Self {
+            reader,
+            width: dimensions.0,
+            horiz_sub: u32::from(chroma.0),
+            vert_sub: u32::from(chroma.1),
+            height: dimensions.1,
+            current_row: 0,
+            output_buf: io::Cursor::new(Vec::new()),
+        }
+    }
+}
+
+impl<R: Read> Read for YCbCrUpsamplingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // If output buffer is exhausted, decode next block row
+        if self.output_buf.position() as usize >= self.output_buf.get_ref().len() {
+            if self.current_row >= self.height {
+                return Ok(0);
+            }
+
+            let h = self.horiz_sub;
+            let v = self.vert_sub;
+            let blocks_across = self.width.div_ceil(h);
+            let block_size = (h * v + 2) as usize;
+            let block_row_bytes = blocks_across as usize * block_size;
+
+            let rows_in_block = v.min(self.height - self.current_row) as usize;
+
+            let mut subsampled = vec![0u8; block_row_bytes];
+            self.reader.read_exact(&mut subsampled)?;
+
+            let output_row_bytes = self.width as usize * 3;
+            let output = self.output_buf.get_mut();
+            output.clear();
+            output.resize(rows_in_block * output_row_bytes, 0);
+
+            let mut src_offset = 0;
+            for bx in 0..blocks_across {
+                let x0 = (bx * h) as usize;
+
+                let y_samples = &subsampled[src_offset..src_offset + (h * v) as usize];
+                let cb = subsampled[src_offset + (h * v) as usize];
+                let cr = subsampled[src_offset + (h * v) as usize + 1];
+                src_offset += block_size;
+
+                for dy in 0..rows_in_block {
+                    for dx in 0..h as usize {
+                        let x = x0 + dx;
+                        if x >= self.width as usize {
+                            break;
+                        }
+                        let y_val = y_samples[dy * h as usize + dx];
+                        let pixel_offset = dy * output_row_bytes + x * 3;
+                        output[pixel_offset] = y_val;
+                        output[pixel_offset + 1] = cb;
+                        output[pixel_offset + 2] = cr;
+                    }
+                }
+            }
+
+            self.current_row += v;
+            self.output_buf.set_position(0);
+        }
+
+        self.output_buf.read(buf)
+    }
+}
+
 #[cfg(feature = "webp")]
 pub struct WebPReader {
     inner: Cursor<Vec<u8>>,
@@ -588,5 +672,114 @@ mod test {
             0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
         ];
         assert_eq!(decoded, expected);
+    }
+
+    fn mcu_block(y: &[u8], cb: u8, cr: u8) -> Vec<u8> {
+        let mut v = y.to_vec();
+        v.push(cb);
+        v.push(cr);
+        v
+    }
+
+    fn upsample(input: Vec<u8>, dims: (u32, u32), chroma: (u16, u16)) -> Vec<u8> {
+        let mut reader = YCbCrUpsamplingReader::new(io::Cursor::new(input), dims, chroma);
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn ycbcr_upsample_2x2() {
+        let mut input = Vec::new();
+        input.extend(mcu_block(&[10, 11, 12, 13], 100, 200));
+        input.extend(mcu_block(&[20, 21, 22, 23], 110, 210));
+        input.extend(mcu_block(&[30, 31, 32, 33], 120, 220));
+        input.extend(mcu_block(&[40, 41, 42, 43], 130, 230));
+
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            10,100,200, 11,100,200, 20,110,210, 21,110,210,
+            12,100,200, 13,100,200, 22,110,210, 23,110,210,
+            30,120,220, 31,120,220, 40,130,230, 41,130,230,
+            32,120,220, 33,120,220, 42,130,230, 43,130,230,
+        ];
+        assert_eq!(upsample(input, (4, 4), (2, 2)), expected);
+    }
+
+    #[test]
+    fn ycbcr_upsample_2x1_horizontal_only() {
+        let mut input = Vec::new();
+        input.extend(mcu_block(&[10, 11], 100, 200));
+        input.extend(mcu_block(&[20, 21], 110, 210));
+        input.extend(mcu_block(&[30, 31], 120, 220));
+        input.extend(mcu_block(&[40, 41], 130, 230));
+
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            10,100,200, 11,100,200, 20,110,210, 21,110,210,
+            30,120,220, 31,120,220, 40,130,230, 41,130,230,
+        ];
+        assert_eq!(upsample(input, (4, 2), (2, 1)), expected);
+    }
+
+    #[test]
+    fn ycbcr_upsample_1x2_vertical_only() {
+        let mut input = Vec::new();
+        input.extend(mcu_block(&[10, 11], 100, 200));
+        input.extend(mcu_block(&[20, 21], 110, 210));
+        input.extend(mcu_block(&[30, 31], 120, 220));
+        input.extend(mcu_block(&[40, 41], 130, 230));
+
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            10,100,200, 20,110,210,
+            11,100,200, 21,110,210,
+            30,120,220, 40,130,230,
+            31,120,220, 41,130,230,
+        ];
+        assert_eq!(upsample(input, (2, 4), (1, 2)), expected);
+    }
+
+    #[test]
+    fn ycbcr_upsample_4x4() {
+        let y: Vec<u8> = (0u8..16).collect();
+        let input = mcu_block(&y, 128, 64);
+
+        let mut expected = Vec::with_capacity(48);
+        for yi in &y {
+            expected.push(*yi);
+            expected.push(128);
+            expected.push(64);
+        }
+        assert_eq!(upsample(input, (4, 4), (4, 4)), expected);
+    }
+
+    #[test]
+    fn ycbcr_upsample_nondivisible_width() {
+        let mut input = Vec::new();
+        input.extend(mcu_block(&[10, 11, 12, 13], 100, 200));
+        input.extend(mcu_block(&[20, 21, 22, 23], 110, 210));
+
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            10,100,200, 11,100,200, 20,110,210,
+            12,100,200, 13,100,200, 22,110,210,
+        ];
+        assert_eq!(upsample(input, (3, 2), (2, 2)), expected);
+    }
+
+    #[test]
+    fn ycbcr_upsample_nondivisible_height() {
+        let mut input = Vec::new();
+        input.extend(mcu_block(&[10, 11, 12, 13], 100, 200));
+        input.extend(mcu_block(&[20, 21, 22, 23], 110, 210));
+
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            10,100,200, 11,100,200,
+            12,100,200, 13,100,200,
+            20,110,210, 21,110,210,
+        ];
+        assert_eq!(upsample(input, (2, 3), (2, 2)), expected);
     }
 }
