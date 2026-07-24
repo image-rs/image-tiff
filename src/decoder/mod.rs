@@ -3,8 +3,8 @@ use std::io::{self, Read, Seek};
 use std::num::NonZeroUsize;
 
 use crate::tags::{
-    ByteOrder, IfdPointer, PlanarConfiguration, Predictor, SampleFormat, Tag, TiffVariant, Type,
-    ValueBuffer,
+    ByteOrder, IfdPointer, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat,
+    Tag, TiffVariant, Type, ValueBuffer,
 };
 use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
@@ -708,6 +708,40 @@ fn invert_colors(
         }
     }
 
+    Ok(())
+}
+
+/// Re-bias CIE L*a*b* a/b channels from signed to unsigned encoding.
+///
+/// CIELab (photometric=8) stores a/b as int8 where 0 is neutral.
+/// ICCLab (photometric=9) stores them as uint8 where 128 is neutral.
+/// Adding 128 (wrapping) converts between the two representations.
+/// See libtiff's `TIFFCIELabToXYZ` for reference (tif_color.c line 45
+/// @ 04884181e8903915038be553bfab404302d98ea0).
+fn cielab_to_icclab(buf: &mut [u8]) {
+    for [_, a, b] in buf.as_chunks_mut::<3>().0 {
+        *a = a.wrapping_add(128);
+        *b = b.wrapping_add(128);
+    }
+}
+
+/// Apply photometric-interpretation-specific post-processing to a decoded row.
+///
+/// Some interpretations need a fixup once the raw samples are in the output
+/// buffer: `WhiteIsZero` inverts intensities, and `CIELab` re-biases the signed
+/// a/b channels into the unsigned ICCLab encoding. These are mutually exclusive,
+/// so at most one applies to any given row.
+fn post_process_row(
+    buf: &mut [u8],
+    photometric_interpretation: PhotometricInterpretation,
+    color_type: ColorType,
+    sample_format: SampleFormat,
+) -> TiffResult<()> {
+    match photometric_interpretation {
+        PhotometricInterpretation::WhiteIsZero => invert_colors(buf, color_type, sample_format)?,
+        PhotometricInterpretation::CIELab => cielab_to_icclab(buf),
+        _ => {}
+    }
     Ok(())
 }
 

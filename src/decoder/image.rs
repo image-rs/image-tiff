@@ -597,20 +597,25 @@ impl Image {
                     ),
                 )),
             },
-            // Unsupported due to inherently heterogeneous sample types. This is represented as:
-            // ```
-            // struct TiffLab /* Interpretation 8* {
-            //     pub L: u8, // SampleFormat::Uint
-            //     pub a: i8, // SampleFormat::Int
-            //     pub b: i8, // SampleFormat::Int
-            // }
-            // ```
-            PhotometricInterpretation::CIELab => Err(TiffError::UnsupportedError(
-                TiffUnsupportedError::InterpretationWithBits(
-                    PhotometricInterpretation::CIELab,
-                    vec![self.bits_per_sample; self.samples as usize],
-                ),
-            )),
+            // CIE L*a*b* (TIFF6 Section 23, pp 110-115) encodes a/b as signed int8
+            // (-128..=127) while ICC L*a*b* (photometric=9) uses unsigned samples with
+            // a +128 bias. For 8-bit we re-bias a/b in post-processing (see
+            // `cielab_to_icclab`) so callers see the same encoding as ICCLab.
+            //
+            // Only 8-bit is accepted here. 16-bit CIELab is a valid format that libtiff
+            // does decode (`putcontig8bitCIELab16`, selected by `initCIELabConversion`
+            // in tif_getimage.c line 2216 @ 04884181e8903915038be553bfab404302d98ea0),
+            // but it uses L=uint16 with a/b=int16 — a mixed layout that `SampleFormat`,
+            // which applies uniformly to every sample, cannot express. Left as follow-up.
+            PhotometricInterpretation::CIELab => match self.photometric_samples {
+                3 if matches!(self.bits_per_sample, 8) => Ok(ColorType::Lab(self.bits_per_sample)),
+                _ => Err(TiffError::UnsupportedError(
+                    TiffUnsupportedError::InterpretationWithBits(
+                        PhotometricInterpretation::CIELab,
+                        vec![self.bits_per_sample; self.samples as usize],
+                    ),
+                )),
+            },
             PhotometricInterpretation::CIELogL => match self.samples {
                 1 if matches!(self.bits_per_sample, 32)
                     && matches!(self.sample_format, SampleFormat::IEEEFP) =>
@@ -666,14 +671,16 @@ impl Image {
                 ),
             )),
             PhotometricInterpretation::RGBPalette => Ok(ColorType::Palette(self.bits_per_sample)),
-            PhotometricInterpretation::TransparencyMask | PhotometricInterpretation::Unknown(_) => {
-                Err(TiffError::UnsupportedError(
-                    TiffUnsupportedError::InterpretationWithBits(
-                        self.photometric_interpretation,
-                        vec![self.bits_per_sample; self.samples as usize],
-                    ),
-                ))
+            // TransparencyMask is a single-channel mask, treat as grayscale.
+            PhotometricInterpretation::TransparencyMask => {
+                Ok(ColorType::Gray(self.bits_per_sample))
             }
+            PhotometricInterpretation::Unknown(_) => Err(TiffError::UnsupportedError(
+                TiffUnsupportedError::InterpretationWithBits(
+                    self.photometric_interpretation,
+                    vec![self.bits_per_sample; self.samples as usize],
+                ),
+            )),
         }
     }
 
@@ -1046,6 +1053,7 @@ impl Image {
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
             | ColorType::Palette(n)
+            | ColorType::Lab(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,
@@ -1057,6 +1065,7 @@ impl Image {
             | ColorType::YCbCr(n)
             | ColorType::Gray(n)
             | ColorType::Palette(n)
+            | ColorType::Lab(n)
             | ColorType::Multiband {
                 bit_depth: n,
                 num_samples: _,
@@ -1214,9 +1223,12 @@ impl Image {
                 // the row is exact).
                 super::mask_samples_to_bit_depth(out_row, tiff_bps, out_bps, self.sample_format);
 
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(out_row, color_type, self.sample_format)?;
-                }
+                super::post_process_row(
+                    out_row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         } else if is_output_chunk_rows && is_all_bits {
             // Here we can read directly into the output buffer itself.
@@ -1244,9 +1256,12 @@ impl Image {
                 self.sample_format,
             );
 
-            if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                super::invert_colors(tile, color_type, self.sample_format)?;
-            }
+            super::post_process_row(
+                tile,
+                photometric_interpretation,
+                color_type,
+                self.sample_format,
+            )?;
         } else if chunk_row_bytes > data_row_bytes && self.predictor == Predictor::FloatingPoint {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
@@ -1272,9 +1287,12 @@ impl Image {
                 }
                 // No masking here: the floating point predictor requires
                 // IEEEFP samples, which are never depth-promoted.
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format)?;
-                }
+                super::post_process_row(
+                    row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         } else if is_all_bits {
             // We read row-by-row but each row fits in its output buffer.
@@ -1311,9 +1329,12 @@ impl Image {
                     self.sample_format,
                 );
 
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format)?;
-                }
+                super::post_process_row(
+                    row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         } else {
             // The encoded data potentially takes up more space than the output data so we must be
@@ -1363,9 +1384,12 @@ impl Image {
                     self.sample_format,
                 );
 
-                if photometric_interpretation == PhotometricInterpretation::WhiteIsZero {
-                    super::invert_colors(row, color_type, self.sample_format)?;
-                }
+                super::post_process_row(
+                    row,
+                    photometric_interpretation,
+                    color_type,
+                    self.sample_format,
+                )?;
             }
         }
 
