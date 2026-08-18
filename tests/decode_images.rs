@@ -507,6 +507,40 @@ fn test_tiled_extra_samples_border_u8() {
 }
 
 #[test]
+fn test_tiled_planar_rgb_u8() {
+    // Regression test for https://github.com/image-rs/image-tiff/issues/403
+    //
+    // A tiled image with PlanarConfiguration=2 (separate planes) whose plane
+    // grid has more than one tile row/column. Decoding through the multi-plane
+    // API used to panic in `Image::expand_chunk`. `TileAttributes::get_padding`
+    // derived a tile's row/column from the *global* chunk index, which for
+    // planes past the first already includes the per-plane offset
+    // (`chunk + idx * chunks_per_plane`). Bottom-edge tiles of those planes
+    // were therefore not recognized as edges, the tile height was left
+    // unclamped, and the output-buffer size assertion in `expand_chunk` failed.
+    // `read_image` reads only plane 0 and so never hit this.
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-planar-rgb-u8.tif");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
+    assert_eq!(decoder.dimensions().unwrap(), (24, 24));
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+
+    // The multi-plane API reads every plane; this is the path that panicked.
+    let mut result = DecodingSampleBuffer::U8(vec![]);
+    decoder
+        .read_image_to_buffer(&mut result)
+        .expect("Decoding a tiled planar image must not panic or fail");
+
+    let DecodingSampleBuffer::U8(data) = result else {
+        panic!("Wrong bit depth")
+    };
+    // 3 samples of 24x24, all zeros in the fixture.
+    assert_eq!(data.len(), 3 * 24 * 24);
+    assert!(data.iter().all(|&b| b == 0));
+}
+
+#[test]
 fn test_inner_access() {
     let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-rect-rgb-u8.tif");
     let img_file = File::open(path).expect("Cannot find test image!");

@@ -43,6 +43,8 @@ impl TileAttributes {
         (self.tile_length - self.image_height % self.tile_length) % self.tile_length
     }
     pub fn get_padding(&self, tile: usize) -> (usize, usize) {
+        // Callers pass a global chunk index; reduce it to the plane-relative grid.
+        let tile = tile % (self.tiles_across() * self.tiles_down());
         let row = tile / self.tiles_across();
         let column = tile % self.tiles_across();
 
