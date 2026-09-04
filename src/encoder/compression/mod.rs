@@ -3,6 +3,8 @@ use std::io::{self, Write};
 
 #[cfg(feature = "deflate")]
 mod deflate;
+#[cfg(feature = "fax")]
+mod huffman;
 #[cfg(feature = "lzw")]
 mod lzw;
 mod packbits;
@@ -15,6 +17,9 @@ pub use self::deflate::Deflate;
 pub use self::lzw::Lzw;
 
 pub use self::packbits::Packbits;
+
+#[cfg(feature = "fax")]
+pub use self::huffman::Huffman;
 pub use self::uncompressed::Uncompressed;
 
 /// An algorithm used for compression
@@ -42,6 +47,8 @@ pub enum Compressor {
     #[cfg(feature = "deflate")]
     Deflate(Deflate),
     Packbits(Packbits),
+    #[cfg(feature = "fax")]
+    Huffman(Huffman),
 }
 
 impl Default for Compressor {
@@ -60,6 +67,8 @@ impl CompressionAlgorithm for Compressor {
             #[cfg(feature = "deflate")]
             Compressor::Deflate(algorithm) => algorithm.write_to(writer, bytes),
             Compressor::Packbits(algorithm) => algorithm.write_to(writer, bytes),
+            #[cfg(feature = "fax")]
+            Compressor::Huffman(algorithm) => algorithm.write_to(writer, bytes),
         }
     }
 }

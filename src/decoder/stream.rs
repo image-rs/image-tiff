@@ -1,4 +1,6 @@
 //! All IO functionality needed for TIFF decoding
+#[cfg(feature = "fax")]
+use fax34::BitReader as _;
 #[cfg(feature = "webp")]
 use std::io::Cursor;
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
@@ -583,6 +585,158 @@ impl Read for WebPReader {
     }
 }
 
+/// The fax lookup tables may peek past EOF, but must never consume those bits.
+#[cfg(feature = "fax")]
+struct HuffmanBitReader {
+    inner: OwnedBitReader,
+    remaining: u64,
+}
+
+#[cfg(feature = "fax")]
+impl fax34::BitReader for HuffmanBitReader {
+    type Error = io::Error;
+
+    fn peek(&self, bits: u8) -> Option<u16> {
+        self.inner.peek(bits)
+    }
+
+    fn consume(&mut self, bits: u8) -> io::Result<()> {
+        self.remaining = self.remaining.checked_sub(u64::from(bits)).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::UnexpectedEof, "Truncated Huffman code")
+        })?;
+        // The owning byte iterator is infallible.
+        match self.inner.consume(bits) {
+            Ok(()) => Ok(()),
+            Err(never) => match never {},
+        }
+    }
+
+    fn bits_to_byte_boundary(&self) -> u8 {
+        self.inner.bits_to_byte_boundary()
+    }
+}
+
+/// Decodes TIFF Compression=2 (CCITT 1D modified Huffman RLE) line by line.
+///
+/// Unlike Group 3, rows carry no EOL codes and each row begins on a byte
+/// boundary, so decoding stops at the line width and the reader skips to the
+/// next byte after every row.
+#[cfg(feature = "fax")]
+pub struct HuffmanReader {
+    reader: HuffmanBitReader,
+    line_buf: io::Cursor<Vec<u8>>,
+    height: u32,
+    width: u16,
+    y: u32,
+}
+
+#[cfg(feature = "fax")]
+impl HuffmanReader {
+    pub fn new<R: Read>(
+        dimensions: (u32, u32),
+        reader: R,
+        compressed_length: u64,
+        fill_order: u16,
+    ) -> crate::TiffResult<Self> {
+        let width = u16::try_from(dimensions.0)?;
+        let height = dimensions.1;
+
+        // Buffer all compressed data and apply FillOrder bit reversal
+        let compressed_len = usize::try_from(compressed_length)?;
+        let padded_len = compressed_len
+            .checked_add(2)
+            .ok_or(crate::TiffError::LimitsExceeded)?;
+        let mut compressed = vec![0u8; padded_len];
+        reader
+            .take(compressed_length)
+            .read_exact(&mut compressed[..compressed_len])?;
+        if fill_order == 2 {
+            for b in &mut compressed[..compressed_len] {
+                *b = b.reverse_bits();
+            }
+        }
+
+        // The table lookups peek a full LUT width (up to 13 bits), which fails
+        // on fewer remaining bits even when the next code itself is shorter.
+        // Permit lookahead into zero padding, but track the actual length so
+        // HuffmanBitReader rejects codes that consume synthetic bits.
+        let remaining = compressed_length
+            .checked_mul(8)
+            .ok_or(crate::TiffError::LimitsExceeded)?;
+
+        // Create an owning bit reader (Vec consumed by into_iter, no borrow issues)
+        let map_fn: fn(u8) -> Result<u8, std::convert::Infallible> = Ok;
+        let bit_reader = fax34::ByteReader::new(compressed.into_iter().map(map_fn)).unwrap();
+
+        Ok(Self {
+            reader: HuffmanBitReader {
+                inner: bit_reader,
+                remaining,
+            },
+            line_buf: io::Cursor::new(Vec::with_capacity(usize::from(width).div_ceil(8))),
+            width,
+            height,
+            y: 0,
+        })
+    }
+}
+
+#[cfg(feature = "fax")]
+impl Read for HuffmanReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.line_buf.position() as usize == self.line_buf.get_ref().len()
+            && self.y < self.height
+        {
+            // Decode one line of alternating white/black run-lengths;
+            // stop at the line width so row padding bits are never consumed
+            let bytes_per_line = usize::from(self.width).div_ceil(8);
+            // Keep partial output unreadable if decoding this row fails.
+            self.line_buf.set_position(bytes_per_line as u64);
+            let buffer = self.line_buf.get_mut();
+            buffer.clear();
+            buffer.resize(bytes_per_line, 0);
+
+            let mut a0 = 0u16;
+            let mut is_white = true;
+            while a0 < self.width {
+                let run = if is_white {
+                    Group3Reader::with_markup(fax34::maps::white::decode, &mut self.reader)
+                } else {
+                    Group3Reader::with_markup(fax34::maps::black::decode, &mut self.reader)
+                };
+                let len = run.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Invalid or truncated Huffman run",
+                    )
+                })?;
+                let end = a0
+                    .checked_add(len)
+                    .filter(|&end| end <= self.width)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "Huffman run exceeds row width")
+                    })?;
+                if !is_white {
+                    for pixel in usize::from(a0)..usize::from(end) {
+                        buffer[pixel / 8] |= 1 << (7 - pixel % 8);
+                    }
+                }
+                a0 = end;
+                is_white = !is_white;
+            }
+
+            let padding = self.reader.bits_to_byte_boundary();
+            self.reader.consume(padding)?;
+
+            self.y += 1;
+
+            self.line_buf.set_position(0);
+        }
+
+        self.line_buf.read(buf)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -606,5 +760,129 @@ mod test {
             0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
         ];
         assert_eq!(decoded, expected);
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn test_huffman_reader() {
+        // Two CCITT 1D rows of 16 pixels: white(4)=1011, black(4)=011,
+        // white(8)=10011, each row padded to a byte boundary
+        let encoded = vec![0xB7, 0x30, 0xB7, 0x30];
+        let encoded_len = encoded.len();
+
+        let buff = io::Cursor::new(encoded);
+        let mut decoder = HuffmanReader::new((16, 2), buff, encoded_len as u64, 1).unwrap();
+
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded).unwrap();
+
+        let expected = vec![0x0F, 0x00, 0x0F, 0x00];
+        assert_eq!(decoded, expected);
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn test_huffman_reader_makeup_run() {
+        // One CCITT 1D row of 80 pixels via makeup code:
+        // white(64)=11011 + white(16)=101010, padded to a byte boundary
+        let encoded = vec![0xDD, 0x40];
+        let encoded_len = encoded.len();
+
+        let buff = io::Cursor::new(encoded);
+        let mut decoder = HuffmanReader::new((80, 1), buff, encoded_len as u64, 1).unwrap();
+
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded).unwrap();
+
+        let expected = vec![0u8; 10];
+        assert_eq!(decoded, expected);
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn test_huffman_reader_fill_order_2() {
+        // Same row as test_huffman_reader with bits of each byte reversed
+        let encoded = vec![0xED, 0x0C];
+        let encoded_len = encoded.len();
+
+        let buff = io::Cursor::new(encoded);
+        let mut decoder = HuffmanReader::new((16, 1), buff, encoded_len as u64, 2).unwrap();
+
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded).unwrap();
+
+        let expected = vec![0x0F, 0x00];
+        assert_eq!(decoded, expected);
+    }
+
+    /// Compress with the encoder, one strip per row, then decode.
+    #[cfg(feature = "fax")]
+    fn huffman_roundtrip(dimensions: (u32, u32), data: &[u8]) -> Vec<u8> {
+        use crate::encoder::compression::{CompressionAlgorithm, Huffman};
+
+        let bytes_per_row = usize::try_from(dimensions.0).unwrap().div_ceil(8);
+        let mut compressed = Vec::new();
+        for row in data.chunks(bytes_per_row) {
+            let mut out = io::Cursor::new(Vec::new());
+            Huffman::new(dimensions.0).write_to(&mut out, row).unwrap();
+            compressed.extend_from_slice(&out.into_inner());
+        }
+        let compressed_len = compressed.len();
+
+        let buff = io::Cursor::new(compressed);
+        let mut decoder = HuffmanReader::new(dimensions, buff, compressed_len as u64, 1).unwrap();
+
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded).unwrap();
+        decoded
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn test_huffman_roundtrip() {
+        assert_eq!(huffman_roundtrip((16, 1), &[0xAA, 0x55]), vec![0xAA, 0x55]);
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn test_huffman_roundtrip_partial_byte_row() {
+        // Width 5 with three rows. Only the width pixels belong to the image,
+        // so the padding bits in each row's last byte decode as zeros:
+        // 0xF0 -> 11110___, 0x0F -> 00001___, 0xFF -> 11111___
+        assert_eq!(
+            huffman_roundtrip((5, 3), &[0xF0, 0x0F, 0xFF]),
+            vec![0xF0, 0x08, 0xF8]
+        );
+    }
+    #[cfg(feature = "fax")]
+    #[test]
+    fn huffman_reuses_row_buffer_without_leaking_previous_bits() {
+        // Alternating pixels, all zero, all one, then an unaligned black run.
+        assert_eq!(
+            huffman_roundtrip((9, 4), &[0xAA, 0x80, 0, 0, 0xFF, 0x80, 0x3C, 0]),
+            [0xAA, 0x80, 0, 0, 0xFF, 0x80, 0x3C, 0]
+        );
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn huffman_rejects_invalid_rows() {
+        for (width, data) in [
+            (8, vec![]),
+            (8, vec![0]),
+            (8, vec![0x35]),
+            (5, vec![0x35, 0x14]),
+            (80, vec![0xDD]),
+            (13, vec![0xB1]),
+        ] {
+            let mut reader =
+                HuffmanReader::new((width, 1), io::Cursor::new(&data), data.len() as u64, 1)
+                    .unwrap();
+            let mut output = Vec::new();
+            assert!(
+                reader.read_to_end(&mut output).is_err(),
+                "accepted {data:?} at width {width}"
+            );
+        }
     }
 }

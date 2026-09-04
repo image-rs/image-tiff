@@ -11,6 +11,12 @@ Additions:
 - Added the `TiffHeader` type. It can be used to create a `Decoder` in a state
   before the first IFD and allows opening files at an arbitrary first IFD
   offset rather than one indicated by an encoded header at the start.
+- Added support for CCITT 1D modified Huffman compression
+  (`Compression = 2`) under the `fax` feature flag (default: on), for both
+  decoding and encoding.
+- Added the `colortype::Gray1` color type for encoding bilevel images as
+  bit-packed rows (`width.div_ceil(8)` bytes per row). It can be combined
+  with any compression, e.g. CCITT 1D modified Huffman.
 
 Changes:
 - The IFD iteration methods on `Decoder` (`next_image`, `seek_to_image`, etc)

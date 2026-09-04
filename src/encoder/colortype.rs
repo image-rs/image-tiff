@@ -140,6 +140,30 @@ pub trait ColorType {
     fn floating_point_predict(row: &[Self::Inner], result: &mut Vec<u8>);
 }
 
+/// 1-bit grayscale (bilevel) data.
+///
+/// The caller provides bit-packed rows: each row occupies
+/// `width.div_ceil(8)` bytes with the leftmost pixel in the most significant
+/// bit; 0 encodes black and 1 encodes white. Data slices passed to
+/// [`TiffEncoder::write_image`] and [`ImageEncoder::write_data`] must hold
+/// `width.div_ceil(8) * height` bytes. Predictors are not available for this
+/// colortype.
+pub struct Gray1;
+impl ColorType for Gray1 {
+    type Inner = u8;
+    const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::BlackIsZero;
+    const BITS_PER_SAMPLE: &'static [u16] = &[1];
+    const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint];
+
+    fn horizontal_predict(_: &[u8], _: &mut Vec<u8>) {
+        unreachable!("horizontal predictor is not valid for bit-packed colortypes")
+    }
+
+    fn floating_point_predict(_: &[u8], _: &mut Vec<u8>) {
+        unreachable!("floating-point predictor is only valid for floating-point sample types")
+    }
+}
+
 pub struct Gray8;
 impl ColorType for Gray8 {
     type Inner = u8;

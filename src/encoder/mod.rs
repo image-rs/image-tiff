@@ -59,6 +59,12 @@ pub enum Compression {
     Deflate(u8),
     /// [PackBits](https://en.wikipedia.org/wiki/PackBits) compression, a variant of RLE compression scheme. Fast, primitive compression with a poor compression ratio.
     Packbits,
+    /// CCITT Group 3 1-dimensional modified Huffman run-length encoding (TIFF `Compression = 2`).
+    ///
+    /// Requires 1-bit unsigned grayscale data. Each strip holds exactly one row;
+    /// bits beyond the image width in the final input byte are ignored.
+    #[cfg(feature = "fax")]
+    Huffman,
 }
 
 impl Compression {
@@ -69,17 +75,21 @@ impl Compression {
             Compression::Lzw => CompressionMethod::LZW,
             #[cfg(feature = "deflate")]
             Compression::Deflate(_) => CompressionMethod::Deflate,
+            #[cfg(feature = "fax")]
+            Compression::Huffman => CompressionMethod::Huffman,
             Compression::Packbits => CompressionMethod::PackBits,
         }
     }
 
-    fn get_algorithm(&self) -> Compressor {
+    fn get_algorithm(&self, _width: u32) -> Compressor {
         match self {
             Compression::Uncompressed => compression::Uncompressed {}.get_algorithm(),
             #[cfg(feature = "lzw")]
             Compression::Lzw => compression::Lzw {}.get_algorithm(),
             #[cfg(feature = "deflate")]
             Compression::Deflate(level) => compression::Deflate::with_level(*level).get_algorithm(),
+            #[cfg(feature = "fax")]
+            Compression::Huffman => compression::Huffman::new(_width).get_algorithm(),
             Compression::Packbits => compression::Packbits {}.get_algorithm(),
         }
     }
@@ -653,6 +663,28 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
 
 impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T, K> {
     fn sanity_check(compression: Compression, predictor: Predictor) -> TiffResult<()> {
+        if compression.tag() == CompressionMethod::Huffman
+            && (T::BITS_PER_SAMPLE != [1]
+                || T::SAMPLE_FORMAT != [SampleFormat::Uint]
+                || T::Inner::BYTE_LEN != 1
+                || !matches!(
+                    T::TIFF_VALUE,
+                    PhotometricInterpretation::BlackIsZero | PhotometricInterpretation::WhiteIsZero
+                ))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Huffman compression requires 1-bit unsigned grayscale data",
+            )
+            .into());
+        }
+        // Bit-packed colortypes (fewer than 8 bits per sample) do not support
+        // predictors at all; horizontal differencing on packed pixels would
+        // corrupt the bit stream
+        if T::BITS_PER_SAMPLE.iter().any(|&b| u32::from(b) % 8 != 0) && predictor != Predictor::None
+        {
+            return Err(TiffError::UsageError(UsageError::PredictorIncompatible));
+        }
         match (predictor, compression, T::SAMPLE_FORMAT[0]) {
             // Horizontal predictor is not valid for floating-point types
             (Predictor::Horizontal, _, SampleFormat::IEEEFP | SampleFormat::Void) => {
@@ -682,14 +714,20 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
 
         Self::sanity_check(compression, predictor)?;
 
-        let row_samples = u64::from(width) * u64::try_from(<T>::BITS_PER_SAMPLE.len())?;
-        let row_bytes = row_samples * u64::from(<T::Inner>::BYTE_LEN);
+        // Total bits per pixel across all samples; bit-packed colortypes such
+        // as Gray1 use fewer than 8 bits per sample
+        let bits_per_pixel: u64 = <T>::BITS_PER_SAMPLE.iter().map(|&b| u64::from(b)).sum();
+        let row_bits = u64::from(width) * bits_per_pixel;
+        // Inner elements per row (user-facing slice units) and bytes per row
+        // on the wire; identical for byte-aligned colortypes
+        let row_samples = row_bits.div_ceil(u64::from(<T::Inner>::BYTE_LEN) * 8);
+        let row_bytes = row_bits.div_ceil(8);
 
         // Limit the strip size to prevent potential memory and security issues.
         // Also keep the multiple strip handling 'oiled'
         let rows_per_strip = {
             match compression.tag() {
-                CompressionMethod::PackBits => 1, // Each row must be packed separately. Do not compress across row boundaries
+                CompressionMethod::PackBits | CompressionMethod::Huffman => 1, // Each row must be packed separately. Do not compress across row boundaries
                 _ => 1_000_000_u64.div_ceil(row_bytes),
             }
         };
@@ -738,6 +776,15 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     }
 
     pub fn extra_samples(&mut self, extra: &[ExtraSamples]) -> Result<(), TiffError> {
+        // Extra samples on bit-packed colortypes would break the row packing;
+        // they are only meaningful for bilevel data in exotic cases anyway
+        if T::BITS_PER_SAMPLE.iter().any(|&b| u32::from(b) % 8 != 0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Extra samples are not supported for bit-packed colortypes",
+            )
+            .into());
+        }
         if self.strip_idx != 0 {
             return Err(TiffError::UsageError(
                 UsageError::ReconfiguredAfterImageWrite,
@@ -785,24 +832,30 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             .into());
         }
 
-        // Write the (possible compressed) data to the encoder.
+        self.encoder
+            .writer
+            .set_compression(self.compression.get_algorithm(self.width));
+        // Restore the uncompressed writer before writing any directory data,
+        // including when writing a strip fails.
         let offset = match self.predictor {
-            Predictor::None => self.encoder.write_data(value)?,
+            Predictor::None => self.encoder.write_data(value),
             Predictor::Horizontal => {
                 let mut row_result = Vec::with_capacity(value.len());
                 for row in value.chunks_exact(self.row_samples as usize) {
                     T::horizontal_predict(row, &mut row_result);
                 }
-                self.encoder.write_data(row_result.as_slice())?
+                self.encoder.write_data(row_result.as_slice())
             }
             Predictor::FloatingPoint => {
                 let mut row_result = Vec::with_capacity(std::mem::size_of_val(value));
                 for row in value.chunks_exact(self.row_samples as usize) {
                     T::floating_point_predict(row, &mut row_result);
                 }
-                self.encoder.write_data(row_result.as_slice())?
+                self.encoder.write_data(row_result.as_slice())
             }
         };
+        self.encoder.writer.reset_compression();
+        let offset = offset?;
 
         let byte_count = self.encoder.last_written() as usize;
 
@@ -826,17 +879,27 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
                     "Image width * height exceeds usize",
                 )
             })?;
-        if data.len() < num_pix {
+        // Bit-packed colortypes carry width.div_ceil(8) bytes per row instead
+        // of one element per pixel; everything else expects width*height*channels
+        let bit_packed = T::BITS_PER_SAMPLE.iter().any(|&b| u32::from(b) % 8 != 0);
+        let min_elements = if bit_packed {
+            usize::try_from(
+                self.row_samples
+                    .checked_mul(u64::from(self.height))
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "Image dimensions exceed usize")
+                    })?,
+            )?
+        } else {
+            num_pix
+        };
+        if data.len() < min_elements {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Input data slice is undersized for provided dimensions",
             )
             .into());
         }
-
-        self.encoder
-            .writer
-            .set_compression(self.compression.get_algorithm());
 
         let mut idx = 0;
         while self.next_strip_sample_count() > 0 {
@@ -845,7 +908,6 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             idx += sample_count;
         }
 
-        self.encoder.writer.reset_compression();
         self.finish()?;
         Ok(())
     }
@@ -885,6 +947,13 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Cannot change strip size after data was written",
+            )
+            .into());
+        }
+        if self.compression.tag() == CompressionMethod::Huffman && value != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Huffman compression requires one row per strip",
             )
             .into());
         }
