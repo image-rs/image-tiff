@@ -587,28 +587,40 @@ impl Read for WebPReader {
 
 /// The fax lookup tables may peek past EOF, but must never consume those bits.
 #[cfg(feature = "fax")]
-struct HuffmanBitReader {
-    inner: OwnedBitReader,
-    remaining: u64,
+struct HuffmanBitReader<R: Read> {
+    inner: fax34::ByteReader<FaxBytes<R>>,
+    remaining_bits: u64,
 }
 
 #[cfg(feature = "fax")]
-impl fax34::BitReader for HuffmanBitReader {
+impl<R: Read> fax34::BitReader for HuffmanBitReader<R> {
     type Error = io::Error;
 
     fn peek(&self, bits: u8) -> Option<u16> {
-        self.inner.peek(bits)
+        if bits > 16 {
+            return None;
+        }
+        // Pad LUT lookahead at the strip end without adding bytes to the input.
+        let available = self.remaining_bits.min(u64::from(bits)) as u8;
+        self.inner
+            .peek(available)
+            .map(|value| (u32::from(value) << (bits - available)) as u16)
     }
 
     fn consume(&mut self, bits: u8) -> io::Result<()> {
-        self.remaining = self.remaining.checked_sub(u64::from(bits)).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::UnexpectedEof, "Truncated Huffman code")
-        })?;
-        // The owning byte iterator is infallible.
-        match self.inner.consume(bits) {
-            Ok(()) => Ok(()),
-            Err(never) => match never {},
-        }
+        self.remaining_bits = self
+            .remaining_bits
+            .checked_sub(u64::from(bits))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::UnexpectedEof, "Truncated Huffman code")
+            })?;
+        self.inner.consume(bits)?;
+        // ByteReader accepts EOF when refilling. Require the real strip bits
+        // still expected in its (up to 16-bit) lookahead window.
+        self.inner
+            .peek(self.remaining_bits.min(16) as u8)
+            .ok_or(io::ErrorKind::UnexpectedEof)?;
+        Ok(())
     }
 
     fn bits_to_byte_boundary(&self) -> u8 {
@@ -622,8 +634,8 @@ impl fax34::BitReader for HuffmanBitReader {
 /// boundary, so decoding stops at the line width and the reader skips to the
 /// next byte after every row.
 #[cfg(feature = "fax")]
-pub struct HuffmanReader {
-    reader: HuffmanBitReader,
+pub struct HuffmanReader<R: Read> {
+    reader: HuffmanBitReader<R>,
     line_buf: io::Cursor<Vec<u8>>,
     height: u32,
     width: u16,
@@ -631,8 +643,8 @@ pub struct HuffmanReader {
 }
 
 #[cfg(feature = "fax")]
-impl HuffmanReader {
-    pub fn new<R: Read>(
+impl<R: Read> HuffmanReader<R> {
+    pub fn new(
         dimensions: (u32, u32),
         reader: R,
         compressed_length: u64,
@@ -641,37 +653,16 @@ impl HuffmanReader {
         let width = u16::try_from(dimensions.0)?;
         let height = dimensions.1;
 
-        // Buffer all compressed data and apply FillOrder bit reversal
-        let compressed_len = usize::try_from(compressed_length)?;
-        let padded_len = compressed_len
-            .checked_add(2)
-            .ok_or(crate::TiffError::LimitsExceeded)?;
-        let mut compressed = vec![0u8; padded_len];
-        reader
-            .take(compressed_length)
-            .read_exact(&mut compressed[..compressed_len])?;
-        if fill_order == 2 {
-            for b in &mut compressed[..compressed_len] {
-                *b = b.reverse_bits();
-            }
-        }
-
-        // The table lookups peek a full LUT width (up to 13 bits), which fails
-        // on fewer remaining bits even when the next code itself is shorter.
-        // Permit lookahead into zero padding, but track the actual length so
-        // HuffmanBitReader rejects codes that consume synthetic bits.
-        let remaining = compressed_length
+        let remaining_bits = compressed_length
             .checked_mul(8)
             .ok_or(crate::TiffError::LimitsExceeded)?;
-
-        // Create an owning bit reader (Vec consumed by into_iter, no borrow issues)
-        let map_fn: fn(u8) -> Result<u8, std::convert::Infallible> = Ok;
-        let bit_reader = fax34::ByteReader::new(compressed.into_iter().map(map_fn)).unwrap();
+        let bit_reader =
+            fax34::ByteReader::new(fax_byte_iter(reader, compressed_length, fill_order))?;
 
         Ok(Self {
             reader: HuffmanBitReader {
                 inner: bit_reader,
-                remaining,
+                remaining_bits,
             },
             line_buf: io::Cursor::new(Vec::with_capacity(usize::from(width).div_ceil(8))),
             width,
@@ -682,7 +673,7 @@ impl HuffmanReader {
 }
 
 #[cfg(feature = "fax")]
-impl Read for HuffmanReader {
+impl<R: Read> Read for HuffmanReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.line_buf.position() as usize == self.line_buf.get_ref().len()
             && self.y < self.height
@@ -867,22 +858,59 @@ mod test {
     #[cfg(feature = "fax")]
     #[test]
     fn huffman_rejects_invalid_rows() {
-        for (width, data) in [
-            (8, vec![]),
-            (8, vec![0]),
-            (8, vec![0x35]),
-            (5, vec![0x35, 0x14]),
-            (80, vec![0xDD]),
-            (13, vec![0xB1]),
+        for (width, data, declared_length) in [
+            (8, vec![], 0),
+            (8, vec![0], 1),
+            (8, vec![0x35], 1),
+            (5, vec![0x35, 0x14], 2),
+            (80, vec![0xDD], 1),
+            (13, vec![0xB1], 1),
+            (16, vec![0xB7], 2), // Physical EOF before the declared strip end.
+            (8, vec![0x98, 0], 3),
         ] {
-            let mut reader =
-                HuffmanReader::new((width, 1), io::Cursor::new(&data), data.len() as u64, 1)
-                    .unwrap();
-            let mut output = Vec::new();
+            let result = HuffmanReader::new((width, 1), io::Cursor::new(&data), declared_length, 1)
+                .and_then(|mut reader| Ok(reader.read_to_end(&mut Vec::new())?));
             assert!(
-                reader.read_to_end(&mut output).is_err(),
-                "accepted {data:?} at width {width}"
+                result.is_err(),
+                "accepted {data:?} at width {width}, strip length {declared_length}"
             );
         }
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn huffman_roundtrip_crosses_buffer_boundaries() {
+        for byte in [0, 0xFF, 0xAA] {
+            let data = vec![byte; 8192];
+            let mut expected = data.clone();
+            expected[8191] &= 0xFE;
+            assert_eq!(huffman_roundtrip((65535, 1), &data), expected);
+        }
+    }
+
+    #[cfg(feature = "fax")]
+    #[test]
+    fn huffman_reads_large_strips_incrementally() {
+        // One extra row detects reads beyond the declared strip boundary.
+        let mut source = io::Cursor::new([0xB7, 0x30].repeat(10_001));
+        {
+            let mut reader = HuffmanReader::new((16, 10_000), &mut source, 20_000, 1).unwrap();
+            let mut row = [0; 2];
+            reader.read_exact(&mut row).unwrap();
+            assert_eq!(row, [0x0F, 0]);
+        }
+        assert!(
+            source.position() <= 8192,
+            "buffered the entire strip before returning a row"
+        );
+
+        source.set_position(0);
+        let mut decoded = Vec::new();
+        HuffmanReader::new((16, 10_000), &mut source, 20_000, 1)
+            .unwrap()
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, [0x0F, 0].repeat(10_000));
+        assert_eq!(source.position(), 20_000, "read past the strip boundary");
     }
 }
