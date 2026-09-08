@@ -18,8 +18,8 @@ This table lists photometric interpretations and sample formats which are suppor
 
 | `PhotometricInterpretation` | UINT Format                             | IEEEFP Format             |
 | --------------------------- | --------------------------------------- | ------------------------- |
-| `WhiteIsZero`               | Gray(8\|16\|32\|64)                     | Gray(32\|64)              |
-| `BlackIsZero`               | Gray(8\|16\|32\|64)                     | Gray(32\|64)              |
+| `WhiteIsZero`               | Gray(1\|8\|16\|32\|64)                  | Gray(32\|64)              |
+| `BlackIsZero`               | Gray(1\|8\|16\|32\|64)                  | Gray(32\|64)              |
 | `RGB`                       | RGB(8\|16\|32\|64), RGBA(8\|16\|32\|64) | RGB(32\|64), RGBA(32\|64) |
 | `RGBPalette`                |                                         |                           |
 | `Mask`                      |                                         |                           |
@@ -36,6 +36,7 @@ This table lists photometric interpretations and sample formats which are suppor
 | LZW      | ✓        | ✓        |
 | Deflate  | ✓        | ✓        |
 | PackBits | ✓        | ✓        |
+| CCITT 1D | ✓        | ✓        |
 | Fax4     | ✓        | not yet  |
 | JPEG     | ✓        | not yet  |
 | ZSTD     | ✓        | not yet  |

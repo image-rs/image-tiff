@@ -67,3 +67,8 @@ harness = false
 name = "decode_libtiffpic"
 path = "tests/decode_libtiffpic.rs"
 harness = false
+
+[[bench]]
+name = "huffman"
+harness = false
+required-features = ["fax"]

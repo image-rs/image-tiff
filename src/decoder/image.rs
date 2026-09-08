@@ -806,6 +806,13 @@ impl Image {
                 compressed_length,
                 fill_order,
             )?),
+            #[cfg(feature = "fax")]
+            CompressionMethod::Huffman => Box::new(super::stream::HuffmanReader::new(
+                dimensions,
+                reader,
+                compressed_length,
+                fill_order,
+            )?),
             #[cfg(feature = "webp")]
             CompressionMethod::WebP => Box::new(super::stream::WebPReader::new(
                 reader,

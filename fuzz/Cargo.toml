@@ -23,3 +23,9 @@ name = "decode_comprehensive"
 path = "fuzz_targets/decode_comprehensive.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "huffman"
+path = "fuzz_targets/huffman.rs"
+test = false
+doc = false
