@@ -836,7 +836,7 @@ impl Entry {
 
         let allowed_length = usize::try_from(bytes)
             .ok()
-            .filter(|&n| n <= limits.decoding_buffer_size)
+            .filter(|&n| n <= limits.ifd_value_size)
             .ok_or(TiffError::LimitsExceeded)?;
 
         buf.prepare_length(allowed_length);
@@ -858,9 +858,9 @@ impl Entry {
             return Err(TiffError::LimitsExceeded);
         }
 
-        // Check in-memory Value representation against decoding_buffer_size.
+        // Check in-memory Value representation against intermediate_buffer_size.
         let value_count = usize::try_from(value_count)?;
-        if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
+        if value_count > limits.intermediate_buffer_size / mem::size_of::<Value>() {
             return Err(TiffError::LimitsExceeded);
         }
 

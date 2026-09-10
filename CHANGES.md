@@ -6,6 +6,8 @@ Fixes:
   are discarded (e.g. RGB with an unspecified extra sample). The horizontal
   tile padding was written past the end of the output row, spilling into the
   leftmost columns of the following row.
+- Tag values are no longer bounded by `decoding_buffer_size`, so a tag larger
+  than the image data (an ICC profile on a small image) now reads.
 
 Additions:
 - Added the `TiffHeader` type. It can be used to create a `Decoder` in a state

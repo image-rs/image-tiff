@@ -684,6 +684,35 @@ fn test_div_zero() {
 }
 
 #[test]
+fn test_tag_larger_than_image_data() {
+    // Regression test for https://github.com/image-rs/image-tiff/issues/413
+    use tiff::encoder::{colortype, TiffEncoder};
+    use tiff::tags::{Tag, ValueBuffer};
+
+    let icc: Vec<u8> = (0..16 * 1024).map(|i| i as u8).collect();
+    let mut file = Cursor::new(Vec::new());
+    let mut tiff = TiffEncoder::new(&mut file).unwrap();
+    let mut image = tiff.new_image::<colortype::RGB8>(8, 8).unwrap();
+    image
+        .encoder()
+        .write_tag(Tag::IccProfile, &icc[..])
+        .unwrap();
+    image.write_data(&[0u8; 8 * 8 * 3]).unwrap();
+
+    let mut limits = tiff::decoder::Limits::default();
+    limits.decoding_buffer_size = 8 * 8 * 3;
+    file.set_position(0);
+    let mut decoder = Decoder::open(&mut file).unwrap().with_limits(limits);
+    decoder.next_image().unwrap();
+
+    let mut ifd = decoder.current_ifd();
+    assert_eq!(ifd.get_tag_u8_vec(Tag::IccProfile).unwrap(), icc);
+    let mut buf = ValueBuffer::default();
+    ifd.find_tag_buf(Tag::IccProfile, &mut buf).unwrap();
+    assert_eq!(buf.as_bytes(), &icc[..]);
+}
+
+#[test]
 fn test_too_many_value_bytes() {
     let image = [
         73, 73, 43, 0, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 8, 0, 0, 0,
