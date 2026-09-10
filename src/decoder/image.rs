@@ -1,8 +1,9 @@
 use super::ifd::Value;
-use super::stream::PackBitsReader;
+use super::stream::{PackBitsReader, ReadSamples};
 use super::tag_reader::TagReader;
 use super::ChunkType;
 use super::{predict_f16, predict_f32, predict_f64, ValueReader};
+use crate::decoder::stream::CompressionEngines;
 use crate::tags::{
     ByteOrder, CompressionMethod, ExtraSamples, PhotometricInterpretation, PlanarConfiguration,
     Predictor, SampleFormat, Tag,
@@ -11,7 +12,7 @@ use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 
-use std::io::{self, Cursor, Read, Seek};
+use std::io::{Cursor, Read, Seek};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -698,7 +699,8 @@ impl Image {
         dimensions: (u32, u32),
         samples: u16,
         #[cfg_attr(not(feature = "fax"), allow(unused_variables))] fill_order: u16,
-    ) -> TiffResult<Box<dyn Read + 'r>> {
+        engines: &mut CompressionEngines,
+    ) -> TiffResult<Box<dyn ReadSamples + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
             CompressionMethod::SgiLog => match samples {
@@ -729,6 +731,7 @@ impl Image {
             CompressionMethod::LZW => Box::new(super::stream::LZWReader::new(
                 reader,
                 usize::try_from(compressed_length)?,
+                engines,
             )),
             #[cfg(feature = "zstd")]
             CompressionMethod::ZSTD => Box::new(zstd::Decoder::new(reader)?),
@@ -1033,6 +1036,7 @@ impl Image {
         layout: &ReadoutLayout,
         chunk_index: u32,
         scratch: &mut Vec<u8>,
+        engines: &mut CompressionEngines,
     ) -> TiffResult<()> {
         let ValueReader {
             reader,
@@ -1179,6 +1183,7 @@ impl Image {
             chunk_dims,
             self.samples,
             self.fill_order,
+            engines,
         )?;
 
         // Extended bit depths (9-15, 17-31): packed N-bit samples must be unpacked to
@@ -1308,11 +1313,12 @@ impl Image {
                 // Two ways how we get here: we have more bytes in our chunk data than in the image
                 // we are to read. Then we need to skip the rest of the data. Or we have a bigger
                 // row stride than the chunk contains data, then we  need to fill only the front.
-                reader.read_exact(&mut row[..used])?;
-                // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {
-                    let len = u64::try_from(chunk_row_bytes - data_row_bytes)?;
-                    io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
+                    // Skip horizontal padding
+                    let skip = u64::try_from(chunk_row_bytes - data_row_bytes)?;
+                    reader.read_padded_samples(&mut row[..used], skip)?;
+                } else {
+                    reader.read_exact(&mut row[..used])?;
                 }
 
                 super::fix_endianness_and_predict(
@@ -1402,6 +1408,7 @@ impl Image {
             }
         }
 
+        reader.cache_or_destroy(engines);
         Ok(())
     }
 

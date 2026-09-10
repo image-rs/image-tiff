@@ -259,6 +259,7 @@ pub struct Decoder<R> {
     scratch: Vec<u8>,
     /// Leniency flag that allows libtiff-like TIFF color interpretation behavior
     lenient: bool,
+    compression: stream::CompressionEngines,
 }
 
 /// All the information needed to read and interpret byte slices from the underlying file, i.e. to
@@ -853,6 +854,7 @@ impl TiffHeader {
             image: None,
             scratch: Vec::new(),
             lenient: false,
+            compression: stream::CompressionEngines::default(),
         }
     }
 }
@@ -949,12 +951,18 @@ impl<R: Read + Seek> Decoder<R> {
     #[expect(clippy::unnecessary_unwrap)] // Lifetimes would overlap due to return.
     fn ensure_image_and_reader(
         &mut self,
-    ) -> TiffResult<(&mut Image, &mut ValueReader<R>, &mut Vec<u8>)> {
+    ) -> TiffResult<(
+        &mut Image,
+        &mut ValueReader<R>,
+        &mut Vec<u8>,
+        &mut stream::CompressionEngines,
+    )> {
         if self.image.is_some() {
             return Ok((
                 self.image.as_mut().unwrap(),
                 &mut self.value_reader,
                 &mut self.scratch,
+                &mut self.compression,
             ));
         }
 
@@ -963,6 +971,7 @@ impl<R: Read + Seek> Decoder<R> {
             self.image.insert(image),
             &mut self.value_reader,
             &mut self.scratch,
+            &mut self.compression,
         ))
     }
 
@@ -1095,6 +1104,7 @@ impl<R: Read + Seek> Decoder<R> {
             image: core::mem::take(&mut self.image),
             scratch: core::mem::take(&mut self.scratch),
             lenient: self.lenient,
+            compression: core::mem::take(&mut self.compression),
         }
     }
 
@@ -1578,10 +1588,10 @@ impl<R: Read + Seek> Decoder<R> {
         chunk_index: u32,
         layout: &image::ReadoutLayout,
     ) -> TiffResult<()> {
-        let (image, value_reader, scratch) = self.ensure_image_and_reader()?;
+        let (image, value_reader, scratch, engines) = self.ensure_image_and_reader()?;
         let offset = image.chunk_file_range(chunk_index)?.0;
         value_reader.reader.goto_offset(offset)?;
-        image.expand_chunk(value_reader, buffer, layout, chunk_index, scratch)?;
+        image.expand_chunk(value_reader, buffer, layout, chunk_index, scratch, engines)?;
         Ok(())
     }
 
@@ -1733,7 +1743,7 @@ impl<R: Read + Seek> Decoder<R> {
         slice: TiffCodingUnit,
         buffer: &mut [u8],
     ) -> TiffResult<()> {
-        let (image, value_reader, scratch) = self.ensure_image_and_reader()?;
+        let (image, value_reader, scratch, engines) = self.ensure_image_and_reader()?;
 
         let (width, height) = image.chunk_data_dimensions(slice.0)?;
         let readout = image.readout_for_size(width, height)?;
@@ -1766,6 +1776,7 @@ impl<R: Read + Seek> Decoder<R> {
                 readout,
                 chunk,
                 scratch,
+                engines,
             )?;
         }
 
@@ -1937,7 +1948,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Returns an error if the buffer fits less than one plane. In particular, for non-planar
     /// images returns an error if the buffer does not fit the required size.
     pub fn read_image_bytes(&mut self, buffer: &mut [u8]) -> TiffResult<()> {
-        let (image, value_reader, scratch) = self.ensure_image_and_reader()?;
+        let (image, value_reader, scratch, engines) = self.ensure_image_and_reader()?;
         let readout = image.readout_for_image()?;
 
         let ref layout @ image::PlaneLayout {
@@ -1971,6 +1982,7 @@ impl<R: Read + Seek> Decoder<R> {
                     readout,
                     chunk,
                     scratch,
+                    engines,
                 )?;
             }
         }

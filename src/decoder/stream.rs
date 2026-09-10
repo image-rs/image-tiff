@@ -122,9 +122,86 @@ impl<R: Read> EndianReader<R> {
 // # READERS
 //
 
+#[derive(Default)]
+pub(crate) struct CompressionEngines {
+    #[cfg(feature = "lzw")]
+    lzw: Option<weezl::decode::Decoder>,
+}
+
+impl core::fmt::Debug for CompressionEngines {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut dbg = f.debug_struct("CompressionEngines");
+        #[cfg(feature = "lzw")]
+        dbg.field("lzw", &self.lzw.is_some().then_some("<weezl>"));
+        dbg.finish()
+    }
+}
+
+/// A variant of `io::Read` that takes one block to the end.
+///
+/// This is derived from `Read` so that any special optimization done by `std` (or any nightly crate
+/// for that matter) surely remains usable.
+///
+/// We want our decompression engines to be much more specialized than the standard library trait.
+/// Firstly there is more information available to communicate (the tiff Type, known decompressed
+/// size, …) and secondly they can potentially *reset*. This could be solved with an extension trait
+/// but since we want to avoid `read` in favor of `read_exact` (or an equivalent if we want to pass
+/// in a strided block buffer) a separate trait that's auto derived is favored.
+///
+/// FIXME: Also consider that we will want to read subsets of samples. Via IO this is done by
+/// discarding data *after* it is put into the output buffer. Yet, for some decompression that write
+/// alone is considerable work where it could simply skip bits more efficiently. So the reader would
+/// likely want to know about a sample mask.
+pub trait ReadSamples: Read {
+    /// Read a row of samples and throw away some additional padding samples at the end.
+    ///
+    /// This is automatically implemented for `Self: Read` as a copy into `io::Sink`.
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()>;
+
+    /// Put this back into our cache of compression engines.
+    fn cache_or_destroy(self: Box<Self>, _: &mut CompressionEngines) {}
+}
+
+/// Note: the `Seek` bound ensures this does not overlap actual decompression.. This is an odd
+/// design problem born out of wanting both the underlying `Read` for uncompressed streams due to
+/// performance as well as the override to `cache_or_destroy` for all compressed streams.
+impl<R: Read + Seek> ReadSamples for R {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+        if discard > 0 {
+            std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        }
+        Ok(())
+    }
+}
+
 /// Type alias for the deflate Reader
 #[cfg(feature = "deflate")]
-pub type DeflateReader<R> = flate2::read::ZlibDecoder<R>;
+pub struct DeflateReader<R> {
+    inner: flate2::read::ZlibDecoder<R>,
+}
+
+impl<R: Read> DeflateReader<R> {
+    pub fn new(inner: R) -> Self {
+        DeflateReader {
+            inner: flate2::read::ZlibDecoder::new(inner),
+        }
+    }
+}
+
+impl<R: Read> Read for DeflateReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<R: Read> ReadSamples for DeflateReader<R> {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
+    }
+}
 
 //
 // ## LZW Reader
@@ -135,12 +212,17 @@ pub type DeflateReader<R> = flate2::read::ZlibDecoder<R>;
 pub struct LZWReader<R: Read> {
     reader: BufReader<Take<R>>,
     decoder: weezl::decode::Decoder,
+    is_old_style: bool,
 }
 
 #[cfg(feature = "lzw")]
 impl<R: Read> LZWReader<R> {
     /// Wraps a reader
-    pub fn new(reader: R, compressed_length: usize) -> LZWReader<R> {
+    pub fn new(
+        reader: R,
+        compressed_length: usize,
+        engine: &mut CompressionEngines,
+    ) -> LZWReader<R> {
         let mut buffered = BufReader::with_capacity(
             (32 * 1024).min(compressed_length),
             reader.take(u64::try_from(compressed_length).unwrap()),
@@ -158,26 +240,75 @@ impl<R: Read> LZWReader<R> {
             Ok(head) if head.len() >= 2 && head[0] == 0x00 && head[1] & 0x01 != 0
         );
 
-        let configuration = if old_style {
+        let decoder = if old_style {
             weezl::decode::Configuration::new(weezl::BitOrder::Lsb, 8)
+                .with_yield_on_full_buffer(true)
+                .build()
         } else {
-            weezl::decode::Configuration::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
-        }
-        .with_yield_on_full_buffer(true);
+            // All standard LZW decoders have the same configuration. We can thus reuse any that we
+            // have previously constructed, skipping internal buffer allocation. We only need to
+            // reset them to a new stream.
+            if let Some(mut lzw) = engine.lzw.take() {
+                lzw.reset();
+                lzw
+            } else {
+                weezl::decode::Configuration::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+                    .with_yield_on_full_buffer(true)
+                    .build()
+            }
+        };
 
         Self {
             reader: buffered,
-            decoder: configuration.build(),
+            decoder: decoder,
+            is_old_style: old_style,
         }
+    }
+
+    fn discard_n(&mut self, mut n: u64) -> io::Result<()> {
+        let mut buf = [0u8; 2048];
+
+        while n > 0 {
+            let limit = n.min(2048) as usize;
+            let result = self
+                .decoder
+                .decode_bytes(self.reader.fill_buf()?, &mut buf[..limit]);
+
+            self.reader.consume(result.consumed_in);
+            n -= result.consumed_out as u64;
+
+            match result.status {
+                Ok(weezl::LzwStatus::Ok) => {
+                    continue;
+                }
+                Ok(weezl::LzwStatus::NoProgress) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "no lzw end code found",
+                    ));
+                }
+                Ok(weezl::LzwStatus::Done) => {
+                    if n != 0 {
+                        // stream is too short.
+                        return Err(std::io::ErrorKind::UnexpectedEof)?;
+                    }
+                }
+                Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(feature = "lzw")]
 impl<R: Read> Read for LZWReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
         loop {
             let result = self.decoder.decode_bytes(self.reader.fill_buf()?, buf);
+
             self.reader.consume(result.consumed_in);
+            let _ = buf.split_off_mut(..result.consumed_out);
 
             match result.status {
                 Ok(weezl::LzwStatus::Ok) => {
@@ -198,6 +329,24 @@ impl<R: Read> Read for LZWReader<R> {
                 }
                 Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
             }
+        }
+    }
+}
+
+impl<R: Read> ReadSamples for LZWReader<R> {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+
+        if discard > 0 {
+            self.discard_n(discard)?;
+        }
+
+        Ok(())
+    }
+
+    fn cache_or_destroy(self: Box<Self>, engines: &mut CompressionEngines) {
+        if !self.is_old_style && engines.lzw.is_none() {
+            engines.lzw = Some(self.decoder);
         }
     }
 }
@@ -271,6 +420,14 @@ impl<R: Read> Read for PackBitsReader<R> {
             self.state = PackBitsReaderState::Header;
         }
         Ok(actual)
+    }
+}
+
+impl<R: Read> ReadSamples for PackBitsReader<R> {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
     }
 }
 
@@ -387,6 +544,14 @@ impl<R: Read> Read for Group4Reader<R> {
         }
 
         self.line_buf.read(buf)
+    }
+}
+
+impl<R: Read> ReadSamples for Group4Reader<R> {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
     }
 }
 
@@ -528,6 +693,14 @@ impl Read for Group3Reader {
     }
 }
 
+impl ReadSamples for Group3Reader {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
+    }
+}
+
 #[cfg(feature = "webp")]
 pub struct WebPReader {
     inner: Cursor<Vec<u8>>,
@@ -580,6 +753,15 @@ impl WebPReader {
 impl Read for WebPReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.read(buf)
+    }
+}
+
+#[cfg(feature = "webp")]
+impl ReadSamples for WebPReader {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
     }
 }
 

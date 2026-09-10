@@ -83,6 +83,14 @@ impl<R: Read> Read for LogLuv24<R> {
     }
 }
 
+impl<R: Read> super::stream::ReadSamples for LogLuv24<R> {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> std::io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
+    }
+}
+
 fn packbits_decode<R: Read, const N: usize>(
     reader: &mut R,
     buf: &mut [[u8; N]],
@@ -212,6 +220,14 @@ impl<R: Read> Read for LogLuv32<R> {
     }
 }
 
+impl<R: Read> super::stream::ReadSamples for LogLuv32<R> {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> std::io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
+    }
+}
+
 /// Pack-Bits like encoding for a single 16-bit log-L sample.
 pub struct LogLuv16<R> {
     reader: Take<R>,
@@ -274,6 +290,14 @@ impl<R: Read> Read for LogLuv16<R> {
             Self::expand_row(row);
         }
 
+        Ok(())
+    }
+}
+
+impl<R: Read> super::stream::ReadSamples for LogLuv16<R> {
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> std::io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
         Ok(())
     }
 }
