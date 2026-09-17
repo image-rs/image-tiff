@@ -2,7 +2,7 @@ extern crate tiff;
 
 use tiff::decoder::{ifd, Decoder, DecodingSampleBuffer};
 use tiff::encoder::{colortype, Ifd, Ifd8, Predictor, SRational, TiffEncoder};
-use tiff::tags::Tag;
+use tiff::tags::{Tag, Type};
 use tiff::ColorType;
 
 use std::fs::File;
@@ -870,5 +870,45 @@ fn test_auxiliary_directory() {
             .get_tag_ascii_string(Tag::Artist)
             .expect("EXIF directory missing artist tag");
         assert_eq!(artist, ARTIST);
+    }
+}
+
+#[test]
+fn test_icc_profile() {
+    // Not a valid profile, only the bytes and the field type matter here. Long enough to be
+    // stored out of line in the file.
+    let profile: Vec<u8> = (0..=255u8).cycle().take(557).collect();
+
+    for bigtiff in [false, true] {
+        let mut file = Cursor::new(Vec::new());
+        if bigtiff {
+            let mut tiff = TiffEncoder::new_big(&mut file).unwrap();
+            let mut image = tiff.new_image::<colortype::RGB8>(2, 2).unwrap();
+            image.icc_profile(&profile).unwrap();
+            image.write_data(&[0; 12]).unwrap();
+        } else {
+            let mut tiff = TiffEncoder::new(&mut file).unwrap();
+            let mut image = tiff.new_image::<colortype::RGB8>(2, 2).unwrap();
+            image.icc_profile(&profile).unwrap();
+            image.write_data(&[0; 12]).unwrap();
+        }
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut decoder = Decoder::open(&mut file).unwrap();
+        decoder.next_image().unwrap();
+
+        let entry = decoder
+            .current_ifd()
+            .find_entry(Tag::IccProfile)
+            .expect("ICC profile tag is present");
+        assert_eq!(entry.field_type(), Type::UNDEFINED);
+        assert_eq!(entry.count(), profile.len() as u64);
+        assert_eq!(
+            decoder
+                .current_ifd()
+                .get_tag_u8_vec(Tag::IccProfile)
+                .unwrap(),
+            profile
+        );
     }
 }
