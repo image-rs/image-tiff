@@ -294,8 +294,8 @@ fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
     acc.copy_from_slice(&buf[..N]);
 
     // Process N bytes per iteration. Each channel's prefix sum is independent.
-    let mut chunks = buf[N..].chunks_exact_mut(N);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = buf[N..].as_chunks_mut::<N>();
+    for chunk in chunks {
         for c in 0..N {
             acc[c] = chunk[c].wrapping_add(acc[c]);
             chunk[c] = acc[c];
@@ -303,7 +303,7 @@ fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
     }
 
     // Handle trailing bytes (when buf.len() - N is not a multiple of N).
-    for (c, byte) in chunks.into_remainder().iter_mut().enumerate() {
+    for (c, byte) in remainder.iter_mut().enumerate() {
         *byte = byte.wrapping_add(acc[c]);
     }
 }

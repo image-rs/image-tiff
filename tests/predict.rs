@@ -1,8 +1,9 @@
 extern crate tiff;
 
 use tiff::decoder::{Decoder, DecodingSampleBuffer};
-use tiff::encoder::{colortype, Predictor, TiffEncoder};
-use tiff::ColorType;
+use tiff::encoder::{colortype, Predictor, TiffEncoder, TiffValue};
+use tiff::tags::ExtraSamples;
+use tiff::{ColorType, TiffResult};
 
 use std::fs::File;
 use std::io::{Cursor, Seek, SeekFrom};
@@ -28,7 +29,7 @@ macro_rules! test_predict {
             };
 
             let mut predicted = Vec::with_capacity(image_data.len());
-            C::horizontal_predict(&image_data, &mut predicted);
+            C::horizontal_predict(&image_data, C::SAMPLE_FORMAT.len(), &mut predicted);
 
             let sample_size = C::SAMPLE_FORMAT.len();
 
@@ -395,5 +396,120 @@ fn test_extended_depth_hpredict_random_roundtrip() {
         let pixels: Vec<u32> = (0..16 * 3).map(|_| next() & max).collect();
         let tiff = build_gray_hpredict_tiff(16, 3, bits, 1, &pixels);
         assert_eq!(decode_gray_u32(tiff, bits), pixels, "bits={bits}");
+    }
+}
+
+/// Encode `data` as `C` plus the given extra samples with `predictor`, decode it again and return
+/// the decoded colortype and buffer.
+fn encode_decode_with_extra_samples<C: colortype::ColorType>(
+    predictor: Predictor,
+    extra: &[ExtraSamples],
+    width: u32,
+    height: u32,
+    data: &[C::Inner],
+) -> TiffResult<(ColorType, DecodingSampleBuffer)>
+where
+    [C::Inner]: TiffValue,
+{
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut tiff = TiffEncoder::new(&mut file)?.with_predictor(predictor);
+        let mut image = tiff.new_image::<C>(width, height)?;
+        image.extra_samples(extra)?;
+        image.write_data(data)?;
+    }
+
+    file.set_position(0);
+    let mut decoder = Decoder::open(&mut file)?;
+    decoder.next_image()?;
+    let colortype = decoder.colortype()?;
+    Ok((colortype, decoder.read_image()?))
+}
+
+/// Samples which differ per channel so that differencing against the wrong neighbour is visible.
+fn extra_sample_pattern(width: u32, height: u32, channels: u32) -> impl Iterator<Item = u32> {
+    (0..height).flat_map(move |y| {
+        (0..width)
+            .flat_map(move |x| (0..channels).map(move |c| (x * 37 + y * 101) * (c + 1) + c * 7919))
+    })
+}
+
+#[test]
+fn test_rgb_u16_horizontal_predict_with_alpha_extra_sample() {
+    let (width, height) = (33, 7);
+    let data: Vec<u16> = extra_sample_pattern(width, height, 4)
+        .map(|v| v as u16)
+        .collect();
+
+    for alpha in [
+        ExtraSamples::AssociatedAlpha,
+        ExtraSamples::UnassociatedAlpha,
+    ] {
+        let (colortype, decoded) = encode_decode_with_extra_samples::<colortype::RGB16>(
+            Predictor::Horizontal,
+            &[alpha],
+            width,
+            height,
+            &data,
+        )
+        .expect("Encoding and decoding failed");
+
+        assert_eq!(colortype, ColorType::RGBA(16), "{alpha:?}");
+        match decoded {
+            DecodingSampleBuffer::U16(decoded) => assert_eq!(decoded, data, "{alpha:?}"),
+            _ => panic!("Wrong data type"),
+        }
+    }
+}
+
+#[test]
+fn test_gray_u8_horizontal_predict_with_extra_samples() {
+    let (width, height) = (19, 5);
+    let data: Vec<u8> = extra_sample_pattern(width, height, 3)
+        .map(|v| v as u8)
+        .collect();
+
+    let (colortype, decoded) = encode_decode_with_extra_samples::<colortype::Gray8>(
+        Predictor::Horizontal,
+        &[ExtraSamples::Unspecified, ExtraSamples::Unspecified],
+        width,
+        height,
+        &data,
+    )
+    .expect("Encoding and decoding failed");
+
+    assert_eq!(
+        colortype,
+        ColorType::Multiband {
+            bit_depth: 8,
+            num_samples: 3
+        }
+    );
+    match decoded {
+        DecodingSampleBuffer::U8(decoded) => assert_eq!(decoded, data),
+        _ => panic!("Wrong data type"),
+    }
+}
+
+#[test]
+fn test_rgb_f32_floating_point_predict_with_alpha_extra_sample() {
+    let (width, height) = (33, 7);
+    let data: Vec<f32> = extra_sample_pattern(width, height, 4)
+        .map(|v| v as f32 / 4096.0)
+        .collect();
+
+    let (colortype, decoded) = encode_decode_with_extra_samples::<colortype::RGB32Float>(
+        Predictor::FloatingPoint,
+        &[ExtraSamples::UnassociatedAlpha],
+        width,
+        height,
+        &data,
+    )
+    .expect("Encoding and decoding failed");
+
+    assert_eq!(colortype, ColorType::RGBA(32));
+    match decoded {
+        DecodingSampleBuffer::F32(decoded) => assert_eq!(decoded, data),
+        _ => panic!("Wrong data type"),
     }
 }

@@ -898,23 +898,20 @@ fn test_image_bytes(
 }
 
 fn byte_order_u16(bytes: &mut [u8]) {
-    for chunk in bytes.chunks_exact_mut(2) {
-        let n = u16::from_ne_bytes(chunk.try_into().unwrap());
-        chunk.copy_from_slice(&n.to_le_bytes());
+    for chunk in bytes.as_chunks_mut::<2>().0 {
+        *chunk = u16::from_ne_bytes(*chunk).to_le_bytes();
     }
 }
 
 fn byte_order_u32(bytes: &mut [u8]) {
-    for chunk in bytes.chunks_exact_mut(4) {
-        let n = u32::from_ne_bytes(chunk.try_into().unwrap());
-        chunk.copy_from_slice(&n.to_le_bytes());
+    for chunk in bytes.as_chunks_mut::<4>().0 {
+        *chunk = u32::from_ne_bytes(*chunk).to_le_bytes();
     }
 }
 
 fn byte_order_u64(bytes: &mut [u8]) {
-    for chunk in bytes.chunks_exact_mut(8) {
-        let n = u64::from_ne_bytes(chunk.try_into().unwrap());
-        chunk.copy_from_slice(&n.to_le_bytes());
+    for chunk in bytes.as_chunks_mut::<8>().0 {
+        *chunk = u64::from_ne_bytes(*chunk).to_le_bytes();
     }
 }
 

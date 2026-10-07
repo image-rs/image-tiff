@@ -785,20 +785,22 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             .into());
         }
 
+        let samples_per_pixel = <T>::BITS_PER_SAMPLE.len() + self.extra_samples.len();
+
         // Write the (possible compressed) data to the encoder.
         let offset = match self.predictor {
             Predictor::None => self.encoder.write_data(value)?,
             Predictor::Horizontal => {
                 let mut row_result = Vec::with_capacity(value.len());
                 for row in value.chunks_exact(self.row_samples as usize) {
-                    T::horizontal_predict(row, &mut row_result);
+                    T::horizontal_predict(row, samples_per_pixel, &mut row_result);
                 }
                 self.encoder.write_data(row_result.as_slice())?
             }
             Predictor::FloatingPoint => {
                 let mut row_result = Vec::with_capacity(std::mem::size_of_val(value));
                 for row in value.chunks_exact(self.row_samples as usize) {
-                    T::floating_point_predict(row, &mut row_result);
+                    T::floating_point_predict(row, samples_per_pixel, &mut row_result);
                 }
                 self.encoder.write_data(row_result.as_slice())?
             }

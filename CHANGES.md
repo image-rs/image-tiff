@@ -6,6 +6,11 @@ Fixes:
   are discarded (e.g. RGB with an unspecified extra sample). The horizontal
   tile padding was written past the end of the output row, spilling into the
   leftmost columns of the following row.
+- Encoding with `Predictor::Horizontal` or `Predictor::FloatingPoint` after
+  adding extra samples via `ImageEncoder::extra_samples` no longer corrupts the
+  image. The predictor now differences samples by the full number of samples
+  per pixel, including extra samples, instead of only the samples of the color
+  type.
 
 Additions:
 - Added the `TiffHeader` type. It can be used to create a `Decoder` in a state
@@ -23,6 +28,9 @@ Compatibility:
   TileHeight/TileLength tag now marks an image as tiled. Data is no retrieved
   from either StripOffsets or TileOffsets with the latter taking precedence.
   This is closer to the behavior of libtiff.
+- `encoder::colortype::ColorType::horizontal_predict` takes an additional
+  `samples: usize` argument, the number of samples per pixel including extra
+  samples. The new `ColorType::floating_point_predict` takes the same argument.
 
 # Version 0.11.3
 
