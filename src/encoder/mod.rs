@@ -876,6 +876,17 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         self.encoder.write_tag(Tag::YResolution, value).unwrap();
     }
 
+    /// Set the ICC color profile of the image.
+    ///
+    /// The profile is written to the `IccProfile` tag (34675) as-is, with the field type
+    /// `UNDEFINED` as required by the ICC specification (ICC.1, Annex B). Writing it with
+    /// [`DirectoryEncoder::write_tag`] and a byte slice would type it as `BYTE` instead.
+    pub fn icc_profile(&mut self, profile: &[u8]) -> TiffResult<()> {
+        let entry = self.encoder.write_entry_bytes(Type::UNDEFINED, profile)?;
+        self.encoder.directory.extend([(Tag::IccProfile, entry)]);
+        Ok(())
+    }
+
     /// Set image number of lines per strip
     ///
     /// This function needs to be called before any calls to `write_data` or
