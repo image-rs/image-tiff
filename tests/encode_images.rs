@@ -1,12 +1,12 @@
 extern crate tiff;
 
 use tiff::decoder::{ifd, Decoder, DecodingSampleBuffer};
-use tiff::encoder::{colortype, Ifd, Ifd8, Predictor, SRational, TiffEncoder};
+use tiff::encoder::{colortype, Ifd, Ifd8, Predictor, SRational, TiffEncoder, TiffKind};
 use tiff::tags::{Tag, Type};
-use tiff::ColorType;
+use tiff::{ColorType, TiffResult};
 
 use std::fs::File;
-use std::io::{Cursor, Seek, SeekFrom};
+use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 #[test]
@@ -873,6 +873,16 @@ fn test_auxiliary_directory() {
     }
 }
 
+/// Write a black 2x2 RGB8 image carrying `profile` as its ICC profile.
+fn write_rgb8_with_icc_profile<W: Write + Seek, K: TiffKind>(
+    tiff: &mut TiffEncoder<W, K>,
+    profile: &[u8],
+) -> TiffResult<()> {
+    let mut image = tiff.new_image::<colortype::RGB8>(2, 2)?;
+    image.icc_profile(profile)?;
+    image.write_data(&[0; 12])
+}
+
 #[test]
 fn test_icc_profile() {
     // Not a valid profile, only the bytes and the field type matter here. Long enough to be
@@ -881,33 +891,32 @@ fn test_icc_profile() {
 
     for bigtiff in [false, true] {
         let mut file = Cursor::new(Vec::new());
-        if bigtiff {
-            let mut tiff = TiffEncoder::new_big(&mut file).unwrap();
-            let mut image = tiff.new_image::<colortype::RGB8>(2, 2).unwrap();
-            image.icc_profile(&profile).unwrap();
-            image.write_data(&[0; 12]).unwrap();
+        let written = if bigtiff {
+            TiffEncoder::new_big(&mut file)
+                .and_then(|mut tiff| write_rgb8_with_icc_profile(&mut tiff, &profile))
         } else {
-            let mut tiff = TiffEncoder::new(&mut file).unwrap();
-            let mut image = tiff.new_image::<colortype::RGB8>(2, 2).unwrap();
-            image.icc_profile(&profile).unwrap();
-            image.write_data(&[0; 12]).unwrap();
-        }
+            TiffEncoder::new(&mut file)
+                .and_then(|mut tiff| write_rgb8_with_icc_profile(&mut tiff, &profile))
+        };
+        written.expect("Encoding image failed");
 
-        file.seek(SeekFrom::Start(0)).unwrap();
-        let mut decoder = Decoder::open(&mut file).unwrap();
-        decoder.next_image().unwrap();
+        file.set_position(0);
+        let mut decoder = Decoder::open(&mut file).expect("Cannot create decoder");
+        decoder
+            .next_image()
+            .expect("Cannot read the image directory");
 
         let entry = decoder
             .current_ifd()
             .find_entry(Tag::IccProfile)
             .expect("ICC profile tag is present");
         assert_eq!(entry.field_type(), Type::UNDEFINED);
-        assert_eq!(entry.count(), profile.len() as u64);
+        assert_eq!(Ok(entry.count()), u64::try_from(profile.len()));
         assert_eq!(
             decoder
                 .current_ifd()
                 .get_tag_u8_vec(Tag::IccProfile)
-                .unwrap(),
+                .expect("Cannot read the ICC profile"),
             profile
         );
     }
