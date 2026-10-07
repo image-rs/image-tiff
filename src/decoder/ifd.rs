@@ -669,23 +669,35 @@ impl Entry {
             Type::RATIONAL => {
                 v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
-                    v.extend(bytes.as_chunks::<8>().0.iter().map(|ch| {
-                        Rational(
-                            u32::from_ne_bytes(ch[..4].try_into().unwrap()),
-                            u32::from_ne_bytes(ch[4..].try_into().unwrap()),
-                        )
-                    }))
+                    v.extend(
+                        bytes
+                            .as_chunks::<8>()
+                            .0
+                            .iter()
+                            .map(|&[a, b, c, d, e, f, g, h]| {
+                                Rational(
+                                    u32::from_ne_bytes([a, b, c, d]),
+                                    u32::from_ne_bytes([e, f, g, h]),
+                                )
+                            }),
+                    )
                 })
             }
             Type::SRATIONAL => {
                 v = Self::vec_with_capacity(self.count, self.type_, limits)?;
                 self.decode_values(self.count, self.type_, reader, |bytes| {
-                    v.extend(bytes.as_chunks::<8>().0.iter().map(|ch| {
-                        SRational(
-                            i32::from_ne_bytes(ch[..4].try_into().unwrap()),
-                            i32::from_ne_bytes(ch[4..].try_into().unwrap()),
-                        )
-                    }))
+                    v.extend(
+                        bytes
+                            .as_chunks::<8>()
+                            .0
+                            .iter()
+                            .map(|&[a, b, c, d, e, f, g, h]| {
+                                SRational(
+                                    i32::from_ne_bytes([a, b, c, d]),
+                                    i32::from_ne_bytes([e, f, g, h]),
+                                )
+                            }),
+                    )
                 })
             }
             Type::LONG8 => {
