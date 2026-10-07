@@ -6,10 +6,11 @@ Fixes:
   are discarded (e.g. RGB with an unspecified extra sample). The horizontal
   tile padding was written past the end of the output row, spilling into the
   leftmost columns of the following row.
-- Encoding with `Predictor::Horizontal` or `Predictor::FloatingPoint` after adding
-  extra samples via `ImageEncoder::extra_samples` no longer corrupts the image.
-  The predictor now differences samples by the full number of samples per pixel,
-  including extra samples, instead of only the samples of the color type.
+- Encoding with `Predictor::Horizontal` or `Predictor::FloatingPoint` after
+  adding extra samples via `ImageEncoder::extra_samples` no longer corrupts the
+  image. The predictor now differences samples by the full number of samples
+  per pixel, including extra samples, instead of only the samples of the color
+  type.
 
 Additions:
 - Added the `TiffHeader` type. It can be used to create a `Decoder` in a state
