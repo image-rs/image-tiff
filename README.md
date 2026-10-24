@@ -39,7 +39,9 @@ This table lists photometric interpretations and sample formats which are suppor
 | Fax4     | ✓        | not yet  |
 | JPEG     | ✓        | not yet  |
 | ZSTD     | ✓        | not yet  |
+| WebP     | ✓        | not yet  |
 
+Note that WebP and ZSTD require use of a feature flag to enable them.
 
 ## Not yet supported
 
