@@ -7,6 +7,8 @@ mod deflate;
 mod lzw;
 mod packbits;
 mod uncompressed;
+#[cfg(feature = "zstd")]
+mod zstd;
 
 #[cfg(feature = "deflate")]
 pub use self::deflate::Deflate;
@@ -16,6 +18,8 @@ pub use self::lzw::Lzw;
 
 pub use self::packbits::Packbits;
 pub use self::uncompressed::Uncompressed;
+#[cfg(feature = "zstd")]
+pub use self::zstd::Zstd;
 
 /// An algorithm used for compression
 pub trait CompressionAlgorithm {
@@ -42,6 +46,8 @@ pub enum Compressor {
     #[cfg(feature = "deflate")]
     Deflate(Deflate),
     Packbits(Packbits),
+    #[cfg(feature = "zstd")]
+    Zstd(Zstd),
 }
 
 impl Default for Compressor {
@@ -60,6 +66,8 @@ impl CompressionAlgorithm for Compressor {
             #[cfg(feature = "deflate")]
             Compressor::Deflate(algorithm) => algorithm.write_to(writer, bytes),
             Compressor::Packbits(algorithm) => algorithm.write_to(writer, bytes),
+            #[cfg(feature = "zstd")]
+            Compressor::Zstd(algorithm) => algorithm.write_to(writer, bytes),
         }
     }
 }

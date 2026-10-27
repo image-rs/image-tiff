@@ -1,7 +1,9 @@
 //! All IO functionality needed for TIFF decoding
 #[cfg(feature = "webp")]
 use std::io::Cursor;
-use std::io::{self, BufRead, BufReader, Read, Seek, Take};
+use std::io::{self, Read, Seek, Take};
+#[cfg(feature = "lzw")]
+use std::io::{BufRead, BufReader};
 
 pub use crate::tags::ByteOrder;
 

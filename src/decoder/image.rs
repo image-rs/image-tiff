@@ -11,7 +11,9 @@ use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 
-use std::io::{self, Cursor, Read, Seek};
+#[cfg(feature = "jpeg")]
+use std::io::Cursor;
+use std::io::{self, Read, Seek};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -689,6 +691,7 @@ impl Image {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_reader<'r, R: 'r + Read + Seek>(
         reader: R,
         compression_method: CompressionMethod,
@@ -698,6 +701,7 @@ impl Image {
         dimensions: (u32, u32),
         samples: u16,
         #[cfg_attr(not(feature = "fax"), allow(unused_variables))] fill_order: u16,
+        #[cfg_attr(not(feature = "zstd"), allow(unused_variables))] limits: &crate::decoder::Limits,
     ) -> TiffResult<Box<dyn Read + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
@@ -731,9 +735,28 @@ impl Image {
                 usize::try_from(compressed_length)?,
             )),
             #[cfg(feature = "zstd")]
-            CompressionMethod::ZSTD => Box::new(zstd::Decoder::new(reader)?),
+            CompressionMethod::ZSTD => {
+                let capacity =
+                    compressed_length.min(zstd::zstd_safe::DCtx::in_size() as u64) as usize;
+                let mut decoder = zstd::Decoder::with_buffer(io::BufReader::with_capacity(
+                    capacity,
+                    reader.take(compressed_length),
+                ))?;
+                // Zstd supports window logs 10–30 on 32-bit and 10–31 on 64-bit.
+                let max_window_log = if usize::BITS == 32 { 30 } else { 31 };
+                let window_log = limits
+                    .intermediate_buffer_size
+                    .saturating_sub(1)
+                    .checked_ilog2()
+                    .map_or(0, |log| log + 1)
+                    .clamp(10, max_window_log);
+                decoder.window_log_max(window_log)?;
+                Box::new(decoder)
+            }
             #[cfg(all(not(feature = "zstd"), feature = "zstd-safe-rust"))]
-            CompressionMethod::ZSTD => Box::new(zrip_decode::streaming::FrameDecoder::new(reader)),
+            CompressionMethod::ZSTD => Box::new(zrip_decode::streaming::FrameDecoder::new(
+                reader.take(compressed_length),
+            )),
             CompressionMethod::PackBits => Box::new(PackBitsReader::new(reader, compressed_length)),
             #[cfg(feature = "deflate")]
             CompressionMethod::Deflate | CompressionMethod::OldDeflate => {
@@ -1171,6 +1194,27 @@ impl Image {
         let is_all_bits = samples == data_samples;
         let is_output_chunk_rows = layout.row_stride == chunk_row_bytes;
 
+        let needs_unpacking = layout.tiff_bits_per_sample != layout.output_bits_per_sample
+            && layout.tiff_bits_per_sample > 8;
+        let zstd_padding = if compression_method == CompressionMethod::ZSTD {
+            let padding = u64::from(chunk_dims.1 - data_dims.1)
+                .checked_mul(u64::try_from(chunk_row_bytes)?)
+                .ok_or(TiffError::LimitsExceeded)?;
+            let needs_row_limit = needs_unpacking
+                || !is_all_bits
+                || chunk_row_bytes > data_row_bytes
+                || predictor == Predictor::FloatingPoint;
+            if (needs_row_limit && chunk_row_bytes > limits.intermediate_buffer_size)
+                || (self.chunk_type == ChunkType::Tile
+                    && padding > limits.intermediate_buffer_size as u64)
+            {
+                return Err(TiffError::LimitsExceeded);
+            }
+            padding
+        } else {
+            0
+        };
+
         let mut reader = Self::create_reader(
             reader.inner(),
             compression_method,
@@ -1179,13 +1223,11 @@ impl Image {
             chunk_dims,
             self.samples,
             self.fill_order,
+            limits,
         )?;
 
         // Extended bit depths (9-15, 17-31): packed N-bit samples must be unpacked to
         // standard-width output samples before endianness fix and predictor.
-        let needs_unpacking = layout.tiff_bits_per_sample != layout.output_bits_per_sample
-            && layout.tiff_bits_per_sample > 8;
-
         if needs_unpacking {
             if !is_all_bits {
                 // Packed extended depths with extra samples to discard is not yet supported.
@@ -1312,7 +1354,10 @@ impl Image {
                 // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {
                     let len = u64::try_from(chunk_row_bytes - data_row_bytes)?;
-                    io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
+                    let skipped = io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
+                    if compression_method == CompressionMethod::ZSTD && skipped != len {
+                        return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+                    }
                 }
 
                 super::fix_endianness_and_predict(
@@ -1399,6 +1444,22 @@ impl Image {
                     color_type,
                     self.sample_format,
                 )?;
+            }
+        }
+
+        if compression_method == CompressionMethod::ZSTD {
+            // Finish the frame to check its checksum, including any unused tile rows.
+            let limit = zstd_padding.min(limits.intermediate_buffer_size as u64);
+            let skipped = io::copy(&mut reader.take(limit.saturating_add(1)), &mut io::sink())?;
+            if skipped > limit {
+                return Err(if zstd_padding > limit {
+                    TiffError::LimitsExceeded
+                } else {
+                    TiffFormatError::InconsistentSizesEncountered.into()
+                });
+            }
+            if self.chunk_type == ChunkType::Tile && skipped != zstd_padding {
+                return Err(TiffFormatError::InconsistentSizesEncountered.into());
             }
         }
 
@@ -1638,5 +1699,284 @@ impl PlaneLayout {
         );
 
         Ok(used_plane_offsets as u16)
+    }
+}
+
+#[cfg(all(test, any(feature = "zstd", feature = "zstd-safe-rust")))]
+mod zstd_tests {
+    use super::*;
+    use crate::decoder::{Decoder, DecodingSampleBuffer};
+    use crate::encoder::TiffEncoder;
+    use std::io::Cursor;
+
+    // One checksummed raw block containing four grayscale samples.
+    const FRAME: &[u8] = &[
+        0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x04, 0x21, 0x00, 0x00, 0x0a, 0x14, 0x1e, 0x28, 0x7e, 0x0e,
+        0xce, 0xf1,
+    ];
+
+    const TILE_FRAME: &[u8] = &[
+        0x28, 0xb5, 0x2f, 0xfd, 0x64, 0x00, 0x00, 0x5d, 0x00, 0x00, 0x20, 0x0a, 0x14, 0x1e, 0x28,
+        0x01, 0x00, 0xf9, 0x29, 0x47, 0x04, 0x72, 0xa5, 0x9b, 0xb6,
+    ];
+
+    fn reader<R: Read + Seek>(input: &mut R, length: u64) -> Box<dyn Read + '_> {
+        Image::create_reader(
+            input,
+            CompressionMethod::ZSTD,
+            length,
+            None,
+            (4, 1),
+            1,
+            1,
+            &crate::decoder::Limits::default(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn zstd_chunk_boundaries() {
+        for frames in [1, 2] {
+            let mut input = Cursor::new([FRAME.repeat(frames), b"next chunk".to_vec()].concat());
+            let length = (FRAME.len() * frames) as u64;
+            let mut decoded = Vec::new();
+            reader(&mut input, length)
+                .read_to_end(&mut decoded)
+                .unwrap();
+            assert_eq!(decoded, [10, 20, 30, 40].repeat(frames));
+            assert_eq!(input.position(), length);
+        }
+        for length in 0..FRAME.len() {
+            let mut input = Cursor::new(FRAME);
+            let mut decoder = reader(&mut input, length as u64);
+            assert!(decoder
+                .read_exact(&mut [0; 4])
+                .and_then(|_| decoder.read_to_end(&mut Vec::new()))
+                .is_err());
+            drop(decoder);
+            assert!(input.position() <= length as u64);
+        }
+    }
+
+    fn image(frame: &[u8], length: u32, tile: Option<(u32, u32)>, width: u32) -> Vec<u8> {
+        let mut output = Cursor::new(Vec::new());
+        {
+            let mut encoder = TiffEncoder::new(&mut output).unwrap();
+            let mut dir = encoder.image_directory().unwrap();
+            let offset = dir.write_data(frame).unwrap() as u32;
+            dir.write_tag(Tag::ImageWidth, width).unwrap();
+            dir.write_tag(Tag::ImageLength, 1u32).unwrap();
+            dir.write_tag(Tag::BitsPerSample, 8u16).unwrap();
+            dir.write_tag(Tag::SamplesPerPixel, 1u16).unwrap();
+            dir.write_tag(Tag::PhotometricInterpretation, 1u16).unwrap();
+            dir.write_tag(Tag::Compression, 50000u16).unwrap();
+            if let Some((width, height)) = tile {
+                dir.write_tag(Tag::TileWidth, width).unwrap();
+                dir.write_tag(Tag::TileLength, height).unwrap();
+                dir.write_tag(Tag::TileOffsets, offset).unwrap();
+                dir.write_tag(Tag::TileByteCounts, length).unwrap();
+            } else {
+                dir.write_tag(Tag::RowsPerStrip, 1u32).unwrap();
+                dir.write_tag(Tag::StripOffsets, offset).unwrap();
+                dir.write_tag(Tag::StripByteCounts, length).unwrap();
+            }
+            dir.finish().unwrap();
+        }
+        output.into_inner()
+    }
+
+    struct ShortRead(Cursor<Vec<u8>>);
+
+    impl Read for ShortRead {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            let length = output.len().min(1);
+            self.0.read(&mut output[..length])
+        }
+    }
+
+    impl Seek for ShortRead {
+        fn seek(&mut self, position: io::SeekFrom) -> io::Result<u64> {
+            self.0.seek(position)
+        }
+    }
+
+    #[test]
+    fn zstd_image_integrity() {
+        for (tiled, data) in [(false, FRAME), (true, TILE_FRAME)] {
+            let mut corrupt = data.to_vec();
+            *corrupt.last_mut().unwrap() ^= 1;
+            let oversized = data.repeat(2);
+            let empty = &[0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0][..];
+            let skippable = &[0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3][..];
+            let framed = [empty, skippable, data, skippable, empty].concat();
+            let trailing = [data, &empty[..empty.len() - 1]].concat();
+            for (frame, length, valid) in [
+                (data, data.len(), true),
+                (framed.as_slice(), framed.len(), true),
+                (trailing.as_slice(), trailing.len(), false),
+                (corrupt.as_slice(), data.len(), false),
+                (oversized.as_slice(), oversized.len(), false),
+                (data, data.len() - 1, false),
+                (&data[..data.len() - 1], data.len() - 1, false),
+            ] {
+                let mut decoder = Decoder::open(ShortRead(Cursor::new(image(
+                    frame,
+                    length as u32,
+                    tiled.then_some((16, 16)),
+                    if tiled { 1 } else { 4 },
+                ))))
+                .unwrap();
+                decoder.next_image().unwrap();
+                let result = decoder.read_image();
+                if valid {
+                    let expected = if tiled {
+                        vec![10]
+                    } else {
+                        vec![10, 20, 30, 40]
+                    };
+                    assert!(
+                        matches!(result.unwrap(), DecodingSampleBuffer::U8(data) if data == expected)
+                    );
+                } else {
+                    assert!(
+                        result.is_err(),
+                        "accepted invalid Zstd chunk: tiled={tiled}, length={length}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zstd_window_limit() {
+        // Unknown content size, one raw block, and a configurable window descriptor.
+        let mut frame = [
+            0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x21, 0x00, 0x00, 10, 20, 30, 40,
+        ];
+        for descriptor in [0, 1, 4, 7, 8, 12, 0x50] {
+            frame[5] = descriptor;
+            let base = 1usize << (10 + (descriptor >> 3));
+            let window = base + (base / 8) * usize::from(descriptor & 7);
+            for data in [FRAME, frame.as_slice()] {
+                for limit in [64usize, 1024, 1536, 2048, 1 << 20, usize::MAX] {
+                    let limits = crate::decoder::Limits {
+                        intermediate_buffer_size: limit,
+                        ..Default::default()
+                    };
+                    let mut decoder = Decoder::open(ShortRead(Cursor::new(image(
+                        data,
+                        data.len() as u32,
+                        None,
+                        4,
+                    ))))
+                    .unwrap()
+                    .with_limits(limits);
+                    decoder.next_image().unwrap();
+                    let result = decoder.read_image();
+                    let allowed_window = limit
+                        .checked_next_power_of_two()
+                        .unwrap_or(usize::MAX)
+                        .max(1024);
+                    let valid =
+                        data == FRAME || !cfg!(feature = "zstd") || window <= allowed_window;
+                    assert_eq!(result.is_ok(), valid, "window={window}, limit={limit}");
+                    if let Ok(DecodingSampleBuffer::U8(samples)) = result {
+                        assert_eq!(samples, [10, 20, 30, 40]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zstd_tile_padding() {
+        for dimensions in [
+            (16, 16),
+            (16, 32),
+            (32, 16),
+            (512, 1),
+            (16, u32::MAX),
+            (u32::MAX, 16),
+        ] {
+            let limits = super::super::Limits {
+                intermediate_buffer_size: 4096,
+                ..Default::default()
+            };
+            let mut decoder = Decoder::open(Cursor::new(image(
+                TILE_FRAME,
+                TILE_FRAME.len() as u32,
+                Some(dimensions),
+                1,
+            )))
+            .unwrap()
+            .with_limits(limits);
+            decoder.next_image().unwrap();
+            let result = decoder.read_image();
+            assert_eq!(result.is_ok(), dimensions == (16, 16), "{dimensions:?}");
+            if dimensions.0 == u32::MAX || dimensions.1 == u32::MAX {
+                assert!(matches!(result, Err(TiffError::LimitsExceeded)));
+            }
+        }
+    }
+
+    #[test]
+    fn zstd_strip_larger_than_intermediate_limit() {
+        let data = image(TILE_FRAME, TILE_FRAME.len() as u32, None, 256);
+        let limits = crate::decoder::Limits {
+            decoding_buffer_size: 256,
+            intermediate_buffer_size: 32,
+            ..Default::default()
+        };
+        let mut decoder = Decoder::open(ShortRead(Cursor::new(data)))
+            .unwrap()
+            .with_limits(limits);
+        decoder.next_image().unwrap();
+        assert!(matches!(decoder.read_image().unwrap(),
+            DecodingSampleBuffer::U8(data) if data == [10, 20, 30, 40].repeat(64)));
+    }
+
+    #[test]
+    fn zstd_float_predictor_limits() {
+        let mut output = Cursor::new(Vec::new());
+        {
+            let mut encoder = TiffEncoder::new(&mut output).unwrap();
+            let mut dir = encoder.image_directory().unwrap();
+            let offset = dir.write_data(TILE_FRAME).unwrap() as u32;
+            for (tag, value) in [
+                (Tag::ImageWidth, 64u32),
+                (Tag::ImageLength, 1),
+                (Tag::RowsPerStrip, 1),
+                (Tag::StripOffsets, offset),
+                (Tag::StripByteCounts, TILE_FRAME.len() as u32),
+            ] {
+                dir.write_tag(tag, value).unwrap();
+            }
+            for (tag, value) in [
+                (Tag::BitsPerSample, 32u16),
+                (Tag::SampleFormat, 3),
+                (Tag::PhotometricInterpretation, 1),
+                (Tag::Predictor, 3),
+                (Tag::Compression, 50000),
+            ] {
+                dir.write_tag(tag, value).unwrap();
+            }
+            dir.finish().unwrap();
+        }
+        for limit in [32, 256] {
+            let limits = super::super::Limits {
+                intermediate_buffer_size: limit,
+                ..Default::default()
+            };
+            let mut decoder = Decoder::open(Cursor::new(output.get_ref()))
+                .unwrap()
+                .with_limits(limits);
+            decoder.next_image().unwrap();
+            let result = decoder.read_image();
+            if limit == 256 {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(result, Err(TiffError::LimitsExceeded)));
+            }
+        }
     }
 }

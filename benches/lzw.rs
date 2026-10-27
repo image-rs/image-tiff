@@ -1,9 +1,8 @@
 extern crate criterion;
 extern crate tiff;
 
-use criterion::{
-    black_box, measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 use tiff::decoder::Decoder;
 
 fn read_image(image: &[u8]) {

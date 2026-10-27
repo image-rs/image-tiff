@@ -1,7 +1,8 @@
 extern crate criterion;
 extern crate tiff;
 
-use criterion::{black_box, Criterion, Throughput};
+use criterion::{Criterion, Throughput};
+use std::hint::black_box;
 use std::io::Cursor;
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::{Gray16, Gray8, RGB32Float, RGB16, RGB8, RGBA8};

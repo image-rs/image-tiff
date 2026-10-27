@@ -191,6 +191,8 @@ pub struct Limits {
     pub ifd_value_size: usize,
     /// Maximum size for intermediate buffer which may be used to limit the amount of data read per
     /// segment even if the entire image is decoded at once.
+    /// Native Zstd rounds its history-window limit up to a power of two. The minimum is 1 KiB.
+    /// The pure Rust Zstd decoder's history window is not configurable.
     pub intermediate_buffer_size: usize,
 }
 
@@ -294,8 +296,8 @@ fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
     acc.copy_from_slice(&buf[..N]);
 
     // Process N bytes per iteration. Each channel's prefix sum is independent.
-    let mut chunks = buf[N..].chunks_exact_mut(N);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = buf[N..].as_chunks_mut::<N>();
+    for chunk in chunks {
         for c in 0..N {
             acc[c] = chunk[c].wrapping_add(acc[c]);
             chunk[c] = acc[c];
@@ -303,7 +305,7 @@ fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
     }
 
     // Handle trailing bytes (when buf.len() - N is not a multiple of N).
-    for (c, byte) in chunks.into_remainder().iter_mut().enumerate() {
+    for (c, byte) in remainder.iter_mut().enumerate() {
         *byte = byte.wrapping_add(acc[c]);
     }
 }
@@ -1288,7 +1290,7 @@ impl<R: Read + Seek> Decoder<R> {
     /// Utility to create a reader like [`Self::read_entry`], from the current IFD.
     ///
     /// Returns an `Ok(None)` if the tag is not found in the current directory. See
-    /// [`Self::read_entry´] of which this is a simple wrapper.
+    /// [`Self::read_entry`] of which this is a simple wrapper.
     pub fn read_tag(&mut self, tag: Tag) -> TiffResult<Option<EntryBytesReader<'_, R>>> {
         match self.current_ifd().find_entry(tag) {
             None => Ok(None),

@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 
 # note: when changed, also update test runner in `.github/workflows/rust.yml`
-rust-version = "1.88.0"
+rust-version = "1.89.0"
 
 license = "MIT"
 description = "TIFF decoding and encoding library in pure Rust"
@@ -22,19 +22,27 @@ quick-error = "2.0.1"
 
 # Rename to avoid confusion with the feature name.
 fax34 = { package = "fax", version = "0.2.6", optional = true }
-flate2 = { version = "1.0.20", optional = true }
+flate2 = { version = "1.1.10", optional = true }
 weezl = { version = "0.2.1", optional = true }
-zstd = { version = "0.14", optional = true }
-zrip-decode = { version = "0.8.2", features = ["paranoid"], optional = true }
+zstd = { version = "0.14.3", optional = true }
+zrip-decode = { version = "0.8.11", features = ["paranoid"], optional = true }
 zune-jpeg = { version = "0.5.1", optional = true }
 image-webp = {version = "0.2.4", optional = true }
 
 [dev-dependencies]
-criterion = "0.3.1"
+criterion = "0.7.0"
 # We may already depend on this via flate2
 crc32fast = "1.5"
-libtest-mimic = "0.8.1"
+libtest-mimic = "0.8.2"
 walkdir = "2.5"
+
+# Safe minimum versions for transitive test and benchmark dependencies.
+bumpalo = { version = "3.11.1", default-features = false }
+clap = { version = "4.6.7", default-features = false }
+crossbeam-epoch = { version = "0.9.20", default-features = false }
+is_terminal_polyfill = { version = "1.70.1", default-features = false }
+rayon = { version = "1.8.1", default-features = false }
+regex = { version = "1.5.5", default-features = false }
 
 [features]
 default = ["deflate", "fax", "jpeg", "lzw"]

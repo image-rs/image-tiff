@@ -9,14 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: ["1.88.0", stable, beta, nightly]
+        rust: ["1.89.0", stable, beta, nightly]
     steps:
     - uses: actions/checkout@v6
 
     - uses: dtolnay/rust-toolchain@nightly
-      if: ${{ matrix.rust == '1.88.0' }}
+      if: ${{ matrix.rust == '1.89.0' }}
     - name: Generate Cargo.lock with minimal-version dependencies
-      if: ${{ matrix.rust == '1.88.0' }}
+      if: ${{ matrix.rust == '1.89.0' }}
       run: cargo -Zminimal-versions generate-lockfile
 
     - uses: dtolnay/rust-toolchain@v1
@@ -27,10 +27,17 @@ jobs:
       with:
         cache-on-failure: true
     - name: build
+      if: ${{ matrix.rust != '1.89.0' }}
       run: cargo build -v
+    - name: Build all targets with minimum dependencies
+      if: ${{ matrix.rust == '1.89.0' }}
+      run: cargo build -v --all-features --all-targets
+    - name: Test pure Rust Zstd decoding with minimum dependencies
+      if: ${{ matrix.rust == '1.89.0' }}
+      run: cargo test --no-default-features --features zstd-safe-rust --lib decoder::image::zstd_tests
     - name: test
-      if: ${{ matrix.rust != '1.88.0' }}
-      run: cargo test -v && cargo doc -v
+      if: ${{ matrix.rust != '1.89.0' }}
+      run: cargo test -v && cargo doc -v --all-features --no-deps
 
   test-platforms:
     runs-on: ${{ matrix.os }}
@@ -47,23 +54,34 @@ jobs:
         cache-on-failure: true
     - name: test
       run: cargo test -v
+    - name: Test native Zstd encoding and decoding
+      if: ${{ runner.os == 'Windows' || runner.os == 'macOS' }}
+      run: cargo test --features zstd,zstd-safe-rust --lib --test encode_images_with_compression
 
   features:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        feature: ["", deflate, jpeg, lzw, zstd, default, "default,zstd"]
+        feature: ["", deflate, fax, jpeg, lzw, webp, zstd, zstd-safe-rust, default, "default,zstd"]
     steps:
     - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
-    - name: Cargo check
-      run: cargo check --features "${{ matrix.feature }}" --no-default-features
-
     - name: Cargo clippy
-      if: ${{ matrix.feature != '' }}
-      run: cargo clippy --no-deps --all-features --all-targets -- -D warnings
+      run: cargo clippy --lib --no-default-features --features "${{ matrix.feature }}" -- -D warnings
+
+    - name: Test native Zstd encoding and decoding
+      if: ${{ matrix.feature == 'zstd' || matrix.feature == 'default,zstd' }}
+      run: cargo test --no-default-features --features "${{ matrix.feature }},zstd-safe-rust" --lib --test encode_images_with_compression
+
+    - name: Test pure Rust Zstd decoding
+      if: ${{ matrix.feature == 'zstd-safe-rust' }}
+      run: cargo test --no-default-features --features zstd-safe-rust --lib decoder::image::zstd_tests
+
+    - name: Test WebP decoding
+      if: ${{ matrix.feature == 'webp' }}
+      run: cargo test --no-default-features --features webp --test decode_geotiff_images test_webp_tiff
 
   other_archs:
     # github actions does not support 32-bit or big endian systems directly, but
@@ -92,7 +110,9 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
     - uses: taiki-e/install-action@cargo-hack
     - name: Check MSRV
-      run: cargo hack check --rust-version
+      env:
+        CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      run: cargo hack check --rust-version --each-feature --lib
 
   rustfmt:
     runs-on: ubuntu-latest

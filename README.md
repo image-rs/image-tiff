@@ -38,7 +38,13 @@ This table lists photometric interpretations and sample formats which are suppor
 | PackBits | ✓        | ✓        |
 | Fax4     | ✓        | not yet  |
 | JPEG     | ✓        | not yet  |
-| ZSTD     | ✓        | not yet  |
+| ZSTD     | ✓        | ✓        |
+
+The `zstd` feature uses the native C library for ZSTD encoding and decoding.
+The `zstd-safe-rust` feature supports decoding without that C library.
+If both features are enabled, the native decoder takes precedence.
+ZSTD uses [libtiff's extension code `50000`](https://libtiff.gitlab.io/libtiff/releases/v4.0.10.html),
+which is outside baseline TIFF 6.0. Readers need support for this extension.
 
 
 ## Not yet supported
@@ -46,7 +52,7 @@ This table lists photometric interpretations and sample formats which are suppor
 Formats and interpretations not listed above or with empty entries are unsupported.
 
 - Baseline tags
-  - `ExtraSamples`
+  - Some `ExtraSamples` layouts
 - Extension tags
 
 ## Fuzzing

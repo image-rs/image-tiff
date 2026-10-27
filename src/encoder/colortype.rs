@@ -1,4 +1,4 @@
-use crate::tags::{PhotometricInterpretation, SampleFormat};
+use crate::tags::{ExtraSamples, PhotometricInterpretation, SampleFormat};
 
 /// Apply floating-point predictor encoding to a row of floating-point samples.
 ///
@@ -132,6 +132,9 @@ pub trait ColorType {
     const BITS_PER_SAMPLE: &'static [u16];
     /// The value of the tiff tag `SampleFormat`
     const SAMPLE_FORMAT: &'static [SampleFormat];
+    /// The `ExtraSamples` tag for channels already included in `BITS_PER_SAMPLE`.
+    /// Built-in RGBA types use unassociated alpha.
+    const EXTRA_SAMPLES: &'static [ExtraSamples] = &[];
 
     fn horizontal_predict(row: &[Self::Inner], result: &mut Vec<Self::Inner>);
 
@@ -330,6 +333,7 @@ impl ColorType for RGBA8 {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[8, 8, 8, 8];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint; 4];
+    const EXTRA_SAMPLES: &'static [ExtraSamples] = &[ExtraSamples::UnassociatedAlpha];
 
     integer_horizontal_predict!();
 }
@@ -340,6 +344,7 @@ impl ColorType for RGBA16 {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[16, 16, 16, 16];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint; 4];
+    const EXTRA_SAMPLES: &'static [ExtraSamples] = &[ExtraSamples::UnassociatedAlpha];
 
     integer_horizontal_predict!();
 }
@@ -350,6 +355,7 @@ impl ColorType for RGBA32 {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[32, 32, 32, 32];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint; 4];
+    const EXTRA_SAMPLES: &'static [ExtraSamples] = &[ExtraSamples::UnassociatedAlpha];
 
     integer_horizontal_predict!();
 }
@@ -360,6 +366,7 @@ impl ColorType for RGBA32Float {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[32, 32, 32, 32];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 4];
+    const EXTRA_SAMPLES: &'static [ExtraSamples] = &[ExtraSamples::UnassociatedAlpha];
 
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
         unreachable!("horizontal predictor is not valid for floating-point sample types")
@@ -376,6 +383,7 @@ impl ColorType for RGBA64 {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[64, 64, 64, 64];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::Uint; 4];
+    const EXTRA_SAMPLES: &'static [ExtraSamples] = &[ExtraSamples::UnassociatedAlpha];
 
     integer_horizontal_predict!();
 }
@@ -386,6 +394,7 @@ impl ColorType for RGBA64Float {
     const TIFF_VALUE: PhotometricInterpretation = PhotometricInterpretation::RGB;
     const BITS_PER_SAMPLE: &'static [u16] = &[64, 64, 64, 64];
     const SAMPLE_FORMAT: &'static [SampleFormat] = &[SampleFormat::IEEEFP; 4];
+    const EXTRA_SAMPLES: &'static [ExtraSamples] = &[ExtraSamples::UnassociatedAlpha];
 
     fn horizontal_predict(_: &[Self::Inner], _: &mut Vec<Self::Inner>) {
         unreachable!("horizontal predictor is not valid for floating-point sample types")

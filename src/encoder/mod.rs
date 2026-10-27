@@ -59,6 +59,10 @@ pub enum Compression {
     Deflate(u8),
     /// [PackBits](https://en.wikipedia.org/wiki/PackBits) compression, a variant of RLE compression scheme. Fast, primitive compression with a poor compression ratio.
     Packbits,
+    /// Zstandard compression with the specified level. `0` uses Zstandard's default.
+    /// Negative levels favor faster compression.
+    #[cfg(feature = "zstd")]
+    Zstd(i32),
 }
 
 impl Compression {
@@ -70,6 +74,8 @@ impl Compression {
             #[cfg(feature = "deflate")]
             Compression::Deflate(_) => CompressionMethod::Deflate,
             Compression::Packbits => CompressionMethod::PackBits,
+            #[cfg(feature = "zstd")]
+            Compression::Zstd(_) => CompressionMethod::ZSTD,
         }
     }
 
@@ -81,6 +87,8 @@ impl Compression {
             #[cfg(feature = "deflate")]
             Compression::Deflate(level) => compression::Deflate::with_level(*level).get_algorithm(),
             Compression::Packbits => compression::Packbits {}.get_algorithm(),
+            #[cfg(feature = "zstd")]
+            Compression::Zstd(level) => compression::Zstd::with_level(*level).get_algorithm(),
         }
     }
 }
@@ -298,7 +306,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         chained_ifd_pos: Option<NonZeroU64>,
         chain_into: Option<&'a mut NonZeroU64>,
     ) -> TiffResult<Self> {
-        writer.pad_word_boundary()?; // TODO: Do we need to adjust this for BigTiff?
+        writer.pad_word_boundary(mem::size_of::<K::OffsetType>())?;
         Ok(Self {
             writer,
             chained_ifd_pos,
@@ -478,6 +486,8 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
     }
 
     fn write_directory(&mut self) -> TiffResult<u64> {
+        self.writer
+            .pad_word_boundary(mem::size_of::<K::OffsetType>())?;
         // Start by turning all buffered unwritten values into entries.
         let offset = self.writer.offset();
         K::write_entry_count(self.writer, self.directory.len())?;
@@ -513,6 +523,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         let mut offset_bytes = [0; 8];
 
         if bytes.len() > in_entry_bytes {
+            writer.pad_word_boundary(in_entry_bytes)?;
             let offset = writer.offset();
             writer.write_bytes(bytes)?;
 
@@ -702,6 +713,9 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         encoder.write_tag(Tag::Predictor, predictor.to_u16())?;
 
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
+        if !T::EXTRA_SAMPLES.is_empty() {
+            encoder.write_tag(Tag::ExtraSamples, T::EXTRA_SAMPLES)?;
+        }
 
         if matches!(<T>::TIFF_VALUE, PhotometricInterpretation::YCbCr) {
             // The default for this tag is 2,2 for subsampling but we do not support such a
@@ -737,6 +751,8 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         })
     }
 
+    /// Add sample channels after those defined by the color type.
+    /// Built-in RGBA types already include an unassociated alpha channel.
     pub fn extra_samples(&mut self, extra: &[ExtraSamples]) -> Result<(), TiffError> {
         if self.strip_idx != 0 {
             return Err(TiffError::UsageError(
@@ -750,8 +766,13 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         self.extra_samples
             .extend(extra.iter().map(ExtraSamples::to_u16));
 
+        let extra_samples: Vec<_> = T::EXTRA_SAMPLES
+            .iter()
+            .map(ExtraSamples::to_u16)
+            .chain(self.extra_samples.iter().copied())
+            .collect();
         self.encoder
-            .write_tag(Tag::ExtraSamples, &self.extra_samples[..])?;
+            .write_tag(Tag::ExtraSamples, &extra_samples[..])?;
 
         self.row_samples = row_samples;
 
@@ -777,7 +798,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         [T::Inner]: TiffValue,
     {
         let samples = self.next_strip_sample_count();
-        if u64::try_from(value.len())? != samples {
+        if samples == 0 || u64::try_from(value.len())? != samples {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Slice is wrong size for strip",
@@ -785,25 +806,30 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             .into());
         }
 
+        self.encoder
+            .writer
+            .set_compression(self.compression.get_algorithm());
         // Write the (possible compressed) data to the encoder.
-        let offset = match self.predictor {
-            Predictor::None => self.encoder.write_data(value)?,
+        let result = match self.predictor {
+            Predictor::None => self.encoder.write_data(value),
             Predictor::Horizontal => {
                 let mut row_result = Vec::with_capacity(value.len());
                 for row in value.chunks_exact(self.row_samples as usize) {
                     T::horizontal_predict(row, &mut row_result);
                 }
-                self.encoder.write_data(row_result.as_slice())?
+                self.encoder.write_data(row_result.as_slice())
             }
             Predictor::FloatingPoint => {
                 let mut row_result = Vec::with_capacity(std::mem::size_of_val(value));
                 for row in value.chunks_exact(self.row_samples as usize) {
                     T::floating_point_predict(row, &mut row_result);
                 }
-                self.encoder.write_data(row_result.as_slice())?
+                self.encoder.write_data(row_result.as_slice())
             }
         };
 
+        self.encoder.writer.reset_compression();
+        let offset = result?;
         let byte_count = self.encoder.last_written() as usize;
 
         self.strip_offsets.push(K::convert_offset(offset)?);
@@ -813,39 +839,24 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         Ok(())
     }
 
-    /// Write strips from data
+    /// Write the remaining strips from data.
     pub fn write_data(mut self, data: &[T::Inner]) -> TiffResult<()>
     where
         [T::Inner]: TiffValue,
     {
-        let num_pix = usize::try_from(self.width)?
-            .checked_mul(usize::try_from(self.height)?)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Image width * height exceeds usize",
-                )
-            })?;
-        if data.len() < num_pix {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Input data slice is undersized for provided dimensions",
-            )
-            .into());
-        }
-
-        self.encoder
-            .writer
-            .set_compression(self.compression.get_algorithm());
-
-        let mut idx = 0;
+        let mut remaining = data;
         while self.next_strip_sample_count() > 0 {
             let sample_count = usize::try_from(self.next_strip_sample_count())?;
-            self.write_strip(&data[idx..idx + sample_count])?;
-            idx += sample_count;
+            let (strip, rest) = remaining.split_at_checked(sample_count).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Input data slice is undersized for provided dimensions",
+                )
+            })?;
+            self.write_strip(strip)?;
+            remaining = rest;
         }
 
-        self.encoder.writer.reset_compression();
         self.finish()?;
         Ok(())
     }
@@ -885,6 +896,13 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Cannot change strip size after data was written",
+            )
+            .into());
+        }
+        if value == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Rows per strip must be nonzero",
             )
             .into());
         }

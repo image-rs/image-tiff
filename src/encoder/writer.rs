@@ -171,10 +171,11 @@ impl<W: Write> TiffWriter<W> {
         Ok(())
     }
 
-    pub fn pad_word_boundary(&mut self) -> Result<(), io::Error> {
-        if !self.offset.is_multiple_of(4) {
-            let padding = [0, 0, 0];
-            let padd_len = 4 - (self.offset % 4);
+    pub fn pad_word_boundary(&mut self, alignment: usize) -> Result<(), io::Error> {
+        let alignment = alignment as u64;
+        if !self.offset.is_multiple_of(alignment) {
+            let padding = [0; 7];
+            let padd_len = alignment - (self.offset % alignment);
             self.writer.write_all(&padding[..padd_len as usize])?;
             self.offset += padd_len;
         }
@@ -226,6 +227,8 @@ fn encoder_on_short_writes() {
     for comp in [
         super::Compression::Uncompressed,
         super::Compression::Packbits,
+        #[cfg(feature = "zstd")]
+        super::Compression::Zstd(0),
     ] {
         write.inner.set_position(0);
         write.inner.get_mut().clear();
@@ -250,6 +253,59 @@ fn encoder_on_short_writes() {
             matches!(&data, crate::decoder::DecodingSampleBuffer::U8(v) if *v == imgdata),
             "{data:?} @ {}",
             data.as_buffer(0).byte_len()
+        );
+    }
+}
+
+#[test]
+fn compressor_is_reset_after_write_error() {
+    let mut storage = [0; 64];
+    let mut encoder = super::TiffEncoder::new(std::io::Cursor::new(storage.as_mut_slice()))
+        .unwrap()
+        .with_compression(super::Compression::Packbits);
+    let data: Vec<u8> = (0..1024).map(|i| i as u8).collect();
+    assert!(encoder.write_image::<super::Gray8>(1024, 1, &data).is_err());
+    assert!(matches!(
+        encoder.writer.compressor,
+        Compressor::Uncompressed(_)
+    ));
+}
+
+#[test]
+fn write_data_validates_remaining_samples() {
+    use super::{Compression, TiffEncoder, RGB8};
+    use crate::decoder::{Decoder, DecodingSampleBuffer};
+
+    for compression in [
+        Compression::Uncompressed,
+        Compression::Packbits,
+        #[cfg(feature = "zstd")]
+        Compression::Zstd(0),
+    ] {
+        for data in [&[0; 4][..], &[0; 9][..]] {
+            assert!(TiffEncoder::new(std::io::Cursor::new(Vec::new()))
+                .unwrap()
+                .with_compression(compression)
+                .write_image::<RGB8>(2, 2, data)
+                .is_err());
+        }
+
+        let mut output = std::io::Cursor::new(Vec::new());
+        {
+            let mut encoder = TiffEncoder::new(&mut output)
+                .unwrap()
+                .with_compression(compression);
+            let mut image = encoder.new_image::<RGB8>(2, 2).unwrap();
+            image.rows_per_strip(1).unwrap();
+            image.write_strip(&[1; 6]).unwrap();
+            image.write_data(&[2; 6]).unwrap();
+        }
+        output.set_position(0);
+        let mut decoder = Decoder::open(output).unwrap();
+        decoder.next_image().unwrap();
+        assert!(
+            matches!(decoder.read_image().unwrap(), DecodingSampleBuffer::U8(data)
+            if data == [vec![1; 6], vec![2; 6]].concat())
         );
     }
 }
