@@ -617,26 +617,22 @@ impl ByteOrder {
             return;
         }
 
-        // FIXME: at MSRV 1.89 or higher use `slice::as_chunks_mut`.
         match cls {
             EndianBytes::One => {
                 // No change needed
             }
             EndianBytes::Two => {
-                for chunk in buffer.chunks_exact_mut(2) {
-                    let chunk: &mut [u8; 2] = chunk.try_into().unwrap();
+                for chunk in buffer.as_chunks_mut::<2>().0 {
                     *chunk = u16::from_be_bytes(*chunk).to_le_bytes();
                 }
             }
             EndianBytes::Four => {
-                for chunk in buffer.chunks_exact_mut(4) {
-                    let chunk: &mut [u8; 4] = chunk.try_into().unwrap();
+                for chunk in buffer.as_chunks_mut::<4>().0 {
                     *chunk = u32::from_be_bytes(*chunk).to_le_bytes();
                 }
             }
             EndianBytes::Eight => {
-                for chunk in buffer.chunks_exact_mut(8) {
-                    let chunk: &mut [u8; 8] = chunk.try_into().unwrap();
+                for chunk in buffer.as_chunks_mut::<8>().0 {
                     *chunk = u64::from_be_bytes(*chunk).to_le_bytes();
                 }
             }

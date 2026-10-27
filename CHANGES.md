@@ -8,6 +8,14 @@ Fixes:
   leftmost columns of the following row.
 
 Additions:
+- Added `Decoder::with_unpacked_subbyte`, which expands sub-byte samples (1-7
+  bits) to one byte each rather than returning them packed. Off by default: the
+  packed form is what callers of bilevel, 4-bit palette and similar rasters
+  already handle themselves. Reading a GDAL `NBITS=2` raster, where 2 bits per
+  pixel is a 4x space saving over `Byte`, no longer needs the caller to unpack
+  bits itself. The declared depth is unchanged, so such an image still reports
+  e.g. `ColorType::Gray(2)` while decoding into one `u8` per sample, matching
+  how a 12-bit image reports `Gray(12)` and decodes into `u16`.
 - Added the `TiffHeader` type. It can be used to create a `Decoder` in a state
   before the first IFD and allows opening files at an arbitrary first IFD
   offset rather than one indicated by an encoded header at the start.

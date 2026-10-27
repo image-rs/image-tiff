@@ -313,6 +313,124 @@ fn test_gray_u8() {
 }
 
 #[test]
+fn test_gray_u2_packed_by_default() {
+    // TIFF stores sub-byte samples packed and that is what callers of bilevel and 4-bit palette
+    // rasters already handle, so the default must keep returning the packed rows. 5 samples of
+    // 2 bits is 10 bits, padded to 2 bytes per row, so 3 rows arrive as 6 bytes rather than 15.
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("gray-1c-2b.tiff");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(2));
+
+    let DecodingSampleBuffer::U8(data) = decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+    assert_eq!(data.len(), 6, "packed: 2 bytes per row, 3 rows");
+    // 0,1,2,3,0 -> 00 01 10 11 | 00 + 6 bits of padding
+    assert_eq!(data[0], 0b00_01_10_11);
+    assert_eq!(data[1] >> 6, 0b00);
+}
+
+#[test]
+fn test_gray_u2_unpacked() {
+    // with_unpacked_subbyte expands each 2-bit sample to its own byte, including across the 6
+    // bits of row padding that must not be mistaken for samples.
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("gray-1c-2b.tiff");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::open(img_file)
+        .expect("Cannot create decoder")
+        .with_unpacked_subbyte(true);
+    decoder.next_image().expect("Cannot read image IFD");
+    // The declared depth is unchanged: only the storage width is promoted, matching how a
+    // 12-bit raster still reports Gray(12) while decoding into u16.
+    assert_eq!(decoder.colortype().unwrap(), ColorType::Gray(2));
+
+    let DecodingSampleBuffer::U8(data) = decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+    assert_eq!(
+        data,
+        vec![0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2],
+        "one byte per sample, row padding skipped"
+    );
+}
+
+#[test]
+fn test_gray_u4_unpacked_matches_manual_expansion() {
+    // Cross-check the unpacker against the packed bytes it is derived from, on an existing
+    // 4-bit fixture: every nibble, high then low, must come back as its own byte.
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("palette-1c-4b.tiff");
+
+    let mut packed_decoder =
+        Decoder::open(File::open(&path).expect("Cannot find test image!")).unwrap();
+    packed_decoder.next_image().unwrap();
+    let (width, height) = packed_decoder.dimensions().unwrap();
+    let DecodingSampleBuffer::U8(packed) = packed_decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+
+    let mut unpacked_decoder = Decoder::open(File::open(&path).unwrap())
+        .unwrap()
+        .with_unpacked_subbyte(true);
+    unpacked_decoder.next_image().unwrap();
+    let DecodingSampleBuffer::U8(unpacked) = unpacked_decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+
+    assert_eq!(unpacked.len(), width as usize * height as usize);
+    let packed_row_bytes = (width as usize * 4).div_ceil(8);
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let byte = packed[y * packed_row_bytes + x / 2];
+            let want = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+            assert_eq!(
+                unpacked[y * width as usize + x],
+                want,
+                "mismatch at ({x}, {y})"
+            );
+        }
+    }
+}
+
+/// Bilevel is the commonest sub-byte depth, so the opt-in has to expand it rather than refuse
+/// it. The default is unchanged and still returns the packed rows, which `test_palette_u1`
+/// pins by summing them.
+#[test]
+fn test_bilevel_unpacked_on_request() {
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("palette-1c-1b.tiff");
+
+    let mut packed_decoder = Decoder::open(File::open(&path).expect("Cannot find test image!"))
+        .expect("Cannot create decoder");
+    packed_decoder.next_image().unwrap();
+    let (width, height) = packed_decoder.dimensions().unwrap();
+    let DecodingSampleBuffer::U8(packed) = packed_decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+
+    let mut decoder = Decoder::open(File::open(&path).unwrap())
+        .unwrap()
+        .with_unpacked_subbyte(true);
+    decoder.next_image().unwrap();
+    let DecodingSampleBuffer::U8(unpacked) = decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+
+    assert_eq!(unpacked.len(), width as usize * height as usize);
+    let packed_row_bytes = (width as usize).div_ceil(8);
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let bit = packed[y * packed_row_bytes + x / 8] >> (7 - (x % 8)) & 1;
+            assert_eq!(
+                unpacked[y * width as usize + x],
+                bit,
+                "mismatch at ({x}, {y})"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_gray_u12() {
     test_image_sum_u16("12bit.cropped.tiff", ColorType::Gray(12), 10973);
 }
@@ -898,23 +1016,20 @@ fn test_image_bytes(
 }
 
 fn byte_order_u16(bytes: &mut [u8]) {
-    for chunk in bytes.chunks_exact_mut(2) {
-        let n = u16::from_ne_bytes(chunk.try_into().unwrap());
-        chunk.copy_from_slice(&n.to_le_bytes());
+    for chunk in bytes.as_chunks_mut::<2>().0 {
+        *chunk = u16::from_ne_bytes(*chunk).to_le_bytes();
     }
 }
 
 fn byte_order_u32(bytes: &mut [u8]) {
-    for chunk in bytes.chunks_exact_mut(4) {
-        let n = u32::from_ne_bytes(chunk.try_into().unwrap());
-        chunk.copy_from_slice(&n.to_le_bytes());
+    for chunk in bytes.as_chunks_mut::<4>().0 {
+        *chunk = u32::from_ne_bytes(*chunk).to_le_bytes();
     }
 }
 
 fn byte_order_u64(bytes: &mut [u8]) {
-    for chunk in bytes.chunks_exact_mut(8) {
-        let n = u64::from_ne_bytes(chunk.try_into().unwrap());
-        chunk.copy_from_slice(&n.to_le_bytes());
+    for chunk in bytes.as_chunks_mut::<8>().0 {
+        *chunk = u64::from_ne_bytes(*chunk).to_le_bytes();
     }
 }
 

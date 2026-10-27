@@ -259,6 +259,8 @@ pub struct Decoder<R> {
     scratch: Vec<u8>,
     /// Leniency flag that allows libtiff-like TIFF color interpretation behavior
     lenient: bool,
+    /// Expand sub-byte samples to one byte each rather than returning them packed.
+    unpack_subbyte: bool,
 }
 
 /// All the information needed to read and interpret byte slices from the underlying file, i.e. to
@@ -294,8 +296,8 @@ fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
     acc.copy_from_slice(&buf[..N]);
 
     // Process N bytes per iteration. Each channel's prefix sum is independent.
-    let mut chunks = buf[N..].chunks_exact_mut(N);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = buf[N..].as_chunks_mut::<N>();
+    for chunk in chunks {
         for c in 0..N {
             acc[c] = chunk[c].wrapping_add(acc[c]);
             chunk[c] = acc[c];
@@ -303,7 +305,7 @@ fn one_byte_predict<const N: usize>(buf: &mut [u8]) {
     }
 
     // Handle trailing bytes (when buf.len() - N is not a multiple of N).
-    for (c, byte) in chunks.into_remainder().iter_mut().enumerate() {
+    for (c, byte) in remainder.iter_mut().enumerate() {
         *byte = byte.wrapping_add(acc[c]);
     }
 }
@@ -602,6 +604,12 @@ fn mask_samples_to_bit_depth(
         return;
     }
     match storage_bits {
+        8 if declared_bits < 8 => {
+            let mask = (1u8 << declared_bits) - 1;
+            for byte in buf.iter_mut() {
+                *byte &= mask;
+            }
+        }
         16 if declared_bits < 16 => {
             let mask = (1u16 << declared_bits) - 1;
             for chunk in buf.as_chunks_mut::<2>().0 {
@@ -853,6 +861,7 @@ impl TiffHeader {
             image: None,
             scratch: Vec::new(),
             lenient: false,
+            unpack_subbyte: false,
         }
     }
 }
@@ -939,6 +948,16 @@ impl<R: Read + Seek> Decoder<R> {
     ///
     /// Configuring this make the parser respect libtiff's behavior to maintain compatibility with
     /// some older softwares (e.g. some old Adobe suite products).
+    /// Expand sub-byte samples (2-7 bits, and 1 bit) to one byte per sample.
+    ///
+    /// Off by default: TIFF stores sub-byte samples packed, and that is what callers of bilevel,
+    /// 4-bit palette and similar rasters already handle themselves. Turn it on to read e.g. a
+    /// GDAL `NBITS=2` raster as ordinary bytes. Only unsigned integer samples are expanded.
+    pub fn with_unpacked_subbyte(mut self, unpack_subbyte: bool) -> Decoder<R> {
+        self.unpack_subbyte = unpack_subbyte;
+        self
+    }
+
     pub fn with_lenient(mut self, lenient: bool) -> Decoder<R> {
         self.lenient = lenient;
         self
@@ -958,7 +977,12 @@ impl<R: Read + Seek> Decoder<R> {
             ));
         }
 
-        let image = Image::from_reader(&mut self.value_reader, &self.directory, self.lenient)?;
+        let image = Image::from_reader(
+            &mut self.value_reader,
+            &self.directory,
+            self.lenient,
+            self.unpack_subbyte,
+        )?;
         Ok((
             self.image.insert(image),
             &mut self.value_reader,
@@ -1095,6 +1119,7 @@ impl<R: Read + Seek> Decoder<R> {
             image: core::mem::take(&mut self.image),
             scratch: core::mem::take(&mut self.scratch),
             lenient: self.lenient,
+            unpack_subbyte: self.unpack_subbyte,
         }
     }
 
@@ -1147,6 +1172,7 @@ impl<R: Read + Seek> Decoder<R> {
             &mut self.value_reader,
             &directory,
             self.lenient,
+            self.unpack_subbyte,
         )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
@@ -1244,6 +1270,7 @@ impl<R: Read + Seek> Decoder<R> {
             &mut self.value_reader,
             &directory,
             self.lenient,
+            self.unpack_subbyte,
         )?);
         self.current_ifd_pointer = Some(offset);
         self.directory = directory;
