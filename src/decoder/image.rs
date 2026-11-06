@@ -369,12 +369,17 @@ impl Image {
                 ));
             }
 
-            if u32::try_from(chunk_offsets.len())?
-                != height.div_ceil(rows_per_strip) * planes as u32
-            {
+            let expected_chunks = (rows_per_strip != 0)
+                .then(|| height.div_ceil(rows_per_strip))
+                .and_then(|strips| strips.checked_mul(u32::from(planes)))
+                .ok_or(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ))?;
+
+            if u32::try_from(chunk_offsets.len())? != expected_chunks {
                 return Err(TiffError::FormatError(
                     TiffFormatError::IncorrectChunkCount {
-                        expected: height.div_ceil(rows_per_strip) * planes as u32,
+                        expected: expected_chunks,
                         found: chunk_offsets.len() as u32,
                     },
                 ));
@@ -418,11 +423,19 @@ impl Image {
                 ));
             }
 
-            if chunk_offsets.len() != tile.tiles_down() * tile.tiles_across() * planes as usize {
+            let expected_chunks = tile
+                .tiles_down()
+                .checked_mul(tile.tiles_across())
+                .and_then(|n| n.checked_mul(usize::from(planes)))
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or(TiffError::FormatError(
+                    TiffFormatError::InconsistentSizesEncountered,
+                ))?;
+
+            if u32::try_from(chunk_offsets.len())? != expected_chunks {
                 return Err(TiffError::FormatError(
                     TiffFormatError::IncorrectChunkCount {
-                        expected: (tile.tiles_down() * tile.tiles_across() * planes as usize)
-                            as u32,
+                        expected: expected_chunks,
                         found: chunk_offsets.len() as u32,
                     },
                 ));

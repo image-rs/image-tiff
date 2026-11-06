@@ -2503,4 +2503,45 @@ mod tests {
         assert!(second_ifd.directory().get(Tag::ImageWidth).is_some());
         assert!(!decoder.more_images());
     }
+
+    #[test]
+    fn test_expected_chunks_overflow() {
+        // 1. Strip overflow: height = 1,694,629,889, rows_per_strip = 1, planes = 3
+        // (1,694,629,889 / 1) * 3 = 5,083,889,667 > u32::MAX.
+        const STRIP_DATA: &[u8] = &[
+            73, 73, 42, 0, 8, 0, 0, 0, 10, 0, 0, 1, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 4, 0, 1, 0,
+            0, 0, 1, 0, 2, 101, 226, 1, 3, 0, 3, 0, 0, 0, 134, 0, 0, 0, 3, 1, 3, 0, 1, 0, 0, 0, 1,
+            0, 0, 0, 6, 1, 3, 0, 1, 0, 0, 0, 2, 0, 0, 0, 17, 1, 4, 0, 1, 0, 0, 0, 140, 0, 0, 0, 21,
+            1, 3, 0, 1, 0, 0, 0, 3, 0, 0, 0, 22, 1, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0, 23, 1, 4, 0, 1,
+            0, 0, 0, 3, 0, 0, 0, 28, 1, 3, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 8, 0, 8, 0, 8, 0,
+            64, 128, 192,
+        ];
+
+        let mut decoder = Decoder::open(std::io::Cursor::new(STRIP_DATA)).expect("valid header");
+        assert!(matches!(
+            decoder.next_image(),
+            Err(crate::TiffError::FormatError(
+                crate::TiffFormatError::InconsistentSizesEncountered
+            ))
+        ));
+
+        // 2. Tile overflow: width = 65536, height = 65536, tile_width = 1, tile_length = 1, planes = 3
+        // 65536 * 65536 * 3 = 12,884,901,888 > u32::MAX (and overflows 32-bit usize).
+        const TILED_DATA: &[u8] = &[
+            73, 73, 42, 0, 8, 0, 0, 0, 11, 0, 0, 1, 4, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 4, 0, 1, 0,
+            0, 0, 0, 0, 1, 0, 2, 1, 3, 0, 3, 0, 0, 0, 146, 0, 0, 0, 3, 1, 3, 0, 1, 0, 0, 0, 1, 0,
+            0, 0, 6, 1, 3, 0, 1, 0, 0, 0, 2, 0, 0, 0, 21, 1, 3, 0, 1, 0, 0, 0, 3, 0, 0, 0, 28, 1,
+            3, 0, 1, 0, 0, 0, 2, 0, 0, 0, 66, 1, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0, 67, 1, 4, 0, 1, 0,
+            0, 0, 1, 0, 0, 0, 68, 1, 4, 0, 1, 0, 0, 0, 152, 0, 0, 0, 69, 1, 4, 0, 1, 0, 0, 0, 3, 0,
+            0, 0, 0, 0, 0, 0, 8, 0, 8, 0, 8, 0, 64, 128, 192,
+        ];
+
+        let mut decoder = Decoder::open(std::io::Cursor::new(TILED_DATA)).expect("valid header");
+        assert!(matches!(
+            decoder.next_image(),
+            Err(crate::TiffError::FormatError(
+                crate::TiffFormatError::InconsistentSizesEncountered
+            ))
+        ));
+    }
 }
