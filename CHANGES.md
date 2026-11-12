@@ -6,6 +6,10 @@ Fixes:
   are discarded (e.g. RGB with an unspecified extra sample). The horizontal
   tile padding was written past the end of the output row, spilling into the
   leftmost columns of the following row.
+- Decoding an image that uses the horizontal or floating point predictor and
+  has extra samples discarded on decode (e.g. RGB with an unspecified extra
+  sample) now returns the correct pixels. The predictor is undone on the full
+  row before the extra samples are removed.
 
 Additions:
 - Added the `TiffHeader` type. It can be used to create a `Decoder` in a state
