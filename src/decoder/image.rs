@@ -1267,7 +1267,10 @@ impl Image {
                 color_type,
                 self.sample_format,
             )?;
-        } else if chunk_row_bytes > data_row_bytes && self.predictor == Predictor::FloatingPoint {
+        } else if is_all_bits
+            && chunk_row_bytes > data_row_bytes
+            && self.predictor == Predictor::FloatingPoint
+        {
             // The floating point predictor shuffles the padding bytes into the encoded output, so
             // this case is handled specially when needed.
             let mut encoded = vec![0u8; chunk_row_bytes];
@@ -1372,16 +1375,19 @@ impl Image {
                 let row = &mut row[..data_row_bytes];
                 reader.read_exact(&mut encoded)?;
 
-                Self::compact_photometric_bytes(&mut encoded, row, &photo_range);
-
+                // Both the horizontal and floating point predictors run over every stored sample,
+                // including the extra samples removed by the compaction below, so undo them on the
+                // full encoded row.
                 super::fix_endianness_and_predict(
-                    row,
+                    &mut encoded,
                     color_type.bit_depth(),
                     samples,
                     decompressed_byte_order,
                     predictor,
                     scratch,
                 );
+
+                Self::compact_photometric_bytes(&mut encoded, row, &photo_range);
 
                 // No-op in this branch: promoted layouts only occur in the
                 // unpacking branch. Called so the integer branches cannot

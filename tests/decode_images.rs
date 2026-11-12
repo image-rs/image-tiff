@@ -507,6 +507,141 @@ fn test_tiled_extra_samples_border_u8() {
 }
 
 #[test]
+fn test_predictor_with_discarded_extra_sample() {
+    // Regression test for https://github.com/image-rs/image-tiff/issues/425
+    //
+    // The horizontal predictor used to be undone on the compacted row, i.e. with a stride of
+    // four samples over data that only held three. Every pixel after the first in a row was
+    // corrupted as a result.
+    use tiff::encoder::TiffEncoder;
+    use tiff::tags::Tag;
+
+    let mut strip = Vec::new();
+    for y in 0..2u8 {
+        let mut row = Vec::new();
+        for x in 0..8u8 {
+            row.push(10 * x);
+            row.push(20 * y + 3 * x);
+            row.push(100);
+            row.push(255);
+        }
+        for i in (4..row.len()).rev() {
+            row[i] = row[i].wrapping_sub(row[i - 4]);
+        }
+        strip.extend_from_slice(&row);
+    }
+
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut encoder = TiffEncoder::new(&mut file).unwrap();
+        let mut dir = encoder.image_directory().unwrap();
+        let offset = dir.write_data(strip.as_slice()).unwrap();
+        let len = strip.len() as u32;
+
+        dir.write_tag(Tag::ImageWidth, 8u32).unwrap();
+        dir.write_tag(Tag::ImageLength, 2u32).unwrap();
+        dir.write_tag(Tag::BitsPerSample, [8u16, 8, 8, 8]).unwrap();
+        dir.write_tag(Tag::Compression, 1u16).unwrap();
+        dir.write_tag(Tag::PhotometricInterpretation, 2u16).unwrap();
+        dir.write_tag(Tag::SamplesPerPixel, 4u16).unwrap();
+        dir.write_tag(Tag::PlanarConfiguration, 1u16).unwrap();
+        dir.write_tag(Tag::Predictor, 2u16).unwrap();
+        dir.write_tag(Tag::RowsPerStrip, 2u32).unwrap();
+        dir.write_tag(Tag::StripOffsets, offset as u32).unwrap();
+        dir.write_tag(Tag::StripByteCounts, len).unwrap();
+        dir.write_tag(Tag::ExtraSamples, 0u16).unwrap();
+        dir.finish().unwrap();
+    }
+
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    let mut decoder = Decoder::open(&mut file).unwrap();
+    decoder.next_image().unwrap();
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+
+    let DecodingSampleBuffer::U8(data) = decoder.read_image().unwrap() else {
+        panic!("Wrong bit depth")
+    };
+
+    let mut expected = Vec::new();
+    for y in 0..2u8 {
+        for x in 0..8u8 {
+            expected.push(10 * x);
+            expected.push(20 * y + 3 * x);
+            expected.push(100);
+        }
+    }
+    assert_eq!(data, expected);
+}
+
+#[test]
+fn test_float_predictor_with_discarded_extra_sample() {
+    // Same as above but with the floating point predictor, which used to be undone into the
+    // compacted row and wrote into an output that only holds three samples per pixel.
+    use tiff::encoder::TiffEncoder;
+    use tiff::tags::Tag;
+
+    const WIDTH: usize = 4;
+    const HEIGHT: usize = 2;
+
+    let pixel = |x: usize, y: usize| [x as f32 * 0.5, y as f32 + 0.25 * x as f32, -1.5, 1.0];
+
+    // Floating point predictor: split each row into big-endian byte planes, then difference the
+    // bytes with a stride of SamplesPerPixel.
+    let mut strip = Vec::new();
+    for y in 0..HEIGHT {
+        let samples: Vec<f32> = (0..WIDTH).flat_map(|x| pixel(x, y)).collect();
+        let n = samples.len();
+        let mut row = vec![0u8; n * 4];
+        for (i, sample) in samples.iter().enumerate() {
+            for (k, byte) in sample.to_be_bytes().into_iter().enumerate() {
+                row[k * n + i] = byte;
+            }
+        }
+        for i in (4..row.len()).rev() {
+            row[i] = row[i].wrapping_sub(row[i - 4]);
+        }
+        strip.extend_from_slice(&row);
+    }
+
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut encoder = TiffEncoder::new(&mut file).unwrap();
+        let mut dir = encoder.image_directory().unwrap();
+        let offset = dir.write_data(strip.as_slice()).unwrap();
+        let len = strip.len() as u32;
+
+        dir.write_tag(Tag::ImageWidth, WIDTH as u32).unwrap();
+        dir.write_tag(Tag::ImageLength, HEIGHT as u32).unwrap();
+        dir.write_tag(Tag::BitsPerSample, [32u16; 4]).unwrap();
+        dir.write_tag(Tag::SampleFormat, [3u16; 4]).unwrap();
+        dir.write_tag(Tag::Compression, 1u16).unwrap();
+        dir.write_tag(Tag::PhotometricInterpretation, 2u16).unwrap();
+        dir.write_tag(Tag::SamplesPerPixel, 4u16).unwrap();
+        dir.write_tag(Tag::PlanarConfiguration, 1u16).unwrap();
+        dir.write_tag(Tag::Predictor, 3u16).unwrap();
+        dir.write_tag(Tag::RowsPerStrip, HEIGHT as u32).unwrap();
+        dir.write_tag(Tag::StripOffsets, offset as u32).unwrap();
+        dir.write_tag(Tag::StripByteCounts, len).unwrap();
+        dir.write_tag(Tag::ExtraSamples, 0u16).unwrap();
+        dir.finish().unwrap();
+    }
+
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    let mut decoder = Decoder::open(&mut file).unwrap();
+    decoder.next_image().unwrap();
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(32));
+
+    let DecodingSampleBuffer::F32(data) = decoder.read_image().unwrap() else {
+        panic!("Wrong sample type")
+    };
+
+    let expected: Vec<f32> = (0..HEIGHT)
+        .flat_map(|y| (0..WIDTH).flat_map(move |x| pixel(x, y)[..3].to_vec()))
+        .collect();
+    assert_eq!(data, expected);
+}
+
+#[test]
 fn test_inner_access() {
     let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-rect-rgb-u8.tif");
     let img_file = File::open(path).expect("Cannot find test image!");
